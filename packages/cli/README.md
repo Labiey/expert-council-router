@@ -15,7 +15,7 @@ V1 includes:
 - Hard per-session tool allowlists and installed-Skill filtering.
 - Detached Git worktree isolation for mutation experts.
 - JSON CLI.
-- Five-tool semantic MCP server.
+- Six-tool asynchronous semantic MCP server.
 - Native Pi Package.
 - Valid Codex plugin with a shared host Skill and bundled stdio MCP server.
 - Deterministic tests that never spend model credits.
@@ -300,8 +300,11 @@ The semantic surface is deliberately small:
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
+- `expert_result`
 - `expert_escalate`
 - `expert_status`
+
+`expert_delegate` starts background work and immediately returns an `executionId`. Its optional `taskDescription` is a concise host-facing label, not part of the expert assignment. Use `expert_result` to retrieve feedback once execution completes. Generic MCP hosts query `expert_result` or `expert_status`; the native Pi Package additionally pushes a completion message into the Main Agent session.
 
 Run the stdio server directly:
 
@@ -331,7 +334,9 @@ Or for one run without persisting it:
 pi -e ./packages/pi-package
 ```
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same five semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same six semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
+
+Pi delegation is non-blocking. When an expert finishes, the extension sends compact JSON containing its completed `executionId` and, only when supplied, `taskDescription`; it never includes feedback. If the Main Agent is working, the notification is delivered as `steer`; if it is idle, a `followUp` with `triggerTurn` wakes it immediately. The Main Agent then calls `expert_result` to fetch the structured feedback. Because completion reawakens native Pi automatically, the Main Agent should end its turn after dispatching or completing other useful work rather than poll or silently wait and spend tokens.
 
 For npm distribution, publish Core and Pi Runtime before Pi Package so its versioned workspace dependencies resolve.
 

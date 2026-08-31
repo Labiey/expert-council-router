@@ -36,7 +36,11 @@ export class MockRuntime implements ExpertRuntime {
 
   constructor(
     readonly models: AvailableModel[],
-    private readonly results: Array<ExpertResult | ((request: ExpertExecutionRequest) => ExpertResult)> = [],
+    private readonly results: Array<
+      ExpertResult |
+      Promise<ExpertResult> |
+      ((request: ExpertExecutionRequest) => ExpertResult | Promise<ExpertResult>)
+    > = [],
     readonly runtimeCapabilities: RuntimeCapabilities = capabilities,
     readonly skills: SkillInfo[] = [],
   ) {}
@@ -48,13 +52,13 @@ export class MockRuntime implements ExpertRuntime {
   async executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult> {
     this.requests.push(request);
     const result = this.results.shift();
-    if (typeof result === "function") return result(request);
-    return result ?? {
+    if (typeof result === "function") return await result(request);
+    return await (result ?? {
       status: "success",
       role: request.role,
       model: request.model,
       summary: "ok",
-    };
+    });
   }
 
   async listSkills() {

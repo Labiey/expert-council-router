@@ -15,7 +15,7 @@ V1 已包含：
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 仅包含 5 个语义工具的 MCP Server。
+- 包含 6 个异步语义工具的 MCP Server。
 - 原生 Pi Package。
 - 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件。
 - 不会消耗模型额度的确定性自动化测试。
@@ -307,13 +307,16 @@ expert-council status
 
 ## MCP Server
 
-MCP 表面刻意保持为 5 个语义工具：
+MCP 表面刻意保持为 6 个语义工具：
 
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
+- `expert_result`
 - `expert_escalate`
 - `expert_status`
+
+`expert_delegate` 会启动后台任务并立即返回 `executionId`。可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。任务完成后使用 `expert_result` 获取反馈。通用 MCP 宿主通过 `expert_result` 或 `expert_status` 查询；原生 Pi Package 还会主动向主 Agent 发送完成通知。
 
 直接启动 stdio Server：
 
@@ -343,7 +346,9 @@ pi install ./packages/pi-package
 pi -e ./packages/pi-package
 ```
 
-Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 5 个语义工具，不包含另一套独立路由实现。
+Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 6 个语义工具，不包含另一套独立路由实现。
+
+Pi 委派是非阻断式的。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。由于原生 Pi 会在任务完成后自动重新唤醒主 Agent，主 Agent 派发完任务或完成其他有价值操作后应直接结束当前回合，不要轮询或静默等待消耗 token。
 
 ## Codex 插件
 

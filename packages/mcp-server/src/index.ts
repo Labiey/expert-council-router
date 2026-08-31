@@ -7,6 +7,7 @@ export const MCP_TOOL_NAMES = [
   "expert_inspect",
   "expert_build",
   "expert_delegate",
+  "expert_result",
   "expert_escalate",
   "expert_status",
 ] as const;
@@ -43,9 +44,13 @@ export const MCP_INPUT_SCHEMAS = {
   expert_delegate: {
     role,
     task: z.string().min(1).describe("A bounded semantic assignment"),
+    taskDescription: z.string().min(1).max(500).optional().describe("An optional concise host-facing label for the background task"),
     councilId: z.string().optional(),
     workspace: z.string().optional(),
     timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  },
+  expert_result: {
+    executionId: z.string().min(1),
   },
   expert_escalate: {
     role,
@@ -90,17 +95,31 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
     "expert_delegate",
     {
       title: "Delegate Expert Task",
-      description: "Execute one bounded assignment through Pi using role-specific least-privilege tools and bounded retry/escalation.",
+      description: "Start one bounded Pi expert assignment in the background and immediately return its execution ID.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await council.delegate({
-      role: input.role as ExpertRole,
-      task: input.task,
-      ...(input.councilId ? { councilId: input.councilId } : {}),
-      ...(input.workspace ? { workspace: input.workspace } : {}),
-      ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-    })),
+    async (input) => {
+      const handle = council.startDelegation({
+        role: input.role as ExpertRole,
+        task: input.task,
+        ...(input.taskDescription ? { taskDescription: input.taskDescription } : {}),
+        ...(input.councilId ? { councilId: input.councilId } : {}),
+        ...(input.workspace ? { workspace: input.workspace } : {}),
+        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+      });
+      return response({ executionId: handle.executionId, status: "running" });
+    },
+  );
+  server.registerTool(
+    "expert_result",
+    {
+      title: "Get Expert Result",
+      description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_result,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => response(await council.getResult(input.executionId)),
   );
   server.registerTool(
     "expert_escalate",

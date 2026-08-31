@@ -8,11 +8,13 @@ import type {
   BuildCouncilRequest,
   CouncilPlan,
   CouncilStatus,
+  DelegationHandle,
   DelegationRequest,
   EscalationRequest,
   ExpertCouncil,
   ExpertOutcome,
   ExpertResult,
+  ExpertResultLookup,
   ExpertRuntime,
   FailureType,
   ResourceInventory,
@@ -46,6 +48,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   readonly config: CouncilConfig;
   private readonly plans = new Map<string, CouncilPlan>();
   private readonly executions = new Map<string, ExecutionState>();
+  private readonly results = new Map<string, ExpertResult>();
 
   constructor(
     private readonly runtime: ExpertRuntime,
@@ -86,7 +89,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     return plan;
   }
 
-  async delegate(request: DelegationRequest): Promise<ExpertResult> {
+  startDelegation(request: DelegationRequest): DelegationHandle {
     const id = executionId();
     const state: ExecutionState = {
       id,
@@ -97,6 +100,38 @@ export class ExpertCouncilService implements ExpertCouncil {
     };
     this.executions.set(id, state);
     const started = Date.now();
+    const result = this.runDelegation(request, state, started).catch((error: unknown) => {
+      const failed: ExpertResult = {
+        status: "failed",
+        role: request.role,
+        model: state.model ?? "unassigned",
+        summary: error instanceof Error ? error.message : String(error),
+        executionMetadata: {
+          executionId: id,
+          attempts: state.attempts,
+          failureType: "unknown",
+          durationMs: Date.now() - started,
+        },
+      };
+      Object.assign(state, { status: failed.status, finishedAt: new Date().toISOString() });
+      return failed;
+    }).then((completed) => {
+      this.results.set(id, completed);
+      return completed;
+    });
+    return { executionId: id, result };
+  }
+
+  async delegate(request: DelegationRequest): Promise<ExpertResult> {
+    return this.startDelegation(request).result;
+  }
+
+  private async runDelegation(
+    request: DelegationRequest,
+    state: ExecutionState,
+    started: number,
+  ): Promise<ExpertResult> {
+    const id = state.id;
     const runtimeCapabilities = await this.runtime.getCapabilities();
     const [models, aggregates, availableSkills] = await Promise.all([
       this.runtime.listAvailableModels(),
@@ -225,6 +260,16 @@ export class ExpertCouncilService implements ExpertCouncil {
       hostType: runtimeCapabilities.hostType,
     });
     return result;
+  }
+
+  async getResult(executionId: string): Promise<ExpertResultLookup> {
+    if (!this.executions.has(executionId)) {
+      return { executionId, status: "not-found" };
+    }
+    const result = this.results.get(executionId);
+    return result
+      ? { executionId, status: "completed", result }
+      : { executionId, status: "running" };
   }
 
   async escalate(request: EscalationRequest) {

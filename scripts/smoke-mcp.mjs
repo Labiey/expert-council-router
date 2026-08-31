@@ -13,7 +13,15 @@ try {
   await client.connect(transport);
   const tools = await client.listTools();
   const names = tools.tools.map((tool) => tool.name);
-  if (names.length !== 5 || !names.includes("expert_inspect")) {
+  const expected = [
+    "expert_inspect",
+    "expert_build",
+    "expert_delegate",
+    "expert_result",
+    "expert_escalate",
+    "expert_status",
+  ];
+  if (names.length !== expected.length || expected.some((name) => !names.includes(name))) {
     throw new Error(`Unexpected MCP tools: ${names.join(", ")}`);
   }
   const result = await client.callTool({ name: "expert_inspect", arguments: {} });

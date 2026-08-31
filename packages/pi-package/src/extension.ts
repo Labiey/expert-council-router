@@ -38,7 +38,16 @@ const Failure = Type.Union([
   Type.Literal("unknown"),
 ]);
 
-export default function expertCouncilExtension(pi: ExtensionAPI) {
+export interface ExpertCouncilExtensionDependencies {
+  councilFor?: (cwd: string) => Promise<ExpertCouncil>;
+}
+
+export default function expertCouncilExtension(
+  pi: ExtensionAPI,
+  dependencies: ExpertCouncilExtensionDependencies = {},
+) {
+  const getCouncil = dependencies.councilFor ?? councilFor;
+
   pi.registerTool({
     name: "expert_inspect",
     label: "Expert Inspect",
@@ -46,7 +55,7 @@ export default function expertCouncilExtension(pi: ExtensionAPI) {
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await councilFor(ctx.cwd)).inspectResources());
+      return output(await (await getCouncil(ctx.cwd)).inspectResources());
     },
   });
 
@@ -61,7 +70,7 @@ export default function expertCouncilExtension(pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await councilFor(ctx.cwd)).buildCouncil({
+      return output(await (await getCouncil(ctx.cwd)).buildCouncil({
         task: params.task,
         ...((params.maxExperts ?? params.costPolicy) ? {
           constraints: {
@@ -76,23 +85,66 @@ export default function expertCouncilExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "expert_delegate",
     label: "Expert Delegate",
-    description: "Execute one bounded semantic expert assignment with least-privilege resources.",
+    description: "Start one bounded semantic expert assignment in the background and immediately return its execution ID.",
+    promptGuidelines: [
+      "After expert_delegate reports that a task has completed, call expert_result with its executionId before using the feedback.",
+      "Native Pi completion notifications wake the Main Agent automatically; after dispatching background work, stop the turn instead of polling or silently waiting when no other useful work remains.",
+    ],
     parameters: Type.Object({
       role: Role,
       task: Type.String({ minLength: 1 }),
+      taskDescription: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 500,
+        description: "Optional concise host-facing label included in the completion notification.",
+      })),
       councilId: Type.Optional(Type.String()),
       workspace: Type.Optional(Type.String()),
       timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000 })),
     }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await councilFor(ctx.cwd)).delegate({
+      const council = await getCouncil(ctx.cwd);
+      const handle = council.startDelegation({
         role: params.role as ExpertRole,
         task: params.task,
+        ...(params.taskDescription ? { taskDescription: params.taskDescription } : {}),
         ...(params.councilId ? { councilId: params.councilId } : {}),
         ...(params.workspace ? { workspace: params.workspace } : {}),
         ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}),
-      }));
+      });
+      void handle.result.then(() => {
+        try {
+          const delivery = ctx.isIdle() ? "followUp" : "steer";
+          const notification = {
+            executionId: handle.executionId,
+            ...(params.taskDescription ? { taskDescription: params.taskDescription } : {}),
+          };
+          pi.sendMessage({
+            customType: "expert-council-completed",
+            content: JSON.stringify(notification),
+            display: true,
+            details: notification,
+          }, { deliverAs: delivery, triggerTurn: true });
+        } catch {
+          // The originating Pi session may have been replaced or shut down.
+          // The result remains available through expert_result in the council service.
+        }
+      });
+      return output({ executionId: handle.executionId, status: "running" });
+    },
+  });
+
+  pi.registerTool({
+    name: "expert_result",
+    label: "Expert Result",
+    description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown.",
+    parameters: Type.Object({
+      executionId: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).getResult(params.executionId));
     },
   });
 
@@ -112,7 +164,7 @@ export default function expertCouncilExtension(pi: ExtensionAPI) {
     }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await councilFor(ctx.cwd)).escalate({
+      return output(await (await getCouncil(ctx.cwd)).escalate({
         role: params.role as ExpertRole,
         task: params.task,
         currentModel: params.currentModel,
@@ -132,7 +184,7 @@ export default function expertCouncilExtension(pi: ExtensionAPI) {
     parameters: Type.Object({}),
     async execute(_id, _params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await councilFor(ctx.cwd)).getStatus());
+      return output(await (await getCouncil(ctx.cwd)).getStatus());
     },
   });
 }

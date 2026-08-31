@@ -203,11 +203,23 @@ export interface CouncilPlan {
 
 export interface DelegationRequest {
   task: string;
+  taskDescription?: string;
   role: ExpertRole;
   councilId?: string;
   workspace?: string;
   timeoutMs?: number;
   constraints?: RoutingConstraints;
+}
+
+export interface DelegationHandle {
+  executionId: string;
+  result: Promise<ExpertResult>;
+}
+
+export interface ExpertResultLookup {
+  executionId: string;
+  status: "running" | "completed" | "not-found";
+  result?: ExpertResult;
 }
 
 export interface EscalationRequest {
@@ -288,7 +300,9 @@ export interface CouncilStatus {
 export interface ExpertCouncil {
   inspectResources(): Promise<ResourceInventory>;
   buildCouncil(request: BuildCouncilRequest): Promise<CouncilPlan>;
+  startDelegation(request: DelegationRequest): DelegationHandle;
   delegate(request: DelegationRequest): Promise<ExpertResult>;
+  getResult(executionId: string): Promise<ExpertResultLookup>;
   escalate(request: EscalationRequest): Promise<EscalationDecision>;
   getStatus(): Promise<CouncilStatus>;
   recordOutcome(outcome: ExpertOutcome): Promise<void>;

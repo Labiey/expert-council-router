@@ -13,6 +13,36 @@ const profiles = {
 };
 
 describe("retry and escalation", () => {
+  it("starts delegation immediately and exposes feedback only after completion", async () => {
+    let complete!: (result: {
+      status: "success";
+      role: "reviewer";
+      model: string;
+      summary: string;
+    }) => void;
+    const pending = new Promise<Parameters<typeof complete>[0]>((resolve) => {
+      complete = resolve;
+    });
+    const runtime = new MockRuntime([model("cheap", "one")], [pending]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+
+    const handle = service.startDelegation({ role: "reviewer", task: "Review a bounded change" });
+    expect(handle.executionId).toMatch(/^exec_/);
+    expect(await service.getResult(handle.executionId)).toEqual({
+      executionId: handle.executionId,
+      status: "running",
+    });
+
+    complete({ status: "success", role: "reviewer", model: "cheap/one", summary: "review complete" });
+    const result = await handle.result;
+    expect(result.summary).toBe("review complete");
+    expect(await service.getResult(handle.executionId)).toEqual({
+      executionId: handle.executionId,
+      status: "completed",
+      result,
+    });
+  });
+
   it("retries one correctable failure on the same model", async () => {
     const runtime = new MockRuntime([model("cheap", "one")], [
       (request) => ({
