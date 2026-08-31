@@ -13,7 +13,7 @@ export const CAPABILITY_DIMENSIONS = [
 ] as const;
 
 export type CapabilityDimension = (typeof CAPABILITY_DIMENSIONS)[number];
-export type CapabilityProfile = Partial<Record<CapabilityDimension, number>>;
+export type CapabilityProfile = Partial<Record<CapabilityDimension, number | null>>;
 export type BillingType = "subscription" | "metered" | "quota" | "free" | "unknown";
 export type MarginalCostClass = "very-low" | "low" | "normal" | "high" | "scarce";
 export type UsagePreference = "consume-first" | "balanced" | "quality-sensitive" | "escalation-only";
@@ -128,6 +128,14 @@ export interface ExpertRuntime {
   executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult>;
   listSkills(): Promise<SkillInfo[]>;
   getCapabilities(): Promise<RuntimeCapabilities>;
+  cleanupExecution?(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">>;
+}
+
+export interface ExpertCleanupResult {
+  executionId: string;
+  status: "cleaned" | "not-found" | "not-required" | "failed" | "unsupported";
+  workspace?: string;
+  message?: string;
 }
 
 export interface BillingPolicyEntry {
@@ -138,6 +146,13 @@ export interface BillingPolicyEntry {
 }
 
 export interface ModelProfile extends CapabilityProfile {
+  disabled?: boolean;
+  billingProfile?: string;
+  preferredReasoningByRole?: Partial<Record<ExpertRole, string | null>>;
+  incompatibleRoles?: ExpertRole[];
+}
+
+export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension, number>> {
   disabled?: boolean;
   billingProfile?: string;
   preferredReasoningByRole?: Partial<Record<ExpertRole, string>>;
@@ -199,6 +214,7 @@ export interface CouncilPlan {
   experts: CouncilMember[];
   createdAt: string;
   warnings: string[];
+  inventoryFingerprint?: string;
 }
 
 export interface DelegationRequest {
@@ -285,16 +301,34 @@ export interface ResourceInventory {
 
 export interface CouncilStatus {
   plans: Array<{ id: string; taskClass: TaskClass; expertCount: number; createdAt: string }>;
-  executions: Array<{
-    id: string;
-    role: ExpertRole;
-    status: "running" | "success" | "partial" | "failed";
-    model?: string;
-    attempts: number;
-    startedAt: string;
-    finishedAt?: string;
-  }>;
+  executions: ExecutionStateSnapshot[];
   telemetry: TelemetryAggregate[];
+}
+
+export interface ExecutionStateSnapshot {
+  id: string;
+  role: ExpertRole;
+  status: "running" | "success" | "partial" | "failed";
+  model?: string;
+  attempts: number;
+  startedAt: string;
+  finishedAt?: string;
+}
+
+export interface CouncilStateSnapshot {
+  version: 1;
+  plans: CouncilPlan[];
+  executions: ExecutionStateSnapshot[];
+  results: Array<{ executionId: string; result: ExpertResult }>;
+}
+
+export interface CouncilStatePersistence {
+  save(snapshot: CouncilStateSnapshot): Promise<void>;
+}
+
+export interface CouncilStateOptions {
+  initialState?: CouncilStateSnapshot;
+  persistence?: CouncilStatePersistence;
 }
 
 export interface ExpertCouncil {
@@ -303,6 +337,7 @@ export interface ExpertCouncil {
   startDelegation(request: DelegationRequest): DelegationHandle;
   delegate(request: DelegationRequest): Promise<ExpertResult>;
   getResult(executionId: string): Promise<ExpertResultLookup>;
+  cleanup(executionId: string): Promise<ExpertCleanupResult>;
   escalate(request: EscalationRequest): Promise<EscalationDecision>;
   getStatus(): Promise<CouncilStatus>;
   recordOutcome(outcome: ExpertOutcome): Promise<void>;

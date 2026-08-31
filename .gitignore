@@ -8,6 +8,7 @@ coverage/
 !.env.example
 .expert-council/config.json
 .expert-council/telemetry.jsonl
+.expert-council/state.json
 .expert-council/worktrees/
 .pi/
 *.log

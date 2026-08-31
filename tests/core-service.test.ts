@@ -81,6 +81,23 @@ describe("retry and escalation", () => {
     expect(result.executionMetadata?.escalationCount).toBe(1);
   });
 
+  it("warns and reroutes when a saved council plan drifts from the live model inventory", async () => {
+    const models = [model("cheap", "one")];
+    const runtime = new MockRuntime(models);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const plan = await service.buildCouncil({ task: "Rename a local symbol" });
+    models.splice(0, models.length, model("quality", "two"));
+
+    const result = await service.delegate({
+      role: "implementation-worker",
+      task: "Rename a local symbol",
+      councilId: plan.id,
+    });
+    expect(result.model).toBe("quality/two");
+    expect(result.risks?.join(" ")).toContain("different model inventory");
+    expect(result.risks?.join(" ")).toContain("no longer eligible");
+  });
+
   it("terminates at the retry limit", async () => {
     const runtime = new MockRuntime([model("cheap", "one")], Array.from({ length: 5 }, () =>
       (request: Parameters<MockRuntime["executeExpert"]>[0]) => ({
@@ -111,6 +128,39 @@ describe("retry and escalation", () => {
 });
 
 describe("telemetry privacy and aggregation", () => {
+  it("restores plans and results and closes interrupted executions after restart", async () => {
+    let snapshot: import("../packages/core/src/index.js").CouncilStateSnapshot | undefined;
+    const persistence = {
+      save: async (value: import("../packages/core/src/index.js").CouncilStateSnapshot) => {
+        snapshot = structuredClone(value);
+      },
+    };
+    const runtime = new MockRuntime([model("cheap", "one")]);
+    const first = new ExpertCouncilService(runtime, { profiles: { models: profiles } }, undefined, { persistence });
+    const plan = await first.buildCouncil({ task: "Rename a local symbol" });
+    const completed = await first.delegate({ role: "implementation-worker", task: "Rename a local symbol" });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(snapshot?.plans[0]?.id).toBe(plan.id);
+
+    snapshot!.executions.push({
+      id: "exec_interrupted",
+      role: "reviewer",
+      status: "running",
+      attempts: 1,
+      startedAt: new Date().toISOString(),
+    });
+    const restored = new ExpertCouncilService(runtime, { profiles: { models: profiles } }, undefined, {
+      initialState: snapshot,
+      persistence,
+    });
+    expect((await restored.getStatus()).plans[0]?.id).toBe(plan.id);
+    expect((await restored.getResult(completed.executionMetadata!.executionId!)).status).toBe("completed");
+    expect(await restored.getResult("exec_interrupted")).toMatchObject({
+      status: "completed",
+      result: { status: "failed", summary: expect.stringContaining("process restart") },
+    });
+  });
+
   it("stores only the explicit outcome allowlist", async () => {
     const withSecret = {
       timestamp: new Date().toISOString(),

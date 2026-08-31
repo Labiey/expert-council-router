@@ -15,7 +15,7 @@ V1 includes:
 - Hard per-session tool allowlists and installed-Skill filtering.
 - Detached Git worktree isolation for mutation experts.
 - JSON CLI.
-- Six-tool asynchronous semantic MCP server.
+- Seven-tool asynchronous semantic MCP server with explicit worktree cleanup.
 - Native Pi Package.
 - Valid Codex plugin with a shared host Skill and bundled stdio MCP server.
 - Deterministic tests that never spend model credits.
@@ -258,6 +258,7 @@ Mutation is not assumed safe merely because Codex itself is sandboxed. The exter
 4. Run the Worker there with mutation tools.
 5. Return the worktree path and changed-file list.
 6. Leave integration and final acceptance to Codex or the Pi Main Agent.
+7. Call `expert_cleanup` after integrating or rejecting the result. Unclaimed worktrees are removed after `security.worktreeRetentionMs` (24 hours by default), and Git metadata is pruned.
 
 For a non-Git workspace, mutation fails safely by default. To opt into bounded in-place changes:
 
@@ -279,6 +280,8 @@ The default local store is `.expert-council/telemetry.jsonl`. It records model, 
 
 It does not record prompts, source content, credentials, secrets, API keys, or chain-of-thought. Aggregates include role success rate, first-pass success, tool-error rate, retry rate, verification pass rate, and average attempts. There is no remote analytics endpoint.
 
+Plans, execution states, and completed structured results are stored separately in `.expert-council/state.json`. After restart, plans and completed results remain queryable; an execution that was still running is closed as a failed interrupted result rather than being falsely reported as active. This local state can contain bounded task descriptions and expert summaries, so protect it as project data.
+
 ## CLI
 
 The CLI uses exactly the same Core and Pi runtime:
@@ -288,10 +291,11 @@ expert-council models
 expert-council inspect
 expert-council build <task>
 expert-council delegate <role> <task>
+expert-council cleanup <execution-id>
 expert-council status
 ```
 
-Use `--json` for scripting, `--cwd` for workspace, `--config` for policy, `--telemetry` for a non-default local store, and `--timeout-ms` for delegation.
+Use `--json` for scripting, `--cwd` for workspace, `--config` for policy, `--telemetry` for a non-default telemetry store, `--state` for durable council state, and `--timeout-ms` for delegation.
 
 ## MCP server
 
@@ -301,6 +305,7 @@ The semantic surface is deliberately small:
 - `expert_build`
 - `expert_delegate`
 - `expert_result`
+- `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
 
@@ -316,6 +321,9 @@ Environment:
 
 - `EXPERT_COUNCIL_WORKSPACE`: default allowed workspace.
 - `EXPERT_COUNCIL_CONFIG`: user JSON configuration.
+- `EXPERT_COUNCIL_TELEMETRY`: local telemetry JSONL path.
+- `EXPERT_COUNCIL_STATE`: durable plan/execution/result state path.
+- `EXPERT_COUNCIL_MCP_TIMEOUT_MS`: finite timeout for synchronous MCP operations; defaults to 30000.
 - `PI_CODING_AGENT_MODULE`: explicit Pi package directory when automatic resolution is unavailable.
 
 A generic Codex MCP configuration can launch that absolute script path. The native Codex plugin below already bundles and configures the server.
@@ -334,7 +342,7 @@ Or for one run without persisting it:
 pi -e ./packages/pi-package
 ```
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same six semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same seven semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
 
 Pi delegation is non-blocking. When an expert finishes, the extension sends compact JSON containing its completed `executionId` and, only when supplied, `taskDescription`; it never includes feedback. If the Main Agent is working, the notification is delivered as `steer`; if it is idle, a `followUp` with `triggerTurn` wakes it immediately. The Main Agent then calls `expert_result` to fetch the structured feedback. Because completion reawakens native Pi automatically, the Main Agent should end its turn after dispatching or completing other useful work rather than poll or silently wait and spend tokens.
 
@@ -392,13 +400,13 @@ The Codex integration is a plugin artifact rather than a clone of the Pi Package
 
 ## Known limitations
 
-- Pi APIs evolve quickly. V1 is verified against the installed 0.84.4 SDK. Upstream package resolution is capability-detected, but versions with materially different `ModelRuntime` or `createAgentSession` contracts fail with a clear diagnostic.
+- Pi APIs evolve quickly. V1 is verified against the installed 0.84.4 SDK. Required SDK, model-runtime, resource-loader, and session methods are capability-validated; incompatible versions fail with a specific missing-contract diagnostic.
 - Pi does not expose a universal real-world billing type. Unknown billing stays `unknown`; users must configure subscriptions, quotas, and promotional access.
 - V1 does not infer subjective coding quality from model names or fetch benchmark presets.
 - Detached worktrees start from committed `HEAD`; uncommitted Main Agent changes are not copied. This is intentional isolation and must be considered when forming the bounded task.
-- Worktree changes are returned for review, not automatically merged or applied. Full host-native worktree handoff is not standardized across external MCP runtimes.
+- Worktree changes are returned for review, not automatically merged or applied. They require `expert_cleanup` after acceptance/rejection and otherwise expire after the configured retention window.
 - Mutation in non-Git workspaces requires explicit in-place opt-in.
-- MCP plan/execution status is process-local; durable outcomes are persisted, active jobs are not resumed after server restart.
+- Active model calls are not resumed after server restart; durable state converts them to explicit interrupted failures while preserving plans and completed results.
 - Skill discovery and hard tool restriction are available in the verified Pi SDK. On a future Pi build missing either feature, capabilities report the limitation; mutation is not silently weakened.
 - Codex's own sandbox does not contain an external Pi runtime. Expert Council therefore enforces its separate allowed-root and worktree boundary.
 - No arbitrary package installation, recursive expert trees, graphical UI, remote control plane, or remote analytics is included in V1.

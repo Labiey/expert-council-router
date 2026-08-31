@@ -15,7 +15,7 @@ V1 已包含：
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 包含 6 个异步语义工具的 MCP Server。
+- 包含 7 个异步语义工具及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件。
 - 不会消耗模型额度的确定性自动化测试。
@@ -264,6 +264,7 @@ missing_context permission_error unknown
 4. 在该 worktree 中为 Worker 提供写入工具。
 5. 返回 worktree 路径和修改文件列表。
 6. 由 Codex 或 Pi 主代理检查、整合并最终验收。
+7. 整合或拒绝结果后调用 `expert_cleanup`。无人认领的 worktree 会在 `security.worktreeRetentionMs` 后自动清理，默认保留 24 小时，并同步 prune Git 元数据。
 
 非 Git 工作区默认拒绝写入。若确实需要原地修改，必须显式配置：
 
@@ -285,6 +286,8 @@ missing_context permission_error unknown
 
 它不会记录 Prompt、源码内容、凭据、API Key、Secret 或思维过程。聚合指标包括按角色成功率、首轮成功率、工具错误率、重试率、验证通过率和平均尝试次数。V1 没有远程分析端点。
 
+计划、执行状态和已完成的结构化结果另行保存在 `.expert-council/state.json`。进程重启后仍可查询计划和已完成结果；重启时仍在运行的任务会被关闭为明确的中断失败，而不会继续显示为活动任务。该本地状态可能包含有限的任务描述和专家摘要，应按项目数据保护。
+
 ## CLI
 
 CLI 与 MCP、Pi Package 使用完全相同的 Core 和 Pi Runtime：
@@ -294,6 +297,7 @@ expert-council models
 expert-council inspect
 expert-council build <task>
 expert-council delegate <role> <task>
+expert-council cleanup <execution-id>
 expert-council status
 ```
 
@@ -303,16 +307,18 @@ expert-council status
 - `--cwd`：项目工作区。
 - `--config`：用户策略文件。
 - `--telemetry`：自定义本地遥测路径。
+- `--state`：自定义持久化计划、执行和结果状态路径。
 - `--timeout-ms`：专家执行超时。
 
 ## MCP Server
 
-MCP 表面刻意保持为 6 个语义工具：
+MCP 表面刻意保持为 7 个语义工具：
 
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
 - `expert_result`
+- `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
 
@@ -328,6 +334,9 @@ node packages/mcp-server/dist/bin.js
 
 - `EXPERT_COUNCIL_WORKSPACE`：默认允许工作区。
 - `EXPERT_COUNCIL_CONFIG`：用户 JSON 配置。
+- `EXPERT_COUNCIL_TELEMETRY`：本地遥测 JSONL 路径。
+- `EXPERT_COUNCIL_STATE`：持久化计划、执行和结果状态路径。
+- `EXPERT_COUNCIL_MCP_TIMEOUT_MS`：同步 MCP 操作的有限超时，默认 30000 毫秒。
 - `PI_CODING_AGENT_MODULE`：自动解析失败时显式指定 Pi 包目录。
 
 Codex 插件已经内置并配置该 MCP Server，不需要复制业务逻辑。
@@ -346,7 +355,7 @@ pi install ./packages/pi-package
 pi -e ./packages/pi-package
 ```
 
-Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 6 个语义工具，不包含另一套独立路由实现。
+Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 7 个语义工具，不包含另一套独立路由实现。
 
 Pi 委派是非阻断式的。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。由于原生 Pi 会在任务完成后自动重新唤醒主 Agent，主 Agent 派发完任务或完成其他有价值操作后应直接结束当前回合，不要轮询或静默等待消耗 token。
 
@@ -396,13 +405,13 @@ Codex Integration 是独立插件制品，不是 Pi Package 的复制品。提�
 
 ## 已知限制
 
-- Pi API 变化较快。V1 已在本机 0.84.4 SDK 上验证；若未来版本的 `ModelRuntime` 或 `createAgentSession` 合约发生实质变化，运行时会明确报错。
+- Pi API 变化较快。V1 已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
 - Pi 没有统一的真实计费类型 API。无法确认的计费保持 `unknown`，订阅、额度和促销访问需要用户配置。
 - V1 不会根据模型名称推断主观编码质量，也不会自动下载基准预设。
 - Detached worktree 从已提交的 `HEAD` 开始，不会复制主工作区未提交改动。这是刻意的隔离设计。
-- Worktree 修改只返回给主代理审查，不会自动合并或应用。
+- Worktree 修改只返回给主代理审查，不会自动合并或应用；验收或拒绝后应调用 `expert_cleanup`，否则将在保留期结束后自动清理。
 - 非 Git 工作区的写入需要显式原地修改授权。
-- MCP 中的活动计划与执行状态位于进程内；本地结果会持久化，但 Server 重启后不会恢复正在运行的任务。
+- 正在进行的模型调用不会在 Server 重启后续跑；持久化状态会把它关闭为明确的中断失败，同时保留计划和已完成结果。
 - Codex 自身的沙箱不会自动包含外部 Pi Runtime，因此 Expert Council 使用单独的允许根目录和 worktree 边界。
 - V1 不包含任意第三方包自动安装、递归专家树、图形界面、远程控制平面或远程遥测。
 

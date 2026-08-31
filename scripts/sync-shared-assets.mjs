@@ -15,6 +15,7 @@ for (const target of skillTargets) {
 const roleSource = path.join(root, "packages", "core", "src", "roles", "prompts");
 const roleTargets = [
   path.join(root, "packages", "core", "dist", "roles"),
+  path.join(root, "packages", "pi-runtime", "dist", "roles"),
   path.join(root, "packages", "codex-integration", "plugin", "expert-council", "dist", "roles"),
 ];
 const roleFiles = (await readdir(roleSource)).filter((file) => file.endsWith(".md"));

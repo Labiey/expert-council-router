@@ -8,7 +8,14 @@
   "routing": {
     "maxExperts": 4,
     "minimumWorkerToolReliability": 4,
-    "localLearningMaxAdjustment": 1
+    "localLearningMaxAdjustment": 1,
+    "taskClassification": {
+      "tinyMaxWords": 8,
+      "tinyMaxCjkChars": 18,
+      "complexMinWords": 35,
+      "complexMinCjkChars": 60,
+      "complexSignalThreshold": 2
+    }
   },
   "retry": {
     "maxAttempts": 3,
@@ -19,6 +26,7 @@
     "workspaceStrategy": "auto",
     "allowInPlaceMutations": false,
     "allowedWorkspaceRoots": [],
-    "trustedSkills": []
+    "trustedSkills": [],
+    "worktreeRetentionMs": 86400000
   }
 }

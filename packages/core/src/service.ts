@@ -1,4 +1,4 @@
-import { buildCouncilPlan, classifyTask } from "./council.js";
+import { buildCouncilPlan, classifyTask, modelInventoryFingerprint } from "./council.js";
 import { type CouncilConfig, getModelProfile, parseCouncilConfig } from "./config.js";
 import { decideEscalation } from "./escalation.js";
 import { listRoles } from "./roles.js";
@@ -7,29 +7,25 @@ import { MemoryTelemetryStore } from "./telemetry.js";
 import type {
   BuildCouncilRequest,
   CouncilPlan,
+  CouncilStateOptions,
+  CouncilStateSnapshot,
   CouncilStatus,
   DelegationHandle,
   DelegationRequest,
   EscalationRequest,
   ExpertCouncil,
+  ExpertCleanupResult,
   ExpertOutcome,
   ExpertResult,
   ExpertResultLookup,
   ExpertRuntime,
+  ExecutionStateSnapshot,
   FailureType,
   ResourceInventory,
   TelemetryStore,
 } from "./types.js";
 
-interface ExecutionState {
-  id: string;
-  role: DelegationRequest["role"];
-  status: "running" | "success" | "partial" | "failed";
-  model?: string;
-  attempts: number;
-  startedAt: string;
-  finishedAt?: string;
-}
+type ExecutionState = ExecutionStateSnapshot;
 
 function executionId(): string {
   return `exec_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
@@ -41,7 +37,21 @@ function parseModelKey(key: string): { provider: string; id: string } {
 }
 
 function failureType(result: ExpertResult): FailureType {
-  return result.executionMetadata?.failureType ?? (result.status === "failed" ? "unknown" : "unknown");
+  if (result.executionMetadata?.failureType) return result.executionMetadata.failureType;
+  const summary = result.summary.toLowerCase();
+  if (summary.includes("timeout") || summary.includes("timed out")) return "timeout";
+  if (summary.includes("permission") || summary.includes("workspace") || summary.includes("worktree")) return "permission_error";
+  if (
+    summary.includes("provider") ||
+    summary.includes("api key") ||
+    summary.includes("rate limit") ||
+    summary.includes("model registry") ||
+    summary.includes("not currently available")
+  ) return "provider_error";
+  if (summary.includes("tool")) return "tool_call_error";
+  if (summary.includes("test")) return "test_failure";
+  if (summary.includes("context")) return "missing_context";
+  return "unknown";
 }
 
 export class ExpertCouncilService implements ExpertCouncil {
@@ -49,13 +59,60 @@ export class ExpertCouncilService implements ExpertCouncil {
   private readonly plans = new Map<string, CouncilPlan>();
   private readonly executions = new Map<string, ExecutionState>();
   private readonly results = new Map<string, ExpertResult>();
+  private persistenceQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly runtime: ExpertRuntime,
     config: unknown = {},
     private readonly telemetry: TelemetryStore = new MemoryTelemetryStore(),
+    private readonly stateOptions: CouncilStateOptions = {},
   ) {
     this.config = parseCouncilConfig(config);
+    const initial = stateOptions.initialState;
+    if (initial?.version === 1) {
+      for (const plan of initial.plans) this.plans.set(plan.id, plan);
+      for (const execution of initial.executions) {
+        const restored = { ...execution };
+        if (restored.status === "running") {
+          restored.status = "failed";
+          restored.finishedAt = new Date().toISOString();
+          this.results.set(restored.id, {
+            status: "failed",
+            role: restored.role,
+            model: restored.model ?? "unassigned",
+            summary: "Expert execution was interrupted by a host process restart and cannot be resumed.",
+            executionMetadata: {
+              executionId: restored.id,
+              attempts: restored.attempts,
+              failureType: "provider_error",
+            },
+          });
+        }
+        this.executions.set(restored.id, restored);
+      }
+      for (const entry of initial.results) {
+        if (!this.results.has(entry.executionId)) this.results.set(entry.executionId, entry.result);
+      }
+      void this.persistState().catch(() => undefined);
+    }
+  }
+
+  private snapshot(): CouncilStateSnapshot {
+    return {
+      version: 1,
+      plans: [...this.plans.values()],
+      executions: [...this.executions.values()].map((execution) => ({ ...execution })),
+      results: [...this.results.entries()].map(([executionId, result]) => ({ executionId, result })),
+    };
+  }
+
+  private persistState(): Promise<void> {
+    if (!this.stateOptions.persistence) return Promise.resolve();
+    const snapshot = this.snapshot();
+    this.persistenceQueue = this.persistenceQueue
+      .catch(() => undefined)
+      .then(() => this.stateOptions.persistence!.save(snapshot));
+    return this.persistenceQueue;
   }
 
   async inspectResources(): Promise<ResourceInventory> {
@@ -86,6 +143,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     const constraints = { ...request.constraints, runtimeCapabilities };
     const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates);
     this.plans.set(plan.id, plan);
+    await this.persistState();
     return plan;
   }
 
@@ -99,6 +157,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       startedAt: new Date().toISOString(),
     };
     this.executions.set(id, state);
+    void this.persistState().catch(() => undefined);
     const started = Date.now();
     const result = this.runDelegation(request, state, started).catch((error: unknown) => {
       const failed: ExpertResult = {
@@ -117,6 +176,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       return failed;
     }).then((completed) => {
       this.results.set(id, completed);
+      void this.persistState().catch(() => undefined);
       return completed;
     });
     return { executionId: id, result };
@@ -139,6 +199,13 @@ export class ExpertCouncilService implements ExpertCouncil {
       this.runtime.listSkills(),
     ]);
     const plan = request.councilId ? this.plans.get(request.councilId) : undefined;
+    const planWarnings: string[] = [];
+    if (request.councilId && !plan) {
+      planWarnings.push(`Council plan ${request.councilId} is unavailable; routing used the current inventory.`);
+    }
+    if (plan?.inventoryFingerprint && plan.inventoryFingerprint !== modelInventoryFingerprint(models)) {
+      planWarnings.push(`Council plan ${plan.id} was built against a different model inventory; routing was refreshed.`);
+    }
     const planned = plan?.experts.find((expert) => expert.role === request.role);
     const ranked = rankModels({
       models,
@@ -148,6 +215,9 @@ export class ExpertCouncilService implements ExpertCouncil {
       telemetry: aggregates,
     });
     if (planned) {
+      if (!ranked.candidates.some((candidate) => candidate.model === planned.model)) {
+        planWarnings.push(`Planned model ${planned.model} is no longer eligible for ${request.role}; a current alternative was selected.`);
+      }
       ranked.candidates.sort((a, b) => (a.model === planned.model ? -1 : b.model === planned.model ? 1 : b.score - a.score));
     }
     if (!ranked.candidates.length) {
@@ -156,7 +226,7 @@ export class ExpertCouncilService implements ExpertCouncil {
         role: request.role,
         model: "unassigned",
         summary: "No eligible model satisfies the role and runtime constraints.",
-        risks: ranked.rejected.flatMap((candidate) => candidate.rejected ?? []).slice(0, 5),
+        risks: [...planWarnings, ...ranked.rejected.flatMap((candidate) => candidate.rejected ?? [])].slice(0, 8),
         executionMetadata: { executionId: id, attempts: 0, failureType: "permission_error", durationMs: Date.now() - started },
       };
       Object.assign(state, { status: result.status, finishedAt: new Date().toISOString() });
@@ -175,6 +245,8 @@ export class ExpertCouncilService implements ExpertCouncil {
       state.model = current.model;
       const modelParts = parseModelKey(current.model);
       const profile = getModelProfile(this.config, modelParts.provider, modelParts.id);
+      const configuredReasoning = profile.preferredReasoningByRole?.[request.role];
+      const preferredReasoning = typeof configuredReasoning === "string" ? configuredReasoning : undefined;
       const member = plan?.experts.find((expert) => expert.role === request.role);
       const role = listRoles().find((definition) => definition.role === request.role)!;
       const activatableSkills = new Set(
@@ -196,8 +268,8 @@ export class ExpertCouncilService implements ExpertCouncil {
         model: current.model,
         tools: member?.tools ?? role.tools,
         skills: selectedSkills,
-        ...((current.reasoningLevel ?? profile.preferredReasoningByRole?.[request.role])
-          ? { reasoningLevel: current.reasoningLevel ?? profile.preferredReasoningByRole?.[request.role] }
+        ...((current.reasoningLevel ?? preferredReasoning)
+          ? { reasoningLevel: current.reasoningLevel ?? preferredReasoning }
           : {}),
         readOnly: role.readOnly,
         ...(request.workspace ? { workspace: request.workspace } : {}),
@@ -242,6 +314,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       durationMs: Date.now() - started,
       escalationCount: escalations,
     };
+    if (planWarnings.length) result.risks = [...planWarnings, ...(result.risks ?? [])].slice(0, 20);
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);
     await this.telemetry.record({
@@ -249,7 +322,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       model: parsed.id,
       provider: parsed.provider,
       role: request.role,
-      taskCategory: classifyTask(request.task),
+      taskCategory: classifyTask(request.task, this.config.routing.taskClassification),
       success: result.status === "success",
       firstPass: result.status === "success" && state.attempts === 1,
       toolErrors: failures.filter((failure) => failure.type === "tool_call_error").length,
@@ -270,6 +343,14 @@ export class ExpertCouncilService implements ExpertCouncil {
     return result
       ? { executionId, status: "completed", result }
       : { executionId, status: "running" };
+  }
+
+  async cleanup(executionId: string): Promise<ExpertCleanupResult> {
+    if (!this.executions.has(executionId)) return { executionId, status: "not-found" };
+    if (!this.runtime.cleanupExecution) {
+      return { executionId, status: "unsupported", message: "The configured expert runtime does not support cleanup." };
+    }
+    return { executionId, ...(await this.runtime.cleanupExecution(executionId)) };
   }
 
   async escalate(request: EscalationRequest) {

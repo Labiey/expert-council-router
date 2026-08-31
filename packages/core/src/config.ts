@@ -1,19 +1,26 @@
 import { z } from "zod";
-import type { BillingPolicyEntry, CapabilityDimension, ExpertRole, ModelProfile } from "./types.js";
+import {
+  CAPABILITY_DIMENSIONS,
+  type BillingPolicyEntry,
+  type CapabilityDimension,
+  type ExpertRole,
+  type ModelProfile,
+  type ResolvedModelProfile,
+} from "./types.js";
 
 const score = z.number().min(0).max(10);
 const capabilityFields = {
-  reasoning: score.optional(),
-  planning: score.optional(),
-  architecture: score.optional(),
-  coding: score.optional(),
-  debugging: score.optional(),
-  review: score.optional(),
-  longContext: score.optional(),
-  toolReliability: score.optional(),
-  bashReliability: score.optional(),
-  autonomousExecution: score.optional(),
-  speed: score.optional(),
+  reasoning: score.nullable().optional(),
+  planning: score.nullable().optional(),
+  architecture: score.nullable().optional(),
+  coding: score.nullable().optional(),
+  debugging: score.nullable().optional(),
+  review: score.nullable().optional(),
+  longContext: score.nullable().optional(),
+  toolReliability: score.nullable().optional(),
+  bashReliability: score.nullable().optional(),
+  autonomousExecution: score.nullable().optional(),
+  speed: score.nullable().optional(),
 };
 
 export const expertRoleSchema = z.enum([
@@ -37,7 +44,7 @@ export const modelProfileSchema = z.object({
   ...capabilityFields,
   disabled: z.boolean().optional(),
   billingProfile: z.string().min(1).optional(),
-  preferredReasoningByRole: z.record(expertRoleSchema, z.string().min(1)).optional(),
+  preferredReasoningByRole: z.record(expertRoleSchema, z.string().min(1).nullable()).optional(),
   incompatibleRoles: z.array(expertRoleSchema).optional(),
 });
 
@@ -68,12 +75,32 @@ export const councilConfigSchema = z.object({
       maxExperts: z.number().int().min(1).max(8).default(4),
       minimumWorkerToolReliability: z.number().min(0).max(10).default(4),
       localLearningMaxAdjustment: z.number().min(0).max(2).default(1),
+      taskClassification: z.object({
+        tinyMaxWords: z.number().int().min(1).max(50).default(8),
+        tinyMaxCjkChars: z.number().int().min(1).max(100).default(18),
+        complexMinWords: z.number().int().min(10).max(500).default(35),
+        complexMinCjkChars: z.number().int().min(20).max(1_000).default(60),
+        complexSignalThreshold: z.number().int().min(1).max(10).default(2),
+      }).default({
+        tinyMaxWords: 8,
+        tinyMaxCjkChars: 18,
+        complexMinWords: 35,
+        complexMinCjkChars: 60,
+        complexSignalThreshold: 2,
+      }),
     })
     .default({
       roleWeights: {},
       maxExperts: 4,
       minimumWorkerToolReliability: 4,
       localLearningMaxAdjustment: 1,
+      taskClassification: {
+        tinyMaxWords: 8,
+        tinyMaxCjkChars: 18,
+        complexMinWords: 35,
+        complexMinCjkChars: 60,
+        complexSignalThreshold: 2,
+      },
     }),
   retry: z
     .object({
@@ -88,12 +115,14 @@ export const councilConfigSchema = z.object({
       allowInPlaceMutations: z.boolean().default(false),
       allowedWorkspaceRoots: z.array(z.string().min(1)).default([]),
       trustedSkills: z.array(z.string().min(1)).default([]),
+      worktreeRetentionMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
     })
     .default({
       workspaceStrategy: "auto",
       allowInPlaceMutations: false,
       allowedWorkspaceRoots: [],
       trustedSkills: [],
+      worktreeRetentionMs: 24 * 60 * 60_000,
     }),
 });
 
@@ -133,16 +162,25 @@ export const DEFAULT_CAPABILITY_PROFILE: Required<Record<CapabilityDimension, nu
   speed: 5,
 };
 
-export function mergeModelProfiles(...profiles: Array<ModelProfile | undefined>): ModelProfile {
-  const merged: ModelProfile = {};
+export function mergeModelProfiles(...profiles: Array<ModelProfile | undefined>): ResolvedModelProfile {
+  const merged: ResolvedModelProfile = {};
   for (const profile of profiles) {
     if (!profile) continue;
-    Object.assign(merged, profile);
+    for (const dimension of CAPABILITY_DIMENSIONS) {
+      const value = profile[dimension];
+      if (value === null) delete merged[dimension];
+      else if (value !== undefined) merged[dimension] = value;
+    }
+    if (profile.disabled !== undefined) merged.disabled = profile.disabled;
+    if (profile.billingProfile !== undefined) merged.billingProfile = profile.billingProfile;
+    if (profile.incompatibleRoles !== undefined) merged.incompatibleRoles = [...profile.incompatibleRoles];
     if (profile.preferredReasoningByRole) {
-      merged.preferredReasoningByRole = {
-        ...merged.preferredReasoningByRole,
-        ...profile.preferredReasoningByRole,
-      };
+      const reasoning = { ...merged.preferredReasoningByRole };
+      for (const [role, value] of Object.entries(profile.preferredReasoningByRole)) {
+        if (value === null) delete reasoning[role as ExpertRole];
+        else if (value !== undefined) reasoning[role as ExpertRole] = value;
+      }
+      merged.preferredReasoningByRole = reasoning;
     }
   }
   return merged;

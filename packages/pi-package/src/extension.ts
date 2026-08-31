@@ -67,15 +67,17 @@ export default function expertCouncilExtension(
       task: Type.String({ minLength: 1 }),
       maxExperts: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
       costPolicy: Type.Optional(Type.Union([Type.Literal("economy"), Type.Literal("balanced"), Type.Literal("quality")])),
+      minimumContextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
     }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
       return output(await (await getCouncil(ctx.cwd)).buildCouncil({
         task: params.task,
-        ...((params.maxExperts ?? params.costPolicy) ? {
+        ...(params.maxExperts !== undefined || params.costPolicy !== undefined || params.minimumContextWindow !== undefined ? {
           constraints: {
             ...(params.maxExperts ? { maxExperts: params.maxExperts } : {}),
             ...(params.costPolicy ? { costPolicy: params.costPolicy } : {}),
+            ...(params.minimumContextWindow ? { minimumContextWindow: params.minimumContextWindow } : {}),
           },
         } : {}),
       }));
@@ -145,6 +147,19 @@ export default function expertCouncilExtension(
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
       return output(await (await getCouncil(ctx.cwd)).getResult(params.executionId));
+    },
+  });
+
+  pi.registerTool({
+    name: "expert_cleanup",
+    label: "Expert Cleanup",
+    description: "Remove an isolated mutation worktree after its result has been integrated or rejected.",
+    parameters: Type.Object({
+      executionId: Type.String({ minLength: 1 }),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).cleanup(params.executionId));
     },
   });
 

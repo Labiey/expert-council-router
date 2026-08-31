@@ -34,7 +34,7 @@ function positional(args: string[]): string[] {
 }
 
 function help(): string {
-  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n`;
+  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council cleanup <execution-id> [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -62,6 +62,7 @@ export async function runCli(
       cwd: option(args, "--cwd"),
       configPath: option(args, "--config"),
       telemetryPath: option(args, "--telemetry"),
+      statePath: option(args, "--state"),
     }));
     const values = positional(args.slice(1));
     let result: unknown;
@@ -100,6 +101,12 @@ export async function runCli(
       case "status":
         result = await service.getStatus();
         break;
+      case "cleanup": {
+        const executionId = values[0];
+        if (!executionId) throw new Error("cleanup requires an execution ID");
+        result = await service.cleanup(executionId);
+        break;
+      }
       default:
         throw new Error(`Unknown command: ${command}`);
     }

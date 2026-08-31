@@ -42,13 +42,17 @@ function effectiveProfile(
   model: AvailableModel,
   config: CouncilConfig,
   constraints?: RoutingConstraints,
-): Required<Record<CapabilityDimension, number>> & { disabled?: boolean; incompatibleRoles?: ExpertRole[]; preferredReasoningByRole?: Partial<Record<ExpertRole, string>> } {
+): Required<Record<CapabilityDimension, number>> & {
+  disabled?: boolean;
+  billingProfile?: string;
+  incompatibleRoles?: ExpertRole[];
+  preferredReasoningByRole?: Partial<Record<ExpertRole, string>>;
+} {
   const configured = getModelProfile(config, model.provider, model.id);
   const taskOverride = constraints?.modelOverrides?.[`${model.provider}/${model.id}`];
   return {
     ...DEFAULT_CAPABILITY_PROFILE,
-    ...inferObjectiveCapabilities(model),
-    ...mergeModelProfiles(configured, taskOverride),
+    ...mergeModelProfiles(DEFAULT_CAPABILITY_PROFILE, inferObjectiveCapabilities(model), configured, taskOverride),
   };
 }
 
@@ -117,8 +121,7 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
   for (const model of models) {
     const key = `${model.provider}/${model.id}`;
     const profile = effectiveProfile(model, config, constraints);
-    const configured = getModelProfile(config, model.provider, model.id);
-    const billingProfile = configured.billingProfile ?? model.billingProfile;
+    const billingProfile = profile.billingProfile ?? model.billingProfile;
     const billing = getBillingEntry(config, model.provider, billingProfile);
     const failures = hardConstraintFailures(model, role, profile, billing, config, constraints);
     if (failures.length) {

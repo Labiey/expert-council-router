@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ExpertCouncil } from "../packages/core/src/index.js";
 import { runCli } from "../packages/cli/src/index.js";
-import { MCP_INPUT_SCHEMAS, MCP_TOOL_NAMES } from "../packages/mcp-server/src/index.js";
+import { MCP_INPUT_SCHEMAS, MCP_TOOL_NAMES, withMcpTimeout } from "../packages/mcp-server/src/index.js";
 import piExtension from "../packages/pi-package/src/extension.js";
 
 function mockCouncil(): ExpertCouncil {
@@ -29,6 +29,7 @@ function mockCouncil(): ExpertCouncil {
     delegate: async (request) => ({ status: "success", role: request.role, model: "p/m", summary: "ok" }),
     startDelegation: () => ({ executionId: "exec_mock", result: Promise.resolve(completed) }),
     getResult: async (executionId) => ({ executionId, status: "completed", result: completed }),
+    cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     escalate: async () => ({ action: "stop", reason: "done" }),
     getStatus: async () => ({ plans: [], executions: [], telemetry: [] }),
     recordOutcome: async () => {},
@@ -56,6 +57,7 @@ describe("MCP semantic surface", () => {
       "expert_build",
       "expert_delegate",
       "expert_result",
+      "expert_cleanup",
       "expert_escalate",
       "expert_status",
     ]);
@@ -64,6 +66,10 @@ describe("MCP semantic surface", () => {
     expect(MCP_INPUT_SCHEMAS.expert_delegate.taskDescription.safeParse("Review authentication").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.taskDescription.safeParse("x".repeat(501)).success).toBe(false);
   });
+
+  it("bounds a stalled MCP operation", async () => {
+    await expect(withMcpTimeout(new Promise(() => {}), 20)).rejects.toThrow("timed out after 20ms");
+  });
 });
 
 describe("Pi adapter registration", () => {
@@ -71,6 +77,32 @@ describe("Pi adapter registration", () => {
     const names: string[] = [];
     piExtension({ registerTool: (tool: { name: string }) => names.push(tool.name) } as never);
     expect(names).toEqual([...MCP_TOOL_NAMES]);
+  });
+
+  it("forwards the MCP-compatible minimum context constraint", async () => {
+    type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
+    const tools = new Map<string, Tool>();
+    let received: Parameters<ExpertCouncil["buildCouncil"]>[0] | undefined;
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      buildCouncil: async (request) => {
+        received = request;
+        return { id: "c", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [] };
+      },
+    };
+    piExtension({
+      registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+    } as never, { councilFor: async () => council });
+
+    await tools.get("expert_build")!.execute(
+      "call",
+      { task: "review", minimumContextWindow: 128_000 },
+      undefined,
+      undefined,
+      { cwd: "." },
+    );
+
+    expect(received?.constraints?.minimumContextWindow).toBe(128_000);
   });
 
   it.each([

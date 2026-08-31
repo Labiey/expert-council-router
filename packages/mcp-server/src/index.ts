@@ -8,6 +8,7 @@ export const MCP_TOOL_NAMES = [
   "expert_build",
   "expert_delegate",
   "expert_result",
+  "expert_cleanup",
   "expert_escalate",
   "expert_status",
 ] as const;
@@ -52,6 +53,9 @@ export const MCP_INPUT_SCHEMAS = {
   expert_result: {
     executionId: z.string().min(1),
   },
+  expert_cleanup: {
+    executionId: z.string().min(1),
+  },
   expert_escalate: {
     role,
     task: z.string().min(1),
@@ -68,6 +72,21 @@ function response(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
 }
 
+const configuredTimeout = Number.parseInt(process.env.EXPERT_COUNCIL_MCP_TIMEOUT_MS ?? "30000", 10);
+const MCP_TOOL_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout >= 1_000
+  ? configuredTimeout
+  : 30_000;
+
+export async function withMcpTimeout<T>(operation: Promise<T>, timeoutMs = MCP_TOOL_TIMEOUT_MS): Promise<T> {
+  const signal = AbortSignal.timeout(timeoutMs);
+  const timeout = new Promise<never>((_, reject) => {
+    signal.addEventListener("abort", () => reject(new Error(`Expert Council MCP tool timed out after ${timeoutMs}ms.`)), {
+      once: true,
+    });
+  });
+  return Promise.race([operation, timeout]);
+}
+
 export function createMcpServer(council: ExpertCouncil): McpServer {
   const server = new McpServer({ name: "expert-council", version: "0.1.0" });
 
@@ -79,7 +98,7 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async () => response(await council.inspectResources()),
+    async () => response(await withMcpTimeout(council.inspectResources())),
   );
   server.registerTool(
     "expert_build",
@@ -89,7 +108,7 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_build,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await council.buildCouncil(input)),
+    async (input) => response(await withMcpTimeout(council.buildCouncil(input))),
   );
   server.registerTool(
     "expert_delegate",
@@ -119,7 +138,17 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_result,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await council.getResult(input.executionId)),
+    async (input) => response(await withMcpTimeout(council.getResult(input.executionId))),
+  );
+  server.registerTool(
+    "expert_cleanup",
+    {
+      title: "Clean Up Expert Workspace",
+      description: "Remove an isolated mutation worktree after its result has been integrated or rejected.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_cleanup,
+      annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
+    },
+    async (input) => response(await withMcpTimeout(council.cleanup(input.executionId))),
   );
   server.registerTool(
     "expert_escalate",
@@ -129,7 +158,7 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_escalate,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await council.escalate({
+    async (input) => response(await withMcpTimeout(council.escalate({
       role: input.role as ExpertRole,
       task: input.task,
       currentModel: input.currentModel,
@@ -138,17 +167,17 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
         type: failure.type as FailureType,
         summary: failure.summary,
       })),
-    })),
+    }))),
   );
   server.registerTool(
     "expert_status",
     {
       title: "Expert Council Status",
-      description: "Return compact in-process plans, executions, and local aggregate outcomes.",
+      description: "Return compact durable plans, execution states, and local aggregate outcomes.",
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async () => response(await council.getStatus()),
+    async () => response(await withMcpTimeout(council.getStatus())),
   );
   return server;
 }

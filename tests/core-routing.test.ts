@@ -6,6 +6,7 @@ import {
   ConfigValidationError,
   DEFAULT_CAPABILITY_PROFILE,
   getRole,
+  mergeModelProfiles,
   normalizePiModel,
   parseCouncilConfig,
   rankModels,
@@ -115,6 +116,15 @@ describe("council sizing and permissions", () => {
     expect(rolesForTask("complex-feature", 3)).toHaveLength(3);
   });
 
+  it("classifies equivalent English and Chinese tasks consistently", () => {
+    expect(classifyTask("Fix the login button color")).toBe("normal");
+    expect(classifyTask("修复登录按钮颜色")).toBe("normal");
+    expect(classifyTask("Debug a distributed concurrency race across multiple packages")).toBe("complex-debugging");
+    expect(classifyTask("调试跨模块分布式并发竞态问题")).toBe("complex-debugging");
+    expect(classifyTask("Review the service architecture")).toBe("architecture");
+    expect(classifyTask("评审服务架构")).toBe("architecture");
+  });
+
   it("never grants mutation tools to read-only roles", () => {
     for (const role of ["planner", "scout", "architecture-oracle", "reviewer"] as const) {
       expect(getRole(role).tools).not.toContain("edit");
@@ -135,6 +145,17 @@ describe("council sizing and permissions", () => {
 });
 
 describe("configuration", () => {
+  it("deep-merges reasoning preferences and lets null unset inherited profile values", () => {
+    expect(mergeModelProfiles(
+      { coding: 9, review: 8, preferredReasoningByRole: { reviewer: "high", planner: "medium" } },
+      { coding: null, preferredReasoningByRole: { reviewer: null } },
+    )).toEqual({
+      review: 8,
+      preferredReasoningByRole: { planner: "medium" },
+    });
+    expect(parseCouncilConfig({ profiles: { models: { "p/m": { coding: null } } } }).profiles.models["p/m"]?.coding).toBeNull();
+  });
+
   it("returns actionable paths for invalid values", () => {
     expect(() => parseCouncilConfig({ routing: { maxExperts: 99 } })).toThrow(ConfigValidationError);
     try {

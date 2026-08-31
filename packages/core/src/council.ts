@@ -11,19 +11,77 @@ import type {
   TelemetryAggregate,
 } from "./types.js";
 
-export function classifyTask(task: string): TaskClass {
-  const normalized = task.toLowerCase();
-  const debugging = /\b(bug|debug|race|deadlock|crash|failure|failing|regression|修复|故障|竞态|报错)\b/.test(normalized);
-  const architecture = /\b(architect|design review|migration strategy|架构|设计评审)\b/.test(normalized);
+export interface TaskClassificationOptions {
+  tinyMaxWords: number;
+  tinyMaxCjkChars: number;
+  complexMinWords: number;
+  complexMinCjkChars: number;
+  complexSignalThreshold: number;
+}
+
+const DEFAULT_TASK_CLASSIFICATION: TaskClassificationOptions = {
+  tinyMaxWords: 8,
+  tinyMaxCjkChars: 18,
+  complexMinWords: 35,
+  complexMinCjkChars: 60,
+  complexSignalThreshold: 2,
+};
+
+function englishTerm(text: string, terms: string[]): boolean {
+  return terms.some((term) => new RegExp(`\\b${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text));
+}
+
+function cjkTerm(text: string, terms: string[]): boolean {
+  return terms.some((term) => text.includes(term));
+}
+
+export function classifyTask(
+  task: string,
+  options: TaskClassificationOptions = DEFAULT_TASK_CLASSIFICATION,
+): TaskClass {
+  const normalized = task.toLowerCase().normalize("NFKC");
+  const wordCount = normalized.match(/[a-z0-9]+(?:[-_][a-z0-9]+)*/g)?.length ?? 0;
+  const cjkCount = normalized.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0;
+  const debugging = englishTerm(normalized, ["bug", "debug", "race", "deadlock", "crash", "failure", "failing", "regression", "fix"])
+    || cjkTerm(normalized, ["修复", "故障", "竞态", "死锁", "崩溃", "报错", "回归"]);
+  const architecture = englishTerm(normalized, ["architect", "architecture"])
+    || normalized.includes("design review")
+    || normalized.includes("migration strategy")
+    || cjkTerm(normalized, ["架构", "设计评审", "迁移策略"]);
+  const feature = englishTerm(normalized, ["implement", "build", "feature", "integrate", "develop"])
+    || cjkTerm(normalized, ["开发", "实现", "集成", "功能"]);
   const complexitySignals = [
-    /\b(cross[- ]?package|cross[- ]?service|distributed|concurrency|security boundary|migrate|重构|跨模块|并发|安全边界)\b/,
-    /\b(implement|build|feature|integrate|开发|实现|集成)\b/,
-  ].filter((pattern) => pattern.test(normalized)).length;
-  if (architecture && (task.length > 180 || complexitySignals > 0)) return "architecture";
-  if (debugging && (task.length > 140 || complexitySignals > 0)) return "complex-debugging";
-  if (task.length < 80 && complexitySignals === 0 && !debugging) return "tiny";
-  if (task.length > 220 || complexitySignals > 1) return "complex-feature";
-  return debugging ? "complex-debugging" : "normal";
+    englishTerm(normalized, ["distributed"]) || cjkTerm(normalized, ["分布式"]),
+    englishTerm(normalized, ["concurrency", "concurrent", "deadlock", "race"]) || cjkTerm(normalized, ["并发", "死锁", "竞态"]),
+    normalized.includes("security boundary") || cjkTerm(normalized, ["安全边界", "权限边界"]),
+    /\bcross[- ]?(package|service|module)\b/i.test(normalized) || cjkTerm(normalized, ["跨包", "跨服务", "跨模块"]),
+    englishTerm(normalized, ["migrate", "migration", "refactor"]) || cjkTerm(normalized, ["迁移", "重构"]),
+    normalized.includes("repository-wide") || normalized.includes("multiple packages") || cjkTerm(normalized, ["全仓库", "多模块", "多个包"]),
+    englishTerm(normalized, ["complex", "difficult", "large-scale"]) || cjkTerm(normalized, ["复杂", "困难", "大规模"]),
+  ].filter(Boolean).length;
+  const longTask = wordCount >= options.complexMinWords || cjkCount >= options.complexMinCjkChars;
+  const complex = longTask || complexitySignals >= options.complexSignalThreshold;
+
+  if (architecture) return "architecture";
+  if (debugging) return complex ? "complex-debugging" : "normal";
+  if (feature && complex) return "complex-feature";
+  if (complex) return "complex-feature";
+  if (!feature && wordCount <= options.tinyMaxWords && cjkCount <= options.tinyMaxCjkChars) return "tiny";
+  return "normal";
+}
+
+export function modelInventoryFingerprint(models: readonly AvailableModel[]): string {
+  return models
+    .map((model) => [
+      model.provider,
+      model.id,
+      model.available ? "1" : "0",
+      model.contextWindow ?? "",
+      model.reasoning ? "1" : "0",
+      ...(model.supportedReasoningLevels ?? []),
+    ].join(":"))
+    .sort()
+    .join("|");
 }
 
 export function rolesForTask(taskClass: TaskClass, maxExperts: number): ExpertRole[] {
@@ -46,7 +104,7 @@ export function buildCouncilPlan(
   config: CouncilConfig,
   telemetry: TelemetryAggregate[] = [],
 ): CouncilPlan {
-  const taskClass = classifyTask(request.task);
+  const taskClass = classifyTask(request.task, config.routing.taskClassification);
   const maxExperts = Math.min(request.constraints?.maxExperts ?? config.routing.maxExperts, config.routing.maxExperts);
   const roles = rolesForTask(taskClass, maxExperts);
   const experts: CouncilMember[] = [];
@@ -90,5 +148,6 @@ export function buildCouncilPlan(
     experts,
     createdAt: new Date().toISOString(),
     warnings,
+    inventoryFingerprint: modelInventoryFingerprint(models),
   };
 }

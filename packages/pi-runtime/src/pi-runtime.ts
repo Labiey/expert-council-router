@@ -1,5 +1,4 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
 import {
   normalizePiModels,
   getRole,
@@ -12,7 +11,15 @@ import {
   type RuntimeCapabilities,
   type SkillInfo,
 } from "@expert-council/core";
-import { loadPiSdk, type PiModelRuntimeLike, type PiSdkLike, type PiSessionLike } from "./pi-sdk.js";
+import {
+  loadPiSdk,
+  validatePiSdk,
+  validatePiModelRuntime,
+  validatePiSession,
+  type PiModelRuntimeLike,
+  type PiSdkLike,
+  type PiSessionLike,
+} from "./pi-sdk.js";
 import { WorkspaceBoundary, type PreparedWorkspace } from "./workspace.js";
 
 export interface PiExpertRuntimeOptions {
@@ -68,7 +75,14 @@ function failureFromError(error: unknown): FailureType {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (error instanceof ExecutionTimeoutError || message.includes("timeout")) return "timeout";
   if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) return "permission_error";
-  if (message.includes("provider") || message.includes("api key") || message.includes("rate limit")) return "provider_error";
+  if (
+    message.includes("provider") ||
+    message.includes("api key") ||
+    message.includes("rate limit") ||
+    message.includes("model registry") ||
+    message.includes("not currently available") ||
+    message.includes("model unavailable")
+  ) return "provider_error";
   if (message.includes("tool")) return "tool_call_error";
   return "unknown";
 }
@@ -124,8 +138,7 @@ async function rolePrompt(role: string): Promise<string> {
   if (process.env.EXPERT_COUNCIL_ROLE_DIR) {
     return readFile(`${process.env.EXPERT_COUNCIL_ROLE_DIR}/${role}.md`, "utf8");
   }
-  const url = import.meta.resolve(`@expert-council/core/roles/${role}.md`);
-  return readFile(fileURLToPath(url), "utf8");
+  return readFile(new URL(`./roles/${role}.md`, import.meta.url), "utf8");
 }
 
 function executionPrompt(request: ExpertExecutionRequest, roleInstructions: string): string {
@@ -134,7 +147,6 @@ function executionPrompt(request: ExpertExecutionRequest, roleInstructions: stri
 
 export class PiExpertRuntime implements ExpertRuntime {
   private readonly boundary: WorkspaceBoundary;
-  private availableCache?: AvailableModel[];
 
   private constructor(
     private readonly sdk: PiSdkLike,
@@ -147,14 +159,17 @@ export class PiExpertRuntime implements ExpertRuntime {
 
   static async create(options: PiExpertRuntimeOptions): Promise<PiExpertRuntime> {
     const loaded = options.sdk ? { sdk: options.sdk, packageName: options.packageName ?? "injected-pi-sdk" } : await loadPiSdk();
-    const modelRuntime = options.modelRuntime ?? (await loaded.sdk.ModelRuntime.create({ allowModelNetwork: false }));
-    return new PiExpertRuntime(loaded.sdk, modelRuntime, options, loaded.packageName);
+    const sdk = validatePiSdk(loaded.sdk, loaded.packageName);
+    const modelRuntime = validatePiModelRuntime(
+      options.modelRuntime ?? (await sdk.ModelRuntime.create({ allowModelNetwork: false })),
+      `${loaded.packageName} ModelRuntime`,
+    );
+    return new PiExpertRuntime(sdk, modelRuntime, options, loaded.packageName);
   }
 
   async listAvailableModels(): Promise<AvailableModel[]> {
     const raw = await this.models.getAvailable();
-    this.availableCache = normalizePiModels(raw, true);
-    return this.availableCache.map((model) => ({ ...model }));
+    return normalizePiModels(raw, true).map((model) => ({ ...model }));
   }
 
   async listSkills(): Promise<SkillInfo[]> {
@@ -182,21 +197,24 @@ export class PiExpertRuntime implements ExpertRuntime {
   }
 
   async getCapabilities(): Promise<RuntimeCapabilities> {
+    const workspace = await this.boundary.mutationCapability();
     return {
       hostType: `pi:${this.packageName}`,
       modelDiscovery: true,
       hardToolRestriction: true,
       skillOverride: Boolean(this.sdk.DefaultResourceLoader),
       subagentBackend: true,
-      mutation: this.options.config.security.workspaceStrategy !== "read-only",
-      workspaceIsolation:
-        this.options.config.security.workspaceStrategy === "bounded-in-place" ? "bounded-workspace" : "git-worktree",
+      mutation: workspace.mutation,
+      workspaceIsolation: workspace.workspaceIsolation,
       supportedTools: process.platform === "win32"
         ? ["read", "grep", "find", "ls", "edit", "write", "powershell"]
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
-        "Mutation worktrees are left for the Main Agent to review and integrate.",
+        ...workspace.limitations,
+        ...(workspace.workspaceIsolation === "git-worktree"
+          ? [`Mutation worktrees are retained for review until expert_cleanup is called or the ${this.options.config.security.worktreeRetentionMs}ms retention window expires.`]
+          : []),
       ],
     };
   }
@@ -206,7 +224,7 @@ export class PiExpertRuntime implements ExpertRuntime {
     let workspace: PreparedWorkspace | undefined;
     let session: PiSessionLike | undefined;
     try {
-      const available = this.availableCache ?? (await this.listAvailableModels());
+      const available = await this.listAvailableModels();
       const [provider, ...idParts] = request.model.split("/");
       const id = idParts.join("/");
       if (!available.some((model) => model.provider === provider && model.id === id)) {
@@ -243,21 +261,31 @@ export class PiExpertRuntime implements ExpertRuntime {
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
       });
-      session = created.session;
+      session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
       const prompt = executionPrompt(request, await rolePrompt(request.role));
       const timeoutMs = request.timeoutMs ?? 10 * 60_000;
       let timer: NodeJS.Timeout | undefined;
+      const execution = (async () => {
+        await session!.prompt(prompt);
+        await session!.waitForIdle?.();
+      })();
       const timeout = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ExecutionTimeoutError(`Expert execution timed out after ${timeoutMs}ms.`)), timeoutMs);
+        timer = setTimeout(() => {
+          const aborting = session?.abort?.();
+          void aborting?.catch(() => undefined);
+          reject(new ExecutionTimeoutError(`Expert execution timed out after ${timeoutMs}ms.`));
+        }, timeoutMs);
       });
       try {
-        await Promise.race([session.prompt(prompt), timeout]);
-        await session.waitForIdle?.();
+        await Promise.race([execution, timeout]);
       } catch (error) {
-        if (error instanceof ExecutionTimeoutError) await session.abort?.();
+        if (error instanceof ExecutionTimeoutError) {
+          const aborting = session.abort?.();
+          void aborting?.catch(() => undefined);
+        }
         throw error;
       } finally {
         if (timer) clearTimeout(timer);
@@ -283,5 +311,9 @@ export class PiExpertRuntime implements ExpertRuntime {
     } finally {
       session?.dispose();
     }
+  }
+
+  async cleanupExecution(executionId: string) {
+    return this.boundary.cleanupExecution(executionId);
   }
 }

@@ -31,6 +31,49 @@ const SUPPORTED_PI_PACKAGES = [
   "@mariozechner/pi-coding-agent",
 ] as const;
 
+export function validatePiSdk(value: unknown, source = "Pi SDK"): PiSdkLike {
+  if (!value || typeof value !== "object") throw new Error(`${source} is not an object module.`);
+  const candidate = value as Record<string, unknown>;
+  const modelRuntime = candidate.ModelRuntime as Record<string, unknown> | undefined;
+  const missing: string[] = [];
+  if (typeof modelRuntime?.create !== "function") missing.push("ModelRuntime.create");
+  if (typeof candidate.createAgentSession !== "function") missing.push("createAgentSession");
+  const sessionManager = candidate.SessionManager as Record<string, unknown> | undefined;
+  if (sessionManager && typeof sessionManager.inMemory !== "function") missing.push("SessionManager.inMemory");
+  if (candidate.DefaultResourceLoader !== undefined) {
+    if (typeof candidate.DefaultResourceLoader !== "function") {
+      missing.push("DefaultResourceLoader constructor");
+    } else {
+      const prototype = (candidate.DefaultResourceLoader as { prototype?: Record<string, unknown> }).prototype;
+      if (typeof prototype?.reload !== "function") missing.push("DefaultResourceLoader.reload");
+      if (typeof prototype?.getSkills !== "function") missing.push("DefaultResourceLoader.getSkills");
+    }
+  }
+  if (missing.length) {
+    throw new Error(`${source} is incompatible with Expert Council; missing callable API(s): ${missing.join(", ")}.`);
+  }
+  return value as PiSdkLike;
+}
+
+export function validatePiModelRuntime(value: unknown, source = "Pi ModelRuntime"): PiModelRuntimeLike {
+  if (!value || typeof value !== "object") throw new Error(`${source} did not return a runtime object.`);
+  const runtime = value as Record<string, unknown>;
+  const missing = ["getAvailable", "getModel"].filter((name) => typeof runtime[name] !== "function");
+  if (missing.length) throw new Error(`${source} is incompatible; missing callable API(s): ${missing.join(", ")}.`);
+  return value as PiModelRuntimeLike;
+}
+
+export function validatePiSession(value: unknown, source = "Pi session"): PiSessionLike {
+  if (!value || typeof value !== "object") throw new Error(`${source} was not created.`);
+  const session = value as Record<string, unknown>;
+  const missing = ["prompt", "dispose"].filter((name) => typeof session[name] !== "function");
+  if (missing.length) throw new Error(`${source} is incompatible; missing callable API(s): ${missing.join(", ")}.`);
+  if (session.waitForIdle !== undefined && typeof session.waitForIdle !== "function") {
+    throw new Error(`${source} exposes a non-callable waitForIdle API.`);
+  }
+  return value as PiSessionLike;
+}
+
 async function dynamicImport(specifier: string): Promise<unknown> {
   return import(specifier);
 }
@@ -51,12 +94,7 @@ export async function loadPiSdk(): Promise<{ sdk: PiSdkLike; packageName: string
   for (const packageName of SUPPORTED_PI_PACKAGES) {
     try {
       const imported = await dynamicImport(packageName);
-      const candidate = imported as Record<string, unknown>;
-      const modelRuntime = candidate.ModelRuntime as Record<string, unknown> | undefined;
-      if (typeof modelRuntime?.create === "function" && typeof candidate.createAgentSession === "function") {
-        return { sdk: imported as PiSdkLike, packageName };
-      }
-      errors.push(`${packageName}: missing ModelRuntime/createAgentSession exports`);
+      return { sdk: validatePiSdk(imported, packageName), packageName };
     } catch (error) {
       errors.push(`${packageName}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -65,7 +103,7 @@ export async function loadPiSdk(): Promise<{ sdk: PiSdkLike; packageName: string
   if (explicitDirectory) {
     try {
       const imported = await loadFromPackageDirectory(explicitDirectory);
-      return { sdk: imported as PiSdkLike, packageName: `path:${explicitDirectory}` };
+      return { sdk: validatePiSdk(imported, `PI_CODING_AGENT_MODULE ${explicitDirectory}`), packageName: `path:${explicitDirectory}` };
     } catch (error) {
       errors.push(`PI_CODING_AGENT_MODULE: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -87,7 +125,7 @@ export async function loadPiSdk(): Promise<{ sdk: PiSdkLike; packageName: string
     for (const packageName of SUPPORTED_PI_PACKAGES) {
       try {
         const imported = await loadFromPackageDirectory(path.join(npmRoot, ...packageName.split("/")));
-        return { sdk: imported as PiSdkLike, packageName: `${packageName}:global` };
+        return { sdk: validatePiSdk(imported, `global ${packageName}`), packageName: `${packageName}:global` };
       } catch (error) {
         errors.push(`global ${npmRoot} ${packageName}: ${error instanceof Error ? error.message : String(error)}`);
       }
