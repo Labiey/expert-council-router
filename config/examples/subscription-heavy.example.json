@@ -1,0 +1,19 @@
+{
+  "billing": {
+    "providers": {
+      "subscription-provider": {
+        "billingType": "subscription",
+        "marginalCostClass": "very-low",
+        "usagePreference": "consume-first"
+      },
+      "scarce-quota-provider": {
+        "billingType": "quota",
+        "marginalCostClass": "scarce",
+        "usagePreference": "escalation-only"
+      }
+    }
+  },
+  "routing": {
+    "maxExperts": 4
+  }
+}

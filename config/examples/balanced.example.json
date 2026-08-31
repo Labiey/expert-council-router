@@ -1,0 +1,24 @@
+{
+  "billing": {
+    "providers": {}
+  },
+  "profiles": {
+    "models": {}
+  },
+  "routing": {
+    "maxExperts": 4,
+    "minimumWorkerToolReliability": 4,
+    "localLearningMaxAdjustment": 1
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "maxEscalations": 2,
+    "correctedRetriesPerModel": 1
+  },
+  "security": {
+    "workspaceStrategy": "auto",
+    "allowInPlaceMutations": false,
+    "allowedWorkspaceRoots": [],
+    "trustedSkills": []
+  }
+}

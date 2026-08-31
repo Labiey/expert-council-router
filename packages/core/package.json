@@ -1,0 +1,23 @@
+{
+  "name": "@expert-council/core",
+  "version": "0.1.0",
+  "description": "Host-independent routing, policy, roles, escalation, and telemetry for Expert Council",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./roles/*": "./dist/roles/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "dependencies": {
+    "zod": "^4.5.4"
+  }
+}

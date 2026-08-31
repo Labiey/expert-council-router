@@ -1,0 +1,26 @@
+{
+  "name": "expert-council",
+  "version": "0.1.0",
+  "description": "Cost-aware dynamic Pi expert orchestration for substantial Codex tasks.",
+  "author": {
+    "name": "Expert Council Contributors"
+  },
+  "license": "MIT",
+  "keywords": ["multi-model", "orchestration", "pi", "routing"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Expert Council",
+    "shortDescription": "Route bounded work to cost-effective Pi experts",
+    "longDescription": "Build and run small semantic expert teams using current Pi models, user billing policy, capability profiles, local reliability, least-privilege tools, and bounded escalation.",
+    "developerName": "Expert Council Contributors",
+    "category": "Developer Tools",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Build an expert council for this substantial task.",
+      "Delegate a read-only architecture review.",
+      "Use a verifier to check the expert changes."
+    ],
+    "brandColor": "#4F46E5"
+  }
+}

@@ -1,0 +1,34 @@
+{
+  "name": "expert-council-monorepo",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dynamic, cost-aware multi-model expert orchestration for Pi and Codex",
+  "license": "MIT",
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "tsc -b && node scripts/sync-shared-assets.mjs && node scripts/build-codex-plugin.mjs",
+    "clean": "tsc -b --clean",
+    "typecheck": "tsc -b --pretty false",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "pack:check": "npm run build && npm pack --workspaces --dry-run",
+    "smoke:mcp": "node scripts/smoke-mcp.mjs",
+    "smoke:codex": "node scripts/smoke-mcp.mjs packages/codex-integration/plugin/expert-council/dist/server.mjs",
+    "smoke:installed-codex": "node scripts/smoke-installed-codex.mjs",
+    "validate": "npm run test && npm run typecheck && npm run pack:check"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@types/node": "^24.5.2",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.9"
+  }
+}

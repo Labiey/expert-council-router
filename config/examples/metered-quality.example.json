@@ -1,0 +1,20 @@
+{
+  "billing": {
+    "providers": {
+      "economy-api": {
+        "billingType": "metered",
+        "marginalCostClass": "low",
+        "usagePreference": "balanced"
+      },
+      "premium-api": {
+        "billingType": "metered",
+        "marginalCostClass": "high",
+        "usagePreference": "quality-sensitive"
+      }
+    }
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "maxEscalations": 1
+  }
+}

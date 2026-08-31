@@ -1,0 +1,22 @@
+{
+  "name": "@expert-council/cli",
+  "version": "0.1.0",
+  "description": "CLI for inspecting, planning, and delegating with Expert Council",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": { "expert-council": "./dist/bin.js" },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "dependencies": {
+    "@expert-council/core": "0.1.0",
+    "@expert-council/pi-runtime": "0.1.0"
+  }
+}

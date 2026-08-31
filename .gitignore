@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+*.tgz
+.env
+.env.*
+!.env.example
+.expert-council/config.json
+.expert-council/telemetry.jsonl
+.expert-council/worktrees/
+.pi/
+*.log

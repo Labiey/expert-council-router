@@ -1,0 +1,34 @@
+{
+  "$comment": "Illustrative user configuration only. Scores are hypothetical preferences, not benchmark claims.",
+  "billing": {
+    "providers": {
+      "qwen-token-plan-cn": {
+        "billingType": "subscription",
+        "marginalCostClass": "very-low",
+        "usagePreference": "consume-first"
+      },
+      "zai": {
+        "billingType": "metered",
+        "marginalCostClass": "normal",
+        "usagePreference": "quality-sensitive"
+      }
+    }
+  },
+  "profiles": {
+    "models": {
+      "qwen-token-plan-cn/example-model": {
+        "planning": 8,
+        "architecture": 8,
+        "longContext": 9,
+        "toolReliability": 5
+      },
+      "zai/example-model": {
+        "coding": 8,
+        "debugging": 8,
+        "toolReliability": 9,
+        "bashReliability": 9,
+        "autonomousExecution": 9
+      }
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "@expert-council/pi-runtime",
+  "version": "0.1.0",
+  "description": "Pi-backed model discovery and least-privilege expert execution for Expert Council",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "license": "MIT",
+  "publishConfig": { "access": "public" },
+  "dependencies": {
+    "@expert-council/core": "0.1.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.0",
+    "@mariozechner/pi-coding-agent": ">=0.73.0"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": { "optional": true },
+    "@mariozechner/pi-coding-agent": { "optional": true }
+  }
+}
