@@ -3,6 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "description": "Codex plugin distribution for Expert Council",
+  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/codex-integration" },
+  "homepage": "https://github.com/Labiey/expert-council-router#readme",
+  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "type": "module",
   "files": ["plugin/expert-council"]
 }

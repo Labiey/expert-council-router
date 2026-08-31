@@ -7,6 +7,9 @@
   "types": "./dist/extension.d.ts",
   "files": ["dist", "skills", "README.md", "LICENSE"],
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/pi-package" },
+  "homepage": "https://github.com/Labiey/expert-council-router#readme",
+  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "keywords": ["pi-package", "multi-model", "orchestration"],
   "publishConfig": { "access": "public" },
   "pi": {

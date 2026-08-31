@@ -14,6 +14,9 @@
   },
   "files": ["dist", "README.md", "LICENSE"],
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/pi-runtime" },
+  "homepage": "https://github.com/Labiey/expert-council-router#readme",
+  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "publishConfig": { "access": "public" },
   "dependencies": {
     "@expert-council/core": "0.1.0"

@@ -126,7 +126,7 @@ Objective runtime metadata is merged separately. Local outcome data adjusts a ro
 
 ### Billing policy
 
-Billing types are `subscription`, `metered`, `quota`, `free`, and `unknown`. Marginal cost and usage preference are separate because published token prices do not describe subscriptions, fixed quotas, local inference, or promotional access.
+Billing types are `subscription`, `metered`, `quota`, `free`, and `unknown`. Marginal cost and usage preference are separate because published token prices do not describe subscriptions, fixed quotas, local inference, or promotional access. For `metered` and `unknown` access, normalized non-zero published input/output prices also contribute to cost efficiency with the configurable `routing.apiPriceWeight` (default `0.35`). An all-zero price table is treated as unspecified, not proof that access is free. Subscription, free, and quota policy remains authoritative instead of being distorted by an irrelevant list price.
 
 ```json
 {
@@ -203,6 +203,8 @@ Tiny tasks use one Worker. Normal tasks use a Worker and Verifier. Complex featu
 
 Task classification and all arithmetic are deterministic. The host can inspect the selected model, alternatives, score, and concise reasons before delegation.
 
+Council construction also applies configurable diversity penalties. In particular, a Reviewer economically prefers a different provider and inferred model family from earlier council members, while role fitness and hard constraints remain decisive.
+
 ## Routing
 
 The routing pipeline is:
@@ -246,7 +248,7 @@ There is no unbounded loop and no repeated retry of the same approach by policy.
 
 ## Structured results and context efficiency
 
-Expert results contain status, role, model, summary, changed files, tests, findings, risks, next action, and bounded execution metadata. Raw source files and private chain-of-thought are neither requested nor stored. Text fields and arrays are bounded before being returned to the host.
+Expert results contain status, role, model, summary, changed files, tests, findings, risks, next action, failure type, approximate Pi usage when exposed, and bounded execution metadata. Explicit structured failure types are preferred; failed tests and provider/tool/context messages are classified deterministically, while malformed non-JSON expert output becomes `reasoning_failure`. Raw source files and private chain-of-thought are neither requested nor stored. Text fields and arrays are bounded before being returned to the host.
 
 ## Workspace security
 
@@ -276,7 +278,7 @@ See [SECURITY.md](SECURITY.md) before enabling it.
 
 ## Telemetry and local learning
 
-The default local store is `.expert-council/telemetry.jsonl`. It records model, provider, role, task category, success, first-pass outcome, tool-error count, retries, timeout, verification outcome when supplied, escalation count, attempts, host type, and optional approximate token usage.
+The default local store is `.expert-council/telemetry.jsonl`. It records an opaque execution ID, model, provider, role, task category, success, first-pass outcome, tool-error count, retries, timeout, verification outcome when supplied, escalation count, attempts, host type, and optional approximate token/cost usage exposed by Pi. Call `expert_feedback` after Main Agent verification; updates for the same execution replace its earlier sample during aggregation rather than double-counting it.
 
 It does not record prompts, source content, credentials, secrets, API keys, or chain-of-thought. Aggregates include role success rate, first-pass success, tool-error rate, retry rate, verification pass rate, and average attempts. There is no remote analytics endpoint.
 
@@ -291,6 +293,7 @@ expert-council models
 expert-council inspect
 expert-council build <task>
 expert-council delegate <role> <task>
+expert-council feedback <execution-id> --verification passed|failed
 expert-council cleanup <execution-id>
 expert-council status
 ```
@@ -305,11 +308,12 @@ The semantic surface is deliberately small:
 - `expert_build`
 - `expert_delegate`
 - `expert_result`
+- `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
 
-`expert_delegate` starts background work and immediately returns an `executionId`. Its optional `taskDescription` is a concise host-facing label, not part of the expert assignment. Use `expert_result` to retrieve feedback once execution completes. Generic MCP hosts query `expert_result` or `expert_status`; the native Pi Package additionally pushes a completion message into the Main Agent session.
+`expert_delegate` starts background work and immediately returns an `executionId`. Its optional `taskDescription` is a concise host-facing label, not part of the expert assignment. Use `expert_result` to retrieve feedback once execution completes, then call `expert_feedback` with the Main Agent's verification outcome. Generic MCP hosts query `expert_result` or `expert_status`; the native Pi Package additionally pushes a completion message into the Main Agent session.
 
 Run the stdio server directly:
 
@@ -342,7 +346,7 @@ Or for one run without persisting it:
 pi -e ./packages/pi-package
 ```
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same seven semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same eight semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
 
 Pi delegation is non-blocking. When an expert finishes, the extension sends compact JSON containing its completed `executionId` and, only when supplied, `taskDescription`; it never includes feedback. If the Main Agent is working, the notification is delivered as `steer`; if it is idle, a `followUp` with `triggerTurn` wakes it immediately. The Main Agent then calls `expert_result` to fetch the structured feedback. Because completion reawakens native Pi automatically, the Main Agent should end its turn after dispatching or completing other useful work rather than poll or silently wait and spend tokens.
 
@@ -380,9 +384,17 @@ npm run build
 npm run pack:check
 ```
 
-The deterministic suite covers model normalization, billing, Worker reliability, Oracle scoring, hard constraints, unknown and missing models, council sizing, retry, escalation, retry limits, role permissions, config validation, telemetry privacy/aggregation, Core host independence, mock Pi discovery/execution, CLI JSON, MCP schemas, and Pi extension registration.
+The deterministic suite covers model normalization, published-price and real-policy billing, Worker reliability, Oracle scoring, reviewer diversity, hard constraints, unknown and missing models, council sizing, retry, structured failure classification, escalation, retry limits, role permissions, config validation, telemetry privacy/feedback/usage aggregation, Core host independence, mock Pi discovery/execution, CLI JSON, MCP schemas, and Pi extension registration.
 
-Normal tests use mock runtimes and never call a paid model. Live provider invocation must be separately opt-in; none is performed by the supplied scripts.
+Normal tests use mock runtimes and never call a paid model. A live read-only Pi execution is available only with both an explicit model and an exact cost acknowledgement:
+
+```powershell
+$env:EXPERT_COUNCIL_LIVE_MODEL = "provider/model"
+$env:EXPERT_COUNCIL_LIVE_CONFIRM = "YES"
+npm run smoke:live:pi
+```
+
+The normal validation pipeline never invokes this script.
 
 ## Publishing
 

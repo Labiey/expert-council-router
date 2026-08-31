@@ -9,6 +9,12 @@
     "maxExperts": 4,
     "minimumWorkerToolReliability": 4,
     "localLearningMaxAdjustment": 1,
+    "apiPriceWeight": 0.35,
+    "diversity": {
+      "repeatedModelPenalty": 0.35,
+      "reviewerSameProviderPenalty": 0.25,
+      "reviewerSameFamilyPenalty": 0.5
+    },
     "taskClassification": {
       "tinyMaxWords": 8,
       "tinyMaxCjkChars": 18,

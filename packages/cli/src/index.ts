@@ -34,7 +34,7 @@ function positional(args: string[]): string[] {
 }
 
 function help(): string {
-  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council cleanup <execution-id> [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n`;
+  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -101,6 +101,16 @@ export async function runCli(
       case "status":
         result = await service.getStatus();
         break;
+      case "feedback": {
+        const executionId = values[0];
+        if (!executionId) throw new Error("feedback requires an execution ID");
+        const verification = option(args, "--verification");
+        if (verification !== "passed" && verification !== "failed") {
+          throw new Error("feedback requires --verification passed|failed");
+        }
+        result = await service.recordFeedback({ executionId, verificationPassed: verification === "passed" });
+        break;
+      }
       case "cleanup": {
         const executionId = values[0];
         if (!executionId) throw new Error("cleanup requires an execution ID");

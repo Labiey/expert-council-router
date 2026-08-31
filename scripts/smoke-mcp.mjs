@@ -18,6 +18,7 @@ try {
     "expert_build",
     "expert_delegate",
     "expert_result",
+    "expert_feedback",
     "expert_cleanup",
     "expert_escalate",
     "expert_status",

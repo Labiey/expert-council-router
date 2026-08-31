@@ -2,6 +2,7 @@ import type { ExpertOutcome, ExpertRole, TelemetryAggregate, TelemetryStore } fr
 
 export function sanitizeOutcome(outcome: ExpertOutcome): ExpertOutcome {
   return {
+    ...(outcome.executionId ? { executionId: outcome.executionId } : {}),
     timestamp: outcome.timestamp,
     model: outcome.model,
     provider: outcome.provider,
@@ -21,8 +22,14 @@ export function sanitizeOutcome(outcome: ExpertOutcome): ExpertOutcome {
 }
 
 export function aggregateOutcomes(outcomes: readonly ExpertOutcome[]): TelemetryAggregate[] {
-  const groups = new Map<string, ExpertOutcome[]>();
+  const latestByExecution = new Map<string, ExpertOutcome>();
+  const anonymous: ExpertOutcome[] = [];
   for (const outcome of outcomes) {
+    if (outcome.executionId) latestByExecution.set(outcome.executionId, outcome);
+    else anonymous.push(outcome);
+  }
+  const groups = new Map<string, ExpertOutcome[]>();
+  for (const outcome of [...anonymous, ...latestByExecution.values()]) {
     const key = `${outcome.provider}/${outcome.model}/${outcome.role}`;
     const group = groups.get(key) ?? [];
     group.push(outcome);
@@ -76,6 +83,11 @@ export function observedAdjustment(
   const aggregate = aggregates.find((item) => item.provider === provider && item.model === model && item.role === role);
   if (!aggregate || aggregate.samples < 3) return 0;
   const confidence = Math.min(1, aggregate.samples / 20);
-  const signal = aggregate.successRate * 0.55 + aggregate.firstPassSuccessRate * 0.3 + (1 - Math.min(1, aggregate.toolErrorRate)) * 0.15;
+  const signal = aggregate.verificationPassRate === undefined
+    ? aggregate.successRate * 0.55 + aggregate.firstPassSuccessRate * 0.3 + (1 - Math.min(1, aggregate.toolErrorRate)) * 0.15
+    : aggregate.successRate * 0.45
+      + aggregate.firstPassSuccessRate * 0.25
+      + (1 - Math.min(1, aggregate.toolErrorRate)) * 0.15
+      + aggregate.verificationPassRate * 0.15;
   return Math.max(-maxAdjustment, Math.min(maxAdjustment, (signal - 0.5) * 2 * confidence * maxAdjustment));
 }

@@ -10,7 +10,7 @@ Expert sessions receive only role tools and already-installed, enabled Skills. E
 
 ## Data handling
 
-Telemetry is local JSONL. It records only outcome aggregates and optional token counts. It does not record prompts, source text, credentials, API keys, or private reasoning. `.expert-council/telemetry.jsonl` is ignored by Git and npm packaging.
+Telemetry is local JSONL. It records only opaque execution IDs, bounded outcome fields, Main Agent verification outcomes, and optional token/cost estimates exposed by Pi. It does not record prompts, source text, credentials, API keys, or private reasoning. Repeated rows for one execution are reduced to the latest outcome during aggregation. `.expert-council/telemetry.jsonl` is ignored by Git and npm packaging.
 
 Durable recovery state is stored in `.expert-council/state.json`, which is also ignored by Git and npm packaging. Unlike telemetry, recovery state contains bounded council tasks and structured expert results so plans and completed work survive process restart. Treat this file as project-private data. A task that was running during a restart is recorded as interrupted and is never silently resumed.
 

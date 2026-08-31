@@ -90,6 +90,7 @@ export default function expertCouncilExtension(
     description: "Start one bounded semantic expert assignment in the background and immediately return its execution ID.",
     promptGuidelines: [
       "After expert_delegate reports that a task has completed, call expert_result with its executionId before using the feedback.",
+      "After verifying the completed result, call expert_feedback with the same executionId and verification outcome so local routing can learn.",
       "Native Pi completion notifications wake the Main Agent automatically; after dispatching background work, stop the turn instead of polling or silently waiting when no other useful work remains.",
     ],
     parameters: Type.Object({
@@ -147,6 +148,20 @@ export default function expertCouncilExtension(
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
       return output(await (await getCouncil(ctx.cwd)).getResult(params.executionId));
+    },
+  });
+
+  pi.registerTool({
+    name: "expert_feedback",
+    label: "Expert Feedback",
+    description: "Record whether Main Agent verification accepted a completed expert result for local routing telemetry.",
+    parameters: Type.Object({
+      executionId: Type.String({ minLength: 1 }),
+      verificationPassed: Type.Boolean(),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).recordFeedback(params));
     },
   });
 

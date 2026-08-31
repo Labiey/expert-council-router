@@ -50,6 +50,7 @@ describe("Pi runtime adapter", () => {
               messages: [{
                 role: "assistant",
                 content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "scouted", findings: ["x"] }) }],
+                usage: { input: 120, output: 30, cacheRead: 10, cacheWrite: 2, cost: { total: 0.02 } },
               }],
             },
           },
@@ -76,8 +77,46 @@ describe("Pi runtime adapter", () => {
       attempt: 1,
     });
     expect(result).toMatchObject({ status: "success", summary: "scouted", findings: ["x"] });
+    expect(result.executionMetadata?.usage).toEqual({
+      inputTokens: 120,
+      outputTokens: 30,
+      cacheReadTokens: 10,
+      cacheWriteTokens: 2,
+      estimatedCost: 0.02,
+    });
     expect(sessionOptions?.tools).toEqual(["read", "grep"]);
     expect(sessionOptions?.model).toBe(nativeModel);
+  });
+
+  it("classifies malformed structured output as a reasoning failure", async () => {
+    process.env.EXPERT_COUNCIL_ROLE_DIR = path.resolve("packages/core/src/roles/prompts");
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m" }],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ModelRuntime: { create: async () => modelRuntime },
+      createAgentSession: async () => ({
+        session: {
+          prompt: async () => {},
+          waitForIdle: async () => {},
+          dispose: () => {},
+          state: { messages: [{ role: "assistant", content: [{ type: "text", text: "not structured json" }] }] },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime });
+    const result = await runtime.executeExpert({
+      role: "scout",
+      task: "Inspect files",
+      model: "p/m",
+      tools: ["read"],
+      skills: [],
+      readOnly: true,
+      timeoutMs: 1_000,
+      attempt: 1,
+    });
+    expect(result).toMatchObject({ status: "partial", executionMetadata: { failureType: "reasoning_failure" } });
   });
 
   it("refreshes callable models before every execution", async () => {

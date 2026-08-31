@@ -10,6 +10,7 @@ import { getRole } from "./roles.js";
 import { observedAdjustment } from "./telemetry.js";
 import type {
   AvailableModel,
+  ApiCost,
   BillingPolicyEntry,
   CapabilityDimension,
   CapabilityProfile,
@@ -23,10 +24,36 @@ const COST_CLASS_SCORE = { "very-low": 10, low: 8, normal: 6, high: 3, scarce: 1
 const BILLING_TYPE_BONUS = { free: 2, subscription: 1.5, metered: 0, quota: -1, unknown: -0.5 } as const;
 const PREFERENCE_BONUS = { "consume-first": 1, balanced: 0, "quality-sensitive": -0.1, "escalation-only": -2 } as const;
 
-export function billingCostScore(entry: BillingPolicyEntry): number {
+function clampScore(value: number): number {
+  return Math.max(0, Math.min(10, value));
+}
+
+export function publishedApiCostScore(apiCost?: ApiCost): number | undefined {
+  if (!apiCost) return undefined;
+  const primaryPrices = [apiCost.inputPerMillion, apiCost.outputPerMillion]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  const fallbackPrices = [apiCost.cacheReadPerMillion, apiCost.cacheWritePerMillion]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
+  const prices = primaryPrices.length ? primaryPrices : fallbackPrices;
+  if (!prices.length) return undefined;
+  if (prices.every((value) => value === 0)) return undefined;
+  const averagePerMillion = prices.reduce((sum, value) => sum + value, 0) / prices.length;
+  return Number(clampScore(10 - 2 * Math.log2(1 + averagePerMillion)).toFixed(4));
+}
+
+export function billingCostScore(entry: BillingPolicyEntry, apiCost?: ApiCost, apiPriceWeight = 0.35): number {
   const base = COST_CLASS_SCORE[entry.marginalCostClass ?? "normal"];
-  const score = base + BILLING_TYPE_BONUS[entry.billingType] + PREFERENCE_BONUS[entry.usagePreference ?? "balanced"];
-  return Math.max(0, Math.min(10, score));
+  const policyScore = clampScore(base + BILLING_TYPE_BONUS[entry.billingType] + PREFERENCE_BONUS[entry.usagePreference ?? "balanced"]);
+  const publishedScore = publishedApiCostScore(apiCost);
+  if (publishedScore === undefined || !["metered", "unknown"].includes(entry.billingType)) return policyScore;
+  const weight = Math.max(0, Math.min(1, apiPriceWeight));
+  return clampScore(policyScore * (1 - weight) + publishedScore * weight);
+}
+
+export function modelFamily(model: AvailableModel): string {
+  if (model.family?.trim()) return model.family.trim().toLowerCase();
+  const firstSegment = model.id.toLowerCase().split(/[\/:._-]/u).find(Boolean) ?? model.id.toLowerCase();
+  return firstSegment.replace(/\d+$/u, "") || firstSegment;
 }
 
 function inferObjectiveCapabilities(model: AvailableModel): CapabilityProfile {
@@ -117,6 +144,9 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
   const weights = normalizeWeights(unnormalizedWeights);
   const candidates: RankedCandidate[] = [];
   const rejected: RankedCandidate[] = [];
+  const selected = models.filter((model) => selectedModels.includes(`${model.provider}/${model.id}`));
+  const selectedProviders = new Set(selected.map((model) => model.provider));
+  const selectedFamilies = new Set(selected.map(modelFamily));
 
   for (const model of models) {
     const key = `${model.provider}/${model.id}`;
@@ -132,7 +162,9 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
     let score = 0;
     const contributions: Array<[string, number]> = [];
     for (const [dimension, weight] of Object.entries(weights)) {
-      const value = dimension === "costEfficiency" ? billingCostScore(billing) : profile[dimension as CapabilityDimension];
+      const value = dimension === "costEfficiency"
+        ? billingCostScore(billing, model.apiCost, config.routing.apiPriceWeight)
+        : profile[dimension as CapabilityDimension];
       const contribution = value * weight;
       score += contribution;
       contributions.push([dimension, contribution]);
@@ -140,7 +172,12 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
 
     const learning = observedAdjustment(telemetry, key, role, config.routing.localLearningMaxAdjustment);
     score += learning;
-    if (selectedModels.includes(key)) score -= 0.35;
+    if (selectedModels.includes(key)) score -= config.routing.diversity.repeatedModelPenalty;
+    const family = modelFamily(model);
+    if (role === "reviewer") {
+      if (selectedProviders.has(model.provider)) score -= config.routing.diversity.reviewerSameProviderPenalty;
+      if (selectedFamilies.has(family)) score -= config.routing.diversity.reviewerSameFamilyPenalty;
+    }
 
     const supported = model.supportedReasoningLevels;
     const preferred = profile.preferredReasoningByRole?.[role];
@@ -150,11 +187,19 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
       .slice(0, 3)
       .map(([dimension, contribution]) => `${dimension} contributed ${contribution.toFixed(2)}`);
     reasons.push(`${billing.billingType}/${billing.marginalCostClass ?? "normal"} billing`);
+    const apiPriceScore = publishedApiCostScore(model.apiCost);
+    if (apiPriceScore !== undefined && ["metered", "unknown"].includes(billing.billingType)) {
+      reasons.push(`published API pricing contributed a ${apiPriceScore.toFixed(2)} cost score`);
+    }
+    if (role === "reviewer" && (selectedProviders.has(model.provider) || selectedFamilies.has(family))) {
+      reasons.push("reviewer diversity penalty applied");
+    }
     if (learning !== 0) reasons.push(`local outcomes adjusted score by ${learning.toFixed(2)}`);
 
     candidates.push({
       model: key,
       provider: model.provider,
+      family,
       score: Number(score.toFixed(4)),
       reasons,
       ...(reasoningLevel ? { reasoningLevel } : {}),

@@ -131,6 +131,7 @@ export function buildCouncilPlan(
       role,
       model: selected.model,
       provider: selected.provider,
+      ...(selected.family ? { family: selected.family } : {}),
       score: selected.score,
       reason: selected.reasons,
       alternatives: ranked.candidates.slice(1, 4),

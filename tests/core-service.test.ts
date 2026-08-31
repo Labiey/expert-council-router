@@ -3,6 +3,7 @@ import {
   decideEscalation,
   ExpertCouncilService,
   MemoryTelemetryStore,
+  observedAdjustment,
   sanitizeOutcome,
 } from "../packages/core/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
@@ -50,15 +51,22 @@ describe("retry and escalation", () => {
         role: request.role,
         model: request.model,
         summary: "bad tool arguments",
-        executionMetadata: { failureType: "tool_call_error" },
+        executionMetadata: { failureType: "tool_call_error", usage: { inputTokens: 10, outputTokens: 2 } },
       }),
-      (request) => ({ status: "success", role: request.role, model: request.model, summary: "fixed" }),
+      (request) => ({
+        status: "success",
+        role: request.role,
+        model: request.model,
+        summary: "fixed",
+        executionMetadata: { usage: { inputTokens: 20, outputTokens: 4 } },
+      }),
     ]);
     const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
     const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol" });
     expect(result.status).toBe("success");
     expect(runtime.requests).toHaveLength(2);
     expect(runtime.requests[0]?.model).toBe(runtime.requests[1]?.model);
+    expect(result.executionMetadata?.usage).toEqual({ inputTokens: 30, outputTokens: 6 });
   });
 
   it("moves to the next candidate after repeated failures", async () => {
@@ -128,6 +136,52 @@ describe("retry and escalation", () => {
 });
 
 describe("telemetry privacy and aggregation", () => {
+  it("lets verified outcomes influence routing conservatively", () => {
+    const base = {
+      model: "one",
+      provider: "cheap",
+      role: "reviewer" as const,
+      samples: 10,
+      successRate: 0.8,
+      firstPassSuccessRate: 0.7,
+      toolErrorRate: 0.1,
+      retryRate: 0.2,
+      averageAttempts: 1.2,
+    };
+    expect(observedAdjustment([{ ...base, verificationPassRate: 1 }], "cheap/one", "reviewer", 1)).toBeGreaterThan(
+      observedAdjustment([{ ...base, verificationPassRate: 0 }], "cheap/one", "reviewer", 1),
+    );
+  });
+
+  it("records Main Agent verification without double-counting an execution", async () => {
+    const telemetry = new MemoryTelemetryStore();
+    const runtime = new MockRuntime([model("cheap", "one")], [(request) => ({
+      status: "success",
+      role: request.role,
+      model: request.model,
+      summary: "verified",
+      executionMetadata: { usage: { inputTokens: 100, outputTokens: 20, estimatedCost: 0.01 } },
+    })]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } }, telemetry);
+    const result = await service.delegate({ role: "reviewer", task: "Review a bounded change" });
+    const executionId = result.executionMetadata!.executionId!;
+    expect(await service.recordFeedback({ executionId, verificationPassed: true })).toEqual({
+      executionId,
+      status: "recorded",
+      verificationPassed: true,
+    });
+    expect(await telemetry.aggregate()).toMatchObject([{ samples: 1, verificationPassRate: 1 }]);
+    await service.recordFeedback({ executionId, verificationPassed: false });
+    expect(await telemetry.aggregate()).toMatchObject([{ samples: 1, verificationPassRate: 0 }]);
+    expect((await telemetry.list()).at(-1)?.approximateUsage).toEqual({
+      inputTokens: 100,
+      outputTokens: 20,
+      cacheReadTokens: undefined,
+      cacheWriteTokens: undefined,
+      estimatedCost: 0.01,
+    });
+  });
+
   it("restores plans and results and closes interrupted executions after restart", async () => {
     let snapshot: import("../packages/core/src/index.js").CouncilStateSnapshot | undefined;
     const persistence = {

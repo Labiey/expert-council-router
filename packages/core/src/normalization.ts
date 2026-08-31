@@ -30,6 +30,7 @@ export function normalizePiModel(value: unknown, available = true): AvailableMod
     id,
     available,
     ...(typeof raw.name === "string" ? { displayName: raw.name } : {}),
+    ...(typeof raw.family === "string" && raw.family.trim() ? { family: raw.family.trim() } : {}),
     ...(typeof raw.reasoning === "boolean" ? { reasoning: raw.reasoning } : {}),
     ...(supportedReasoningLevels.length ? { supportedReasoningLevels } : {}),
     ...(number(raw.contextWindow) !== undefined ? { contextWindow: number(raw.contextWindow) } : {}),

@@ -4,6 +4,9 @@
   "private": true,
   "description": "Dynamic, cost-aware multi-model expert orchestration for Pi and Codex",
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git" },
+  "homepage": "https://github.com/Labiey/expert-council-router#readme",
+  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "type": "module",
   "workspaces": [
     "packages/*"
@@ -18,6 +21,7 @@
     "smoke:mcp": "node scripts/smoke-mcp.mjs",
     "smoke:codex": "node scripts/smoke-mcp.mjs packages/codex-integration/plugin/expert-council/dist/server.mjs",
     "smoke:installed-codex": "node scripts/smoke-installed-codex.mjs",
+    "smoke:live:pi": "npm run build && node scripts/smoke-live-pi.mjs",
     "validate": "npm run test && npm run typecheck && npm run pack:check"
   },
   "engines": {

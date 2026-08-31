@@ -32,6 +32,17 @@ export interface PiExpertRuntimeOptions {
 
 class ExecutionTimeoutError extends Error {}
 
+const FAILURE_TYPES = new Set<FailureType>([
+  "tool_call_error",
+  "reasoning_failure",
+  "test_failure",
+  "timeout",
+  "provider_error",
+  "missing_context",
+  "permission_error",
+  "unknown",
+]);
+
 function textFromContent(content: unknown): string {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return "";
@@ -53,6 +64,36 @@ function finalAssistantText(session: PiSessionLike): string {
     }
   }
   return "";
+}
+
+function sessionUsage(session: PiSessionLike): Record<string, number> | undefined {
+  const messages = session.messages ?? session.state?.messages ?? [];
+  const total = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    estimatedCost: 0,
+  };
+  let found = false;
+  const add = (value: unknown, key: keyof typeof total) => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      total[key] += Math.max(0, value);
+      found = true;
+    }
+  };
+  for (const value of messages) {
+    const message = value && typeof value === "object" ? value as Record<string, unknown> : {};
+    if (message.role !== "assistant" || !message.usage || typeof message.usage !== "object") continue;
+    const usage = message.usage as Record<string, unknown>;
+    add(usage.input, "inputTokens");
+    add(usage.output, "outputTokens");
+    add(usage.cacheRead, "cacheReadTokens");
+    add(usage.cacheWrite, "cacheWriteTokens");
+    const cost = usage.cost && typeof usage.cost === "object" ? usage.cost as Record<string, unknown> : {};
+    add(cost.total, "estimatedCost");
+  }
+  return found ? total : undefined;
 }
 
 function extractJson(text: string): Record<string, unknown> | undefined {
@@ -84,6 +125,8 @@ function failureFromError(error: unknown): FailureType {
     message.includes("model unavailable")
   ) return "provider_error";
   if (message.includes("tool")) return "tool_call_error";
+  if (message.includes("test") || message.includes("assertion")) return "test_failure";
+  if (message.includes("context") || message.includes("missing file") || message.includes("missing information")) return "missing_context";
   return "unknown";
 }
 
@@ -93,6 +136,7 @@ function normalizeResult(
   rawText: string,
   changedFiles: string[],
   workspace: PreparedWorkspace,
+  usage?: Record<string, number>,
 ): ExpertResult {
   const status = parsed?.status === "success" || parsed?.status === "partial" || parsed?.status === "failed" ? parsed.status : "partial";
   const tests = Array.isArray(parsed?.tests)
@@ -110,6 +154,15 @@ function normalizeResult(
     : undefined;
   const stringArray = (value: unknown): string[] | undefined =>
     Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 20) : undefined;
+  const explicitFailureType = typeof parsed?.failureType === "string" && FAILURE_TYPES.has(parsed.failureType as FailureType)
+    ? parsed.failureType as FailureType
+    : undefined;
+  const summaryFailureType = failureFromError(typeof parsed?.summary === "string" ? parsed.summary : rawText);
+  const inferredFailureType = status !== "success"
+    ? explicitFailureType
+      ?? (tests?.some((test) => test.status === "failed") ? "test_failure" : undefined)
+      ?? (summaryFailureType === "unknown" ? "reasoning_failure" : summaryFailureType)
+    : undefined;
 
   return {
     status,
@@ -130,6 +183,8 @@ function normalizeResult(
       attempts: request.attempt,
       workspace: workspace.root,
       isolated: workspace.isolated,
+      ...(inferredFailureType ? { failureType: inferredFailureType } : {}),
+      ...(usage ? { usage } : {}),
     },
   };
 }
@@ -142,7 +197,7 @@ async function rolePrompt(role: string): Promise<string> {
 }
 
 function executionPrompt(request: ExpertExecutionRequest, roleInstructions: string): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, filesChanged, tests, findings, risks, recommendedNextAction. Test entries use status passed, failed, or not-run.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
 }
 
 export class PiExpertRuntime implements ExpertRuntime {
@@ -292,7 +347,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       }
       const rawText = finalAssistantText(session);
       const changedFiles = await this.boundary.changedFiles(workspace);
-      const result = normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace);
+      const result = normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session));
       result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
       return result;
     } catch (error) {

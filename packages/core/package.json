@@ -16,6 +16,9 @@
   "files": ["dist", "README.md", "LICENSE"],
   "sideEffects": false,
   "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/core" },
+  "homepage": "https://github.com/Labiey/expert-council-router#readme",
+  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "publishConfig": { "access": "public" },
   "dependencies": {
     "zod": "^4.5.4"

@@ -29,6 +29,7 @@ function mockCouncil(): ExpertCouncil {
     delegate: async (request) => ({ status: "success", role: request.role, model: "p/m", summary: "ok" }),
     startDelegation: () => ({ executionId: "exec_mock", result: Promise.resolve(completed) }),
     getResult: async (executionId) => ({ executionId, status: "completed", result: completed }),
+    recordFeedback: async ({ executionId, verificationPassed }) => ({ executionId, status: "recorded", verificationPassed }),
     cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     escalate: async () => ({ action: "stop", reason: "done" }),
     getStatus: async () => ({ plans: [], executions: [], telemetry: [] }),
@@ -48,6 +49,16 @@ describe("CLI JSON integration", () => {
     expect(JSON.parse(stdout)).toEqual([{ provider: "p", id: "m", available: true }]);
     expect(stderr).toBe("");
   });
+
+  it("records verification feedback through the shared council service", async () => {
+    let stdout = "";
+    const code = await runCli(["feedback", "exec_mock", "--verification", "passed", "--json"], {
+      stdout: { write: (value) => { stdout += value; } },
+      stderr: { write: () => {} },
+    }, mockCouncil());
+    expect(code).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ executionId: "exec_mock", status: "recorded", verificationPassed: true });
+  });
 });
 
 describe("MCP semantic surface", () => {
@@ -57,6 +68,7 @@ describe("MCP semantic surface", () => {
       "expert_build",
       "expert_delegate",
       "expert_result",
+      "expert_feedback",
       "expert_cleanup",
       "expert_escalate",
       "expert_status",
@@ -65,6 +77,7 @@ describe("MCP semantic surface", () => {
     expect(MCP_INPUT_SCHEMAS.expert_delegate.role.safeParse("lead").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.taskDescription.safeParse("Review authentication").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.taskDescription.safeParse("x".repeat(501)).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_feedback.verificationPassed.safeParse(true).success).toBe(true);
   });
 
   it("bounds a stalled MCP operation", async () => {

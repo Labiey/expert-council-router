@@ -47,6 +47,7 @@ export interface AvailableModel {
   provider: string;
   id: string;
   displayName?: string;
+  family?: string;
   available: boolean;
   reasoning?: boolean;
   supportedReasoningLevels?: string[];
@@ -188,6 +189,7 @@ export interface BuildCouncilRequest {
 export interface RankedCandidate {
   model: string;
   provider: string;
+  family?: string;
   score: number;
   reasons: string[];
   rejected?: string[];
@@ -198,6 +200,7 @@ export interface CouncilMember {
   role: ExpertRole;
   model: string;
   provider: string;
+  family?: string;
   score: number;
   reason: string[];
   alternatives: RankedCandidate[];
@@ -254,6 +257,7 @@ export interface EscalationDecision {
 }
 
 export interface ExpertOutcome {
+  executionId?: string;
   timestamp: string;
   model: string;
   provider: string;
@@ -268,7 +272,25 @@ export interface ExpertOutcome {
   escalationCount: number;
   attempts: number;
   hostType: string;
-  approximateUsage?: { inputTokens?: number; outputTokens?: number };
+  approximateUsage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    estimatedCost?: number;
+  };
+}
+
+export interface ExpertFeedbackRequest {
+  executionId: string;
+  verificationPassed: boolean;
+}
+
+export interface ExpertFeedbackResult {
+  executionId: string;
+  status: "recorded" | "running" | "not-found";
+  verificationPassed?: boolean;
+  message?: string;
 }
 
 export interface TelemetryAggregate {
@@ -311,6 +333,7 @@ export interface ExecutionStateSnapshot {
   status: "running" | "success" | "partial" | "failed";
   model?: string;
   attempts: number;
+  taskCategory?: TaskClass;
   startedAt: string;
   finishedAt?: string;
 }
@@ -338,6 +361,7 @@ export interface ExpertCouncil {
   delegate(request: DelegationRequest): Promise<ExpertResult>;
   getResult(executionId: string): Promise<ExpertResultLookup>;
   cleanup(executionId: string): Promise<ExpertCleanupResult>;
+  recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult>;
   escalate(request: EscalationRequest): Promise<EscalationDecision>;
   getStatus(): Promise<CouncilStatus>;
   recordOutcome(outcome: ExpertOutcome): Promise<void>;

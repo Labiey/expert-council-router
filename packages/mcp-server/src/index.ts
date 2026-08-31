@@ -8,6 +8,7 @@ export const MCP_TOOL_NAMES = [
   "expert_build",
   "expert_delegate",
   "expert_result",
+  "expert_feedback",
   "expert_cleanup",
   "expert_escalate",
   "expert_status",
@@ -55,6 +56,10 @@ export const MCP_INPUT_SCHEMAS = {
   },
   expert_cleanup: {
     executionId: z.string().min(1),
+  },
+  expert_feedback: {
+    executionId: z.string().min(1),
+    verificationPassed: z.boolean(),
   },
   expert_escalate: {
     role,
@@ -139,6 +144,16 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async (input) => response(await withMcpTimeout(council.getResult(input.executionId))),
+  );
+  server.registerTool(
+    "expert_feedback",
+    {
+      title: "Record Expert Outcome Feedback",
+      description: "Record whether Main Agent verification accepted a completed expert result for local routing telemetry.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_feedback,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => response(await withMcpTimeout(council.recordFeedback(input))),
   );
   server.registerTool(
     "expert_cleanup",

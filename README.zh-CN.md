@@ -15,7 +15,7 @@ V1 已包含：
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 包含 7 个异步语义工具及显式 worktree 清理能力的 MCP Server。
+- 包含 8 个异步语义工具、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件。
 - 不会消耗模型额度的确定性自动化测试。
@@ -134,7 +134,7 @@ node packages/cli/dist/bin.js delegate architecture-oracle "分析并发调用�
 subscription  metered  quota  free  unknown
 ```
 
-边际成本和使用偏好是两个独立字段，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。
+边际成本和使用偏好是两个独立字段，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。对于 `metered` 和 `unknown` 访问方式，归一化后的非零公开输入/输出单价也会按 `routing.apiPriceWeight`（默认 `0.35`）参与成本效率评分；全零价格表按“未提供”处理，不会猜测为免费。订阅、免费和额度策略仍以用户配置为准，不会被无关的标价扭曲。
 
 ```json
 {
@@ -209,7 +209,7 @@ toolReliability bashReliability autonomousExecution speed
 
 微小任务只使用一个 Worker；普通任务使用 Worker 与 Verifier；复杂功能使用 Planner、Worker、Reviewer 与 Verifier；复杂调试使用 Scout、Debugger、Oracle 与 Verifier。`maxExperts` 会限制团队规模，主代理永远不会再被复制成一个多余的 `lead` 专家。
 
-任务分类和全部评分运算都是确定性的。宿主可以在委派前检查已选模型、备选模型、分数和简明理由。
+任务分类和全部评分运算都是确定性的。宿主可以在委派前检查已选模型、备选模型、分数和简明理由。组建 Council 时还会应用可配置的多样性惩罚；Reviewer 会在经济合理时优先选择与先前成员不同的 Provider 和推断模型家族，但角色适配度与硬约束仍然优先。
 
 ## 路由过程
 
@@ -252,7 +252,7 @@ missing_context permission_error unknown
 
 ## 结构化结果与上下文效率
 
-专家结果包含状态、角色、模型、摘要、修改文件、测试、发现、风险、下一步建议和有限的执行元数据。系统不会请求或保存私有思维过程，也不会把整份源码复制回主代理上下文。返回前会限制文本和数组大小。
+专家结果包含状态、角色、模型、摘要、修改文件、测试、发现、风险、下一步建议、失败类型、Pi 可提供的近似用量，以及有限的执行元数据。系统优先使用专家返回的结构化失败类型，并确定性识别测试、Provider、工具和上下文失败；无法解析的非 JSON 输出会标记为 `reasoning_failure`。系统不会请求或保存私有思维过程，也不会把整份源码复制回主代理上下文。
 
 ## 工作区安全
 
@@ -282,7 +282,7 @@ missing_context permission_error unknown
 
 ## 遥测与本地学习
 
-默认本地存储文件为 `.expert-council/telemetry.jsonl`。它只记录模型、Provider、角色、任务分类、成功状态、首轮成功、工具错误数量、重试、超时、可选验证结果、升级次数、总尝试次数、宿主类型和可选 Token 用量。
+默认本地存储文件为 `.expert-council/telemetry.jsonl`。它只记录不透明 execution ID、模型、Provider、角色、任务分类、成功状态、首轮成功、工具错误数量、重试、超时、可选验证结果、升级次数、总尝试次数、宿主类型，以及 Pi 可提供的近似 Token/成本用量。主代理验收后调用 `expert_feedback`；同一 execution 的更新在聚合时覆盖早期样本，不会重复计数。
 
 它不会记录 Prompt、源码内容、凭据、API Key、Secret 或思维过程。聚合指标包括按角色成功率、首轮成功率、工具错误率、重试率、验证通过率和平均尝试次数。V1 没有远程分析端点。
 
@@ -297,6 +297,7 @@ expert-council models
 expert-council inspect
 expert-council build <task>
 expert-council delegate <role> <task>
+expert-council feedback <execution-id> --verification passed|failed
 expert-council cleanup <execution-id>
 expert-council status
 ```
@@ -312,17 +313,18 @@ expert-council status
 
 ## MCP Server
 
-MCP 表面刻意保持为 7 个语义工具：
+MCP 表面刻意保持为 8 个语义工具：
 
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
 - `expert_result`
+- `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
 
-`expert_delegate` 会启动后台任务并立即返回 `executionId`。可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。任务完成后使用 `expert_result` 获取反馈。通用 MCP 宿主通过 `expert_result` 或 `expert_status` 查询；原生 Pi Package 还会主动向主 Agent 发送完成通知。
+`expert_delegate` 会启动后台任务并立即返回 `executionId`。可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。任务完成后使用 `expert_result` 获取结果，主代理验收后再用 `expert_feedback` 记录验证结论。通用 MCP 宿主通过 `expert_result` 或 `expert_status` 查询；原生 Pi Package 还会主动向主 Agent 发送完成通知。
 
 直接启动 stdio Server：
 
@@ -355,7 +357,7 @@ pi install ./packages/pi-package
 pi -e ./packages/pi-package
 ```
 
-Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 7 个语义工具，不包含另一套独立路由实现。
+Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 8 个语义工具，不包含另一套独立路由实现。
 
 Pi 委派是非阻断式的。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。由于原生 Pi 会在任务完成后自动重新唤醒主 Agent，主 Agent 派发完任务或完成其他有价值操作后应直接结束当前回合，不要轮询或静默等待消耗 token。
 
@@ -385,9 +387,17 @@ npm run build
 npm run pack:check
 ```
 
-测试覆盖模型归一化、计费、Worker 可靠性、Oracle 评分、硬约束、未知和缺失模型、团队规模、重试、升级、重试上限、角色权限、配置校验、遥测隐私与聚合、Core 宿主独立性、模拟 Pi 发现与执行、CLI JSON、MCP Schema、Pi 扩展注册和真实 Git worktree 隔离。
+测试覆盖模型归一化、公开价格与真实策略计费、Worker 可靠性、Oracle 评分、Reviewer 多样性、硬约束、未知和缺失模型、团队规模、重试、结构化失败分类、升级、重试上限、角色权限、配置校验、遥测隐私/反馈/用量聚合、Core 宿主独立性、模拟 Pi 发现与执行、CLI JSON、MCP Schema、Pi 扩展注册和真实 Git worktree 隔离。
 
-普通测试只使用 Mock Runtime，绝不会调用付费模型。任何真实 Provider 调用都必须单独显式启用；项目自带脚本不会自动执行这种调用。
+普通测试只使用 Mock Runtime，绝不会调用付费模型。真实只读 Pi 执行必须同时指定模型并明确确认成本：
+
+```powershell
+$env:EXPERT_COUNCIL_LIVE_MODEL = "provider/model"
+$env:EXPERT_COUNCIL_LIVE_CONFIRM = "YES"
+npm run smoke:live:pi
+```
+
+普通验证流程永远不会执行该脚本。
 
 ## 发布
 

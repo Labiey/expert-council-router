@@ -8,7 +8,8 @@
 6. Publish `core`, then `pi-runtime`, then consumers (`cli`, `mcp-server`, `pi-package`). The runtime tarball contains its own role prompts, so installed execution does not resolve role assets from `core`; the order here only satisfies normal npm package dependencies.
 7. Install each published artifact in a fresh temporary project and repeat model discovery without provider invocation.
 8. Validate the Pi package with `pi -e npm:@expert-council/pi-package --list-models`.
-9. Rebuild and validate the Codex plugin. Add factual publisher, repository, privacy, support, and terms metadata before catalog submission.
-10. Test Codex installation through an isolated local marketplace and a new task. Confirm `expert_inspect` works before invoking any paid model.
+9. With explicit provider-cost approval, run `EXPERT_COUNCIL_LIVE_MODEL=provider/model EXPERT_COUNCIL_LIVE_CONFIRM=YES npm run smoke:live:pi`. Never make this part of normal validation.
+10. Rebuild and validate the Codex plugin. Add factual publisher, privacy, support, and terms metadata before catalog submission.
+11. Test Codex installation through an isolated local marketplace and a new task. Confirm `expert_inspect` works before invoking any paid model.
 
 Public example profiles must remain clearly labeled as examples. Do not turn one user's observed model reliability into an objective preset.

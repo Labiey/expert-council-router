@@ -15,6 +15,8 @@ import type {
   EscalationRequest,
   ExpertCouncil,
   ExpertCleanupResult,
+  ExpertFeedbackRequest,
+  ExpertFeedbackResult,
   ExpertOutcome,
   ExpertResult,
   ExpertResultLookup,
@@ -38,6 +40,7 @@ function parseModelKey(key: string): { provider: string; id: string } {
 
 function failureType(result: ExpertResult): FailureType {
   if (result.executionMetadata?.failureType) return result.executionMetadata.failureType;
+  if (result.tests?.some((test) => test.status === "failed")) return "test_failure";
   const summary = result.summary.toLowerCase();
   if (summary.includes("timeout") || summary.includes("timed out")) return "timeout";
   if (summary.includes("permission") || summary.includes("workspace") || summary.includes("worktree")) return "permission_error";
@@ -52,6 +55,22 @@ function failureType(result: ExpertResult): FailureType {
   if (summary.includes("test")) return "test_failure";
   if (summary.includes("context")) return "missing_context";
   return "unknown";
+}
+
+function approximateUsage(result: ExpertResult): ExpertOutcome["approximateUsage"] | undefined {
+  const raw = result.executionMetadata?.usage;
+  if (!raw || typeof raw !== "object") return undefined;
+  const usage = raw as Record<string, unknown>;
+  const number = (key: string): number | undefined =>
+    typeof usage[key] === "number" && Number.isFinite(usage[key]) ? Math.max(0, usage[key]) : undefined;
+  const normalized = {
+    inputTokens: number("inputTokens"),
+    outputTokens: number("outputTokens"),
+    cacheReadTokens: number("cacheReadTokens"),
+    cacheWriteTokens: number("cacheWriteTokens"),
+    estimatedCost: number("estimatedCost"),
+  };
+  return Object.values(normalized).some((value) => value !== undefined) ? normalized : undefined;
 }
 
 export class ExpertCouncilService implements ExpertCouncil {
@@ -154,6 +173,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       role: request.role,
       status: "running",
       attempts: 0,
+      taskCategory: classifyTask(request.task, this.config.routing.taskClassification),
       startedAt: new Date().toISOString(),
     };
     this.executions.set(id, state);
@@ -238,6 +258,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     let retriesForCurrent = 0;
     let escalations = 0;
     let lastResult: ExpertResult | undefined;
+    const cumulativeUsage: NonNullable<ExpertOutcome["approximateUsage"]> = {};
     const maxAttempts = this.config.retry.maxAttempts;
 
     while (state.attempts < maxAttempts) {
@@ -277,6 +298,15 @@ export class ExpertCouncilService implements ExpertCouncil {
         attempt: state.attempts,
         ...(failures.length ? { priorFailure: { type: failures.at(-1)!.type, summary: failures.at(-1)!.summary } } : {}),
       });
+      const attemptUsage = approximateUsage(lastResult);
+      if (attemptUsage) {
+        for (const [key, value] of Object.entries(attemptUsage)) {
+          if (typeof value === "number") {
+            const usageKey = key as keyof typeof cumulativeUsage;
+            cumulativeUsage[usageKey] = (cumulativeUsage[usageKey] ?? 0) + value;
+          }
+        }
+      }
 
       if (lastResult.status === "success") break;
       const failure = failureType(lastResult);
@@ -313,11 +343,13 @@ export class ExpertCouncilService implements ExpertCouncil {
       attempts: state.attempts,
       durationMs: Date.now() - started,
       escalationCount: escalations,
+      ...(Object.keys(cumulativeUsage).length ? { usage: cumulativeUsage } : {}),
     };
     if (planWarnings.length) result.risks = [...planWarnings, ...(result.risks ?? [])].slice(0, 20);
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);
     await this.telemetry.record({
+      executionId: id,
       timestamp: new Date().toISOString(),
       model: parsed.id,
       provider: parsed.provider,
@@ -331,6 +363,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       escalationCount: escalations,
       attempts: Math.max(1, state.attempts),
       hostType: runtimeCapabilities.hostType,
+      ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
     });
     return result;
   }
@@ -351,6 +384,49 @@ export class ExpertCouncilService implements ExpertCouncil {
       return { executionId, status: "unsupported", message: "The configured expert runtime does not support cleanup." };
     }
     return { executionId, ...(await this.runtime.cleanupExecution(executionId)) };
+  }
+
+  async recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult> {
+    const state = this.executions.get(request.executionId);
+    if (!state) return { executionId: request.executionId, status: "not-found" };
+    const result = this.results.get(request.executionId);
+    if (!result) {
+      return {
+        executionId: request.executionId,
+        status: "running",
+        message: "Feedback can be recorded only after expert execution completes.",
+      };
+    }
+    const existing = (await this.telemetry.list())
+      .filter((outcome) => outcome.executionId === request.executionId)
+      .at(-1);
+    const parsed = parseModelKey(result.model);
+    await this.telemetry.record({
+      ...(existing ?? {
+        executionId: request.executionId,
+        timestamp: new Date().toISOString(),
+        model: parsed.id,
+        provider: parsed.provider,
+        role: state.role,
+        taskCategory: state.taskCategory ?? "normal",
+        success: result.status === "success",
+        firstPass: result.status === "success" && state.attempts === 1,
+        toolErrors: result.executionMetadata?.failureType === "tool_call_error" ? 1 : 0,
+        retryCount: Math.max(0, state.attempts - 1),
+        timedOut: result.executionMetadata?.failureType === "timeout",
+        escalationCount: result.executionMetadata?.escalationCount ?? 0,
+        attempts: Math.max(1, state.attempts),
+        hostType: (await this.runtime.getCapabilities()).hostType,
+        ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
+      }),
+      timestamp: new Date().toISOString(),
+      verificationPassed: request.verificationPassed,
+    });
+    return {
+      executionId: request.executionId,
+      status: "recorded",
+      verificationPassed: request.verificationPassed,
+    };
   }
 
   async escalate(request: EscalationRequest) {

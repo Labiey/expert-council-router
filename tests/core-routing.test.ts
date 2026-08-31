@@ -9,6 +9,7 @@ import {
   mergeModelProfiles,
   normalizePiModel,
   parseCouncilConfig,
+  publishedApiCostScore,
   rankModels,
   rolesForTask,
 } from "../packages/core/src/index.js";
@@ -45,6 +46,45 @@ describe("billing and deterministic role scoring", () => {
     expect(billingCostScore({ billingType: "free", marginalCostClass: "very-low" })).toBeGreaterThan(
       billingCostScore({ billingType: "metered", marginalCostClass: "scarce" }),
     );
+  });
+
+  it("combines published API price with real billing policy for metered models", () => {
+    expect(publishedApiCostScore({ inputPerMillion: 0, outputPerMillion: 0 })).toBeUndefined();
+    expect(publishedApiCostScore({ inputPerMillion: 0.1, outputPerMillion: 0.5 })).toBeGreaterThan(
+      publishedApiCostScore({ inputPerMillion: 20, outputPerMillion: 60 })!,
+    );
+    const config = parseCouncilConfig({
+      billing: { providers: { metered: { billingType: "metered", marginalCostClass: "normal" } } },
+      profiles: { models: {
+        "metered/cheap": { coding: 8 },
+        "metered/expensive": { coding: 8 },
+      } },
+    });
+    const ranked = rankModels({
+      models: [
+        model("metered", "expensive", { apiCost: { inputPerMillion: 20, outputPerMillion: 60 } }),
+        model("metered", "cheap", { apiCost: { inputPerMillion: 0.1, outputPerMillion: 0.5 } }),
+      ],
+      role: "reviewer",
+      config,
+    });
+    expect(ranked.candidates[0]?.model).toBe("metered/cheap");
+  });
+
+  it("prefers a different reviewer provider and model family when quality is otherwise equal", () => {
+    const config = parseCouncilConfig({});
+    const ranked = rankModels({
+      models: [
+        model("worker-provider", "alpha-worker"),
+        model("worker-provider", "alpha-review"),
+        model("other-provider", "beta-review"),
+      ],
+      role: "reviewer",
+      config,
+      selectedModels: ["worker-provider/alpha-worker"],
+    });
+    expect(ranked.candidates[0]?.model).toBe("other-provider/beta-review");
+    expect(ranked.candidates[1]?.reasons).toContain("reviewer diversity penalty applied");
   });
 
   it("selects reliable execution over abstract strength for a worker", () => {

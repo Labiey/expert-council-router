@@ -75,6 +75,16 @@ export const councilConfigSchema = z.object({
       maxExperts: z.number().int().min(1).max(8).default(4),
       minimumWorkerToolReliability: z.number().min(0).max(10).default(4),
       localLearningMaxAdjustment: z.number().min(0).max(2).default(1),
+      apiPriceWeight: z.number().min(0).max(1).default(0.35),
+      diversity: z.object({
+        repeatedModelPenalty: z.number().min(0).max(5).default(0.35),
+        reviewerSameProviderPenalty: z.number().min(0).max(5).default(0.25),
+        reviewerSameFamilyPenalty: z.number().min(0).max(5).default(0.5),
+      }).default({
+        repeatedModelPenalty: 0.35,
+        reviewerSameProviderPenalty: 0.25,
+        reviewerSameFamilyPenalty: 0.5,
+      }),
       taskClassification: z.object({
         tinyMaxWords: z.number().int().min(1).max(50).default(8),
         tinyMaxCjkChars: z.number().int().min(1).max(100).default(18),
@@ -94,6 +104,12 @@ export const councilConfigSchema = z.object({
       maxExperts: 4,
       minimumWorkerToolReliability: 4,
       localLearningMaxAdjustment: 1,
+      apiPriceWeight: 0.35,
+      diversity: {
+        repeatedModelPenalty: 0.35,
+        reviewerSameProviderPenalty: 0.25,
+        reviewerSameFamilyPenalty: 0.5,
+      },
       taskClassification: {
         tinyMaxWords: 8,
         tinyMaxCjkChars: 18,
