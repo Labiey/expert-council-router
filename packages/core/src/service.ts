@@ -1,5 +1,11 @@
 import { buildCouncilPlan, classifyTask, modelInventoryFingerprint } from "./council.js";
-import { type CouncilConfig, getModelProfile, parseCouncilConfig } from "./config.js";
+import {
+  type CouncilConfig,
+  getModelProfile,
+  mergeModelProfiles,
+  parseCouncilConfig,
+  parseModelAssessmentSnapshot,
+} from "./config.js";
 import { decideEscalation } from "./escalation.js";
 import { listRoles } from "./roles.js";
 import { rankModels } from "./routing.js";
@@ -21,9 +27,12 @@ import type {
   ExpertResult,
   ExpertResultLookup,
   ExpertRuntime,
+  ExecutionAttemptSnapshot,
   ExecutionStateSnapshot,
   FailureType,
+  ModelAssessmentSnapshot,
   ResourceInventory,
+  RoutingConstraints,
   TelemetryStore,
 } from "./types.js";
 
@@ -73,11 +82,39 @@ function approximateUsage(result: ExpertResult): ExpertOutcome["approximateUsage
   return Object.values(normalized).some((value) => value !== undefined) ? normalized : undefined;
 }
 
+function boundedFailureSummary(value: string): string {
+  return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 500);
+}
+
+function constraintsWithAssessment(
+  constraints: RoutingConstraints | undefined,
+  assessment: ModelAssessmentSnapshot | undefined,
+  runtimeCapabilities?: Awaited<ReturnType<ExpertRuntime["getCapabilities"]>>,
+): RoutingConstraints {
+  const audited = assessment?.models ?? {};
+  const explicit = constraints?.modelOverrides ?? {};
+  const keys = new Set([...Object.keys(audited), ...Object.keys(explicit)]);
+  const modelOverrides = Object.fromEntries(
+    [...keys].map((key) => [key, mergeModelProfiles(audited[key], explicit[key])]),
+  );
+  return {
+    ...constraints,
+    ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
+    ...(keys.size ? { modelOverrides } : {}),
+    ...(
+      assessment?.billing || constraints?.billingOverrides
+        ? { billingOverrides: { ...assessment?.billing, ...constraints?.billingOverrides } }
+        : {}
+    ),
+  };
+}
+
 export class ExpertCouncilService implements ExpertCouncil {
   readonly config: CouncilConfig;
   private readonly plans = new Map<string, CouncilPlan>();
   private readonly executions = new Map<string, ExecutionState>();
   private readonly results = new Map<string, ExpertResult>();
+  private modelAssessment?: ModelAssessmentSnapshot;
   private persistenceQueue: Promise<void> = Promise.resolve();
 
   constructor(
@@ -89,12 +126,23 @@ export class ExpertCouncilService implements ExpertCouncil {
     this.config = parseCouncilConfig(config);
     const initial = stateOptions.initialState;
     if (initial?.version === 1) {
+      this.modelAssessment = initial.modelAssessment;
       for (const plan of initial.plans) this.plans.set(plan.id, plan);
       for (const execution of initial.executions) {
-        const restored = { ...execution };
+        const restored = {
+          ...execution,
+          ...(execution.attemptHistory ? { attemptHistory: execution.attemptHistory.map((attempt) => ({ ...attempt })) } : {}),
+        };
         if (restored.status === "running") {
           restored.status = "failed";
           restored.finishedAt = new Date().toISOString();
+          const activeAttempt = restored.attemptHistory?.findLast((attempt) => attempt.status === "running");
+          if (activeAttempt) {
+            activeAttempt.status = "failed";
+            activeAttempt.finishedAt = restored.finishedAt;
+            activeAttempt.failureType = "provider_error";
+            activeAttempt.summary = "Expert execution was interrupted by a host process restart.";
+          }
           this.results.set(restored.id, {
             status: "failed",
             role: restored.role,
@@ -120,8 +168,12 @@ export class ExpertCouncilService implements ExpertCouncil {
     return {
       version: 1,
       plans: [...this.plans.values()],
-      executions: [...this.executions.values()].map((execution) => ({ ...execution })),
+      executions: [...this.executions.values()].map((execution) => ({
+        ...execution,
+        ...(execution.attemptHistory ? { attemptHistory: execution.attemptHistory.map((attempt) => ({ ...attempt })) } : {}),
+      })),
       results: [...this.results.entries()].map(([executionId, result]) => ({ executionId, result })),
+      ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
     };
   }
 
@@ -143,13 +195,20 @@ export class ExpertCouncilService implements ExpertCouncil {
     const configuredUnavailable = Object.keys(this.config.profiles.models).filter(
       (key) => !models.some((model) => `${model.provider}/${model.id}` === key),
     );
+    const assessedUnavailable = Object.keys(this.modelAssessment?.models ?? {}).filter(
+      (key) => !models.some((model) => `${model.provider}/${model.id}` === key),
+    );
     return {
       models,
       skills,
       billing: { ...this.config.billing.providers },
       roles: listRoles(),
       runtimeCapabilities,
-      warnings: configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
+      ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
+      warnings: [
+        ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
+        ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
+      ],
     };
   }
 
@@ -159,7 +218,8 @@ export class ExpertCouncilService implements ExpertCouncil {
       this.telemetry.aggregate(),
       this.runtime.getCapabilities(),
     ]);
-    const constraints = { ...request.constraints, runtimeCapabilities };
+    if (request.modelAssessment) this.modelAssessment = parseModelAssessmentSnapshot(request.modelAssessment);
+    const constraints = constraintsWithAssessment(request.constraints, this.modelAssessment, runtimeCapabilities);
     const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates);
     this.plans.set(plan.id, plan);
     await this.persistState();
@@ -173,6 +233,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       role: request.role,
       status: "running",
       attempts: 0,
+      attemptHistory: [],
       taskCategory: classifyTask(request.task, this.config.routing.taskClassification),
       startedAt: new Date().toISOString(),
     };
@@ -180,11 +241,19 @@ export class ExpertCouncilService implements ExpertCouncil {
     void this.persistState().catch(() => undefined);
     const started = Date.now();
     const result = this.runDelegation(request, state, started).catch((error: unknown) => {
+      const summary = error instanceof Error ? error.message : String(error);
+      const activeAttempt = state.attemptHistory?.findLast((attempt) => attempt.status === "running");
+      if (activeAttempt) {
+        activeAttempt.status = "failed";
+        activeAttempt.finishedAt = new Date().toISOString();
+        activeAttempt.failureType = "unknown";
+        activeAttempt.summary = boundedFailureSummary(summary);
+      }
       const failed: ExpertResult = {
         status: "failed",
         role: request.role,
         model: state.model ?? "unassigned",
-        summary: error instanceof Error ? error.message : String(error),
+        summary,
         executionMetadata: {
           executionId: id,
           attempts: state.attempts,
@@ -231,7 +300,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       models,
       role: request.role,
       config: this.config,
-      constraints: { ...request.constraints, runtimeCapabilities },
+      constraints: constraintsWithAssessment(request.constraints, this.modelAssessment, runtimeCapabilities),
       telemetry: aggregates,
     });
     if (planned) {
@@ -264,6 +333,15 @@ export class ExpertCouncilService implements ExpertCouncil {
     while (state.attempts < maxAttempts) {
       state.attempts += 1;
       state.model = current.model;
+      const attemptSnapshot: ExecutionAttemptSnapshot = {
+        attempt: state.attempts,
+        model: current.model,
+        status: "running",
+        startedAt: new Date().toISOString(),
+      };
+      state.attemptHistory ??= [];
+      state.attemptHistory.push(attemptSnapshot);
+      void this.persistState().catch(() => undefined);
       const modelParts = parseModelKey(current.model);
       const profile = getModelProfile(this.config, modelParts.provider, modelParts.id);
       const configuredReasoning = profile.preferredReasoningByRole?.[request.role];
@@ -276,7 +354,7 @@ export class ExpertCouncilService implements ExpertCouncil {
             (skill) =>
               skill.installed &&
               skill.enabled &&
-              (skill.trusted !== false || this.config.security.trustedSkills.includes(skill.name)),
+              (skill.trusted === true || this.config.security.trustedSkills.includes(skill.name)),
           )
           .map((skill) => skill.name),
       );
@@ -298,6 +376,15 @@ export class ExpertCouncilService implements ExpertCouncil {
         attempt: state.attempts,
         ...(failures.length ? { priorFailure: { type: failures.at(-1)!.type, summary: failures.at(-1)!.summary } } : {}),
       });
+      attemptSnapshot.status = lastResult.status;
+      Object.assign(attemptSnapshot, { finishedAt: new Date().toISOString() });
+      if (lastResult.status !== "success") {
+        Object.assign(attemptSnapshot, {
+          failureType: failureType(lastResult),
+          summary: boundedFailureSummary(lastResult.summary),
+        });
+      }
+      await this.persistState();
       const attemptUsage = approximateUsage(lastResult);
       if (attemptUsage) {
         for (const [key, value] of Object.entries(attemptUsage)) {
@@ -439,7 +526,11 @@ export class ExpertCouncilService implements ExpertCouncil {
       models,
       role: request.role,
       config: this.config,
-      constraints: { ...request.constraints, allowEscalationOnly: true, runtimeCapabilities },
+      constraints: constraintsWithAssessment(
+        { ...request.constraints, allowEscalationOnly: true },
+        this.modelAssessment,
+        runtimeCapabilities,
+      ),
       telemetry,
     });
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
@@ -453,8 +544,12 @@ export class ExpertCouncilService implements ExpertCouncil {
         expertCount: plan.experts.length,
         createdAt: plan.createdAt,
       })),
-      executions: [...this.executions.values()].map((execution) => ({ ...execution })),
+      executions: [...this.executions.values()].map((execution) => ({
+        ...execution,
+        ...(execution.attemptHistory ? { attemptHistory: execution.attemptHistory.map((attempt) => ({ ...attempt })) } : {}),
+      })),
       telemetry: await this.telemetry.aggregate(),
+      ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
     };
   }
 

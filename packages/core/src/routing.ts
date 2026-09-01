@@ -138,6 +138,9 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
   const unnormalizedWeights = { ...definition.weights, ...getRoleWeightOverrides(config, role) };
   if (constraints?.costPolicy === "economy") {
     unnormalizedWeights.costEfficiency = (unnormalizedWeights.costEfficiency ?? 0.1) * 2;
+  } else if (constraints?.costPolicy === "speed") {
+    unnormalizedWeights.speed = (unnormalizedWeights.speed ?? 0.1) * 3;
+    unnormalizedWeights.costEfficiency = (unnormalizedWeights.costEfficiency ?? 0.1) * 0.5;
   } else if (constraints?.costPolicy === "quality") {
     unnormalizedWeights.costEfficiency = (unnormalizedWeights.costEfficiency ?? 0.1) * 0.4;
   }
@@ -152,7 +155,10 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
     const key = `${model.provider}/${model.id}`;
     const profile = effectiveProfile(model, config, constraints);
     const billingProfile = profile.billingProfile ?? model.billingProfile;
-    const billing = getBillingEntry(config, model.provider, billingProfile);
+    const billingKey = billingProfile ?? model.provider;
+    const billing = config.billing.providers[billingKey]
+      ?? constraints?.billingOverrides?.[billingKey]
+      ?? getBillingEntry(config, model.provider, billingProfile);
     const failures = hardConstraintFailures(model, role, profile, billing, config, constraints);
     if (failures.length) {
       rejected.push({ model: key, provider: model.provider, score: 0, reasons: [], rejected: failures });

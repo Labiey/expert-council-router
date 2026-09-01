@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import {
   normalizePiModels,
   getRole,
@@ -25,6 +26,7 @@ import { WorkspaceBoundary, type PreparedWorkspace } from "./workspace.js";
 export interface PiExpertRuntimeOptions {
   cwd: string;
   config: CouncilConfig;
+  roleDirectory?: string;
   sdk?: PiSdkLike;
   modelRuntime?: PiModelRuntimeLike;
   packageName?: string;
@@ -112,6 +114,15 @@ function extractJson(text: string): Record<string, unknown> | undefined {
   return undefined;
 }
 
+function safeText(value: unknown, maximum: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const sanitized = value
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "")
+    .replace(/[\u202A-\u202E\u2066-\u2069]/g, "")
+    .trim();
+  return sanitized ? sanitized.slice(0, maximum) : undefined;
+}
+
 function failureFromError(error: unknown): FailureType {
   const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
   if (error instanceof ExecutionTimeoutError || message.includes("timeout")) return "timeout";
@@ -140,20 +151,22 @@ function normalizeResult(
 ): ExpertResult {
   const status = parsed?.status === "success" || parsed?.status === "partial" || parsed?.status === "failed" ? parsed.status : "partial";
   const tests = Array.isArray(parsed?.tests)
-    ? parsed.tests.flatMap((test) => {
+    ? parsed.tests.slice(0, 20).flatMap((test) => {
         if (!test || typeof test !== "object") return [];
         const item = test as Record<string, unknown>;
         if (item.status !== "passed" && item.status !== "failed" && item.status !== "not-run") return [];
         const testStatus = item.status as "passed" | "failed" | "not-run";
         return [{
-          ...(typeof item.command === "string" ? { command: item.command } : {}),
+          ...(safeText(item.command, 1_000) ? { command: safeText(item.command, 1_000) } : {}),
           status: testStatus,
-          ...(typeof item.summary === "string" ? { summary: item.summary } : {}),
+          ...(safeText(item.summary, 2_000) ? { summary: safeText(item.summary, 2_000) } : {}),
         }];
       })
     : undefined;
   const stringArray = (value: unknown): string[] | undefined =>
-    Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").slice(0, 20) : undefined;
+    Array.isArray(value)
+      ? value.flatMap((item) => safeText(item, 2_000) ?? []).slice(0, 20)
+      : undefined;
   const explicitFailureType = typeof parsed?.failureType === "string" && FAILURE_TYPES.has(parsed.failureType as FailureType)
     ? parsed.failureType as FailureType
     : undefined;
@@ -169,15 +182,15 @@ function normalizeResult(
     role: request.role,
     model: request.model,
     summary:
-      typeof parsed?.summary === "string"
-        ? parsed.summary.slice(0, 4_000)
-        : rawText.slice(0, 4_000) || "Expert completed without a textual summary.",
-    ...(changedFiles.length ? { filesChanged: changedFiles } : {}),
+      safeText(parsed?.summary, 4_000)
+        ?? safeText(rawText, 4_000)
+        ?? "Expert completed without a textual summary.",
+    ...(changedFiles.length ? { filesChanged: changedFiles.slice(0, 1_000) } : {}),
     ...(tests?.length ? { tests } : {}),
     ...(stringArray(parsed?.findings)?.length ? { findings: stringArray(parsed?.findings) } : {}),
     ...(stringArray(parsed?.risks)?.length ? { risks: stringArray(parsed?.risks) } : {}),
-    ...(typeof parsed?.recommendedNextAction === "string"
-      ? { recommendedNextAction: parsed.recommendedNextAction.slice(0, 1_000) }
+    ...(safeText(parsed?.recommendedNextAction, 1_000)
+      ? { recommendedNextAction: safeText(parsed?.recommendedNextAction, 1_000) }
       : {}),
     executionMetadata: {
       attempts: request.attempt,
@@ -189,10 +202,8 @@ function normalizeResult(
   };
 }
 
-async function rolePrompt(role: string): Promise<string> {
-  if (process.env.EXPERT_COUNCIL_ROLE_DIR) {
-    return readFile(`${process.env.EXPERT_COUNCIL_ROLE_DIR}/${role}.md`, "utf8");
-  }
+async function rolePrompt(role: string, roleDirectory?: string): Promise<string> {
+  if (roleDirectory) return readFile(path.resolve(roleDirectory, `${role}.md`), "utf8");
   return readFile(new URL(`./roles/${role}.md`, import.meta.url), "utf8");
 }
 
@@ -227,14 +238,51 @@ export class PiExpertRuntime implements ExpertRuntime {
     return normalizePiModels(raw, true).map((model) => ({ ...model }));
   }
 
+  private skillIsTrusted(skill: Record<string, unknown>): boolean {
+    const sourceInfo = skill.sourceInfo && typeof skill.sourceInfo === "object"
+      ? skill.sourceInfo as Record<string, unknown>
+      : undefined;
+    return sourceInfo?.scope === "user" ||
+      (typeof skill.name === "string" && this.options.config.security.trustedSkills.includes(skill.name));
+  }
+
+  private async createSafeResourceLoader(cwd: string, requestedSkills?: string[]) {
+    if (!this.sdk.DefaultResourceLoader || !this.sdk.SettingsManager) return undefined;
+    const agentDir = this.sdk.getAgentDir?.();
+    const permitAllowlistedProjectSkills = this.options.config.security.trustedSkills.length > 0;
+    const settingsManager = this.sdk.SettingsManager.create(cwd, agentDir, {
+      projectTrusted: permitAllowlistedProjectSkills,
+    });
+    const loader = new this.sdk.DefaultResourceLoader({
+      cwd,
+      ...(agentDir ? { agentDir } : {}),
+      settingsManager,
+      noExtensions: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+      skillsOverride: (current: { skills: Array<Record<string, unknown>>; diagnostics: unknown[] }) => ({
+        skills: current.skills.filter((skill) =>
+          typeof skill.name === "string" &&
+          this.skillIsTrusted(skill) &&
+          (!requestedSkills || requestedSkills.includes(skill.name))),
+        diagnostics: current.diagnostics,
+      }),
+    });
+    await loader.reload({
+      resolveProjectTrust: async () => permitAllowlistedProjectSkills,
+    });
+    if (loader.getExtensions().extensions.length > 0) {
+      throw new Error("Pi resource isolation failed: expert sessions must not load extensions.");
+    }
+    return loader;
+  }
+
   async listSkills(): Promise<SkillInfo[]> {
     if (!this.sdk.DefaultResourceLoader) return [];
     try {
-      const loader = new this.sdk.DefaultResourceLoader({
-        cwd: this.options.cwd,
-        ...(this.sdk.getAgentDir ? { agentDir: this.sdk.getAgentDir() } : {}),
-      });
-      await loader.reload();
+      const loader = await this.createSafeResourceLoader(this.options.cwd);
+      if (!loader) return [];
       return loader.getSkills().skills.flatMap((skill) =>
         typeof skill.name === "string"
           ? [{
@@ -242,6 +290,7 @@ export class PiExpertRuntime implements ExpertRuntime {
               ...(typeof skill.description === "string" ? { description: skill.description } : {}),
               installed: true,
               enabled: skill.disableModelInvocation !== true,
+              trusted: this.skillIsTrusted(skill),
               source: typeof skill.filePath === "string" ? skill.filePath : "pi",
             }]
           : [],
@@ -261,6 +310,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       subagentBackend: true,
       mutation: workspace.mutation,
       workspaceIsolation: workspace.workspaceIsolation,
+      ...(workspace.sourceWorkspaceDirty !== undefined ? { sourceWorkspaceDirty: workspace.sourceWorkspaceDirty } : {}),
       supportedTools: process.platform === "win32"
         ? ["read", "grep", "find", "ls", "edit", "write", "powershell"]
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
@@ -291,21 +341,13 @@ export class PiExpertRuntime implements ExpertRuntime {
       const effectiveReadOnly = request.readOnly || getRole(request.role).readOnly;
       workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, request.executionId ?? `exec-${Date.now()}`);
       const capabilities = await this.getCapabilities();
-      const mutationTools = new Set(["edit", "write"]);
+      const mutationTools = new Set(["edit", "write", "bash", "powershell"]);
       const tools = request.tools.filter(
         (tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)),
       );
-      let resourceLoader: unknown;
-      if (this.sdk.DefaultResourceLoader && request.skills.length) {
-        resourceLoader = new this.sdk.DefaultResourceLoader({
-          cwd: workspace.cwd,
-          ...(this.sdk.getAgentDir ? { agentDir: this.sdk.getAgentDir() } : {}),
-          skillsOverride: (current: { skills: Array<Record<string, unknown>>; diagnostics: unknown[] }) => ({
-            skills: current.skills.filter((skill) => typeof skill.name === "string" && request.skills.includes(skill.name)),
-            diagnostics: current.diagnostics,
-          }),
-        });
-        await (resourceLoader as { reload(): Promise<void> }).reload();
+      const resourceLoader = await this.createSafeResourceLoader(workspace.cwd, request.skills);
+      if (!resourceLoader) {
+        throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
       }
 
       const created = await this.sdk.createAgentSession({
@@ -320,7 +362,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
-      const prompt = executionPrompt(request, await rolePrompt(request.role));
+      const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory));
       const timeoutMs = request.timeoutMs ?? 10 * 60_000;
       let timer: NodeJS.Timeout | undefined;
       const execution = (async () => {
@@ -355,7 +397,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         status: "failed",
         role: request.role,
         model: request.model,
-        summary: error instanceof Error ? error.message : String(error),
+        summary: safeText(error instanceof Error ? error.message : String(error), 4_000) ?? "Expert execution failed.",
         executionMetadata: {
           attempts: request.attempt,
           failureType: failureFromError(error),

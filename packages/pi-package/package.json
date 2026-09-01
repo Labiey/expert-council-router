@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/pi-package",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Native Pi package exposing Expert Council tools and host guidance",
   "type": "module",
   "main": "./dist/extension.js",
@@ -17,8 +17,8 @@
     "skills": ["./skills"]
   },
   "dependencies": {
-    "@expert-council/core": "0.1.0",
-    "@expert-council/pi-runtime": "0.1.0"
+    "@expert-council/core": "0.2.0",
+    "@expert-council/pi-runtime": "0.2.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",

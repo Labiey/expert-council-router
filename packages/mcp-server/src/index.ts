@@ -1,5 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { ExpertCouncil, ExpertRole, FailureType } from "@expert-council/core";
+import {
+  presentCouncilPlan,
+  presentResourceInventory,
+  type DelegationRequest,
+  type ExpertCouncil,
+  type ExpertRole,
+  type FailureType,
+} from "@expert-council/core";
 import { createExpertCouncil, type CreateCouncilOptions } from "@expert-council/pi-runtime";
 import { z } from "zod";
 
@@ -33,40 +40,97 @@ const failureType = z.enum([
   "permission_error",
   "unknown",
 ]);
+const detail = z.enum(["compact", "full"]).optional();
+const boundedText = (maximum: number) => z.string().min(1).max(maximum).refine(
+  (value) => !value.includes("\0"),
+  { message: "must not contain NUL bytes" },
+);
+const taskText = boundedText(100_000);
+const workspacePath = boundedText(32_768);
+const executionIdentifier = z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/);
+const capabilityScore = z.number().min(0).max(10).optional();
+const auditedCapabilityProfile = z.object({
+  reasoning: capabilityScore,
+  planning: capabilityScore,
+  architecture: capabilityScore,
+  coding: capabilityScore,
+  debugging: capabilityScore,
+  review: capabilityScore,
+  longContext: capabilityScore,
+  toolReliability: capabilityScore,
+  bashReliability: capabilityScore,
+  autonomousExecution: capabilityScore,
+  speed: capabilityScore,
+}).strict().refine((profile) => Object.values(profile).some((value) => typeof value === "number"), {
+  message: "must contain at least one capability score",
+});
+const assessedBillingEntry = z.object({
+  billingType: z.enum(["subscription", "metered", "quota", "free", "unknown"]),
+  marginalCostClass: z.enum(["very-low", "low", "normal", "high", "scarce"]).optional(),
+  usagePreference: z.enum(["consume-first", "balanced", "quality-sensitive", "escalation-only"]).optional(),
+}).strict();
+const modelAssessment = z.object({
+  asOf: z.string().datetime({ offset: true }),
+  sources: z.array(z.string().url().max(2_000)).min(1).max(12),
+  models: z.record(
+    z.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/),
+    auditedCapabilityProfile,
+  ).refine((models) => Object.keys(models).length > 0 && Object.keys(models).length <= 64),
+  billing: z.record(
+    z.string().min(1).max(200).regex(/^[^\u0000-\u001f]+$/),
+    assessedBillingEntry,
+  ).refine((providers) => Object.keys(providers).length <= 32).optional(),
+  summary: boundedText(2_000).optional(),
+}).strict();
+const delegationAssignment = z.object({
+  role,
+  task: taskText.describe("A bounded semantic assignment"),
+  taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
+  councilId: executionIdentifier.optional(),
+  workspace: workspacePath.optional(),
+  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+});
 
 export const MCP_INPUT_SCHEMAS = {
+  expert_inspect: {
+    detail,
+  },
   expert_build: {
-    task: z.string().min(1).describe("The host-level task to analyze"),
+    task: taskText.describe("The host-level task to analyze"),
     constraints: z.object({
       maxExperts: z.number().int().min(1).max(8).optional(),
-      costPolicy: z.enum(["economy", "balanced", "quality"]).optional(),
+      costPolicy: z.enum(["economy", "balanced", "speed", "quality"]).optional(),
       minimumContextWindow: z.number().int().positive().optional(),
     }).optional(),
+    modelAssessment: modelAssessment.optional(),
+    detail,
   },
   expert_delegate: {
-    role,
-    task: z.string().min(1).describe("A bounded semantic assignment"),
-    taskDescription: z.string().min(1).max(500).optional().describe("An optional concise host-facing label for the background task"),
-    councilId: z.string().optional(),
-    workspace: z.string().optional(),
+    role: role.optional().describe("Required for a single assignment; omit when assignments is provided"),
+    task: taskText.optional().describe("Required for a single assignment; omit when assignments is provided"),
+    taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
+    councilId: executionIdentifier.optional(),
+    workspace: workspacePath.optional(),
     timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+    assignments: z.array(delegationAssignment).min(1).max(8).optional()
+      .describe("Use for two or more independent assignments so all are dispatched before the host turn ends"),
   },
   expert_result: {
-    executionId: z.string().min(1),
+    executionId: executionIdentifier,
   },
   expert_cleanup: {
-    executionId: z.string().min(1),
+    executionId: executionIdentifier,
   },
   expert_feedback: {
-    executionId: z.string().min(1),
+    executionId: executionIdentifier,
     verificationPassed: z.boolean(),
   },
   expert_escalate: {
     role,
-    task: z.string().min(1),
-    currentModel: z.string().min(3),
+    task: taskText,
+    currentModel: boundedText(500),
     previousFailures: z.array(z.object({
-      model: z.string().min(3),
+      model: boundedText(500),
       type: failureType,
       summary: z.string().min(1).max(2_000),
     })).min(1).max(8),
@@ -93,46 +157,78 @@ export async function withMcpTimeout<T>(operation: Promise<T>, timeoutMs = MCP_T
 }
 
 export function createMcpServer(council: ExpertCouncil): McpServer {
-  const server = new McpServer({ name: "expert-council", version: "0.1.0" });
+  const server = new McpServer({ name: "expert-council", version: "0.2.0" });
 
   server.registerTool(
     "expert_inspect",
     {
       title: "Inspect Expert Resources",
-      description: "Inspect currently callable Pi models, billing policy, roles, installed skills, and runtime capabilities.",
-      inputSchema: {},
+      description: "Inspect a compact summary of callable Pi resources. Request full detail only when exact model metadata is required.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_inspect,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async () => response(await withMcpTimeout(council.inspectResources())),
+    async (input) => response(presentResourceInventory(
+      await withMcpTimeout(council.inspectResources()),
+      input.detail,
+    )),
   );
   server.registerTool(
     "expert_build",
     {
       title: "Build Expert Council",
-      description: "Classify a task and deterministically assemble a small cost-aware semantic expert team.",
+      description: "Classify a task and deterministically assemble a small semantic expert team, optionally using a dated Main Agent capability audit.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_build,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await withMcpTimeout(council.buildCouncil(input))),
+    async (input) => response(presentCouncilPlan(
+      await withMcpTimeout(council.buildCouncil({
+        task: input.task,
+        ...(input.constraints ? { constraints: input.constraints } : {}),
+        ...(input.modelAssessment ? { modelAssessment: input.modelAssessment } : {}),
+      })),
+      input.detail,
+    )),
   );
   server.registerTool(
     "expert_delegate",
     {
       title: "Delegate Expert Task",
-      description: "Start one bounded Pi expert assignment in the background and immediately return its execution ID.",
+      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
-      const handle = council.startDelegation({
-        role: input.role as ExpertRole,
-        task: input.task,
-        ...(input.taskDescription ? { taskDescription: input.taskDescription } : {}),
-        ...(input.councilId ? { councilId: input.councilId } : {}),
-        ...(input.workspace ? { workspace: input.workspace } : {}),
-        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+      if (input.assignments && (input.role || input.task)) {
+        throw new Error("expert_delegate accepts either role/task or assignments, not both");
+      }
+      if (!input.assignments && (!input.role || !input.task)) {
+        throw new Error("expert_delegate requires role/task or a non-empty assignments array");
+      }
+      const assignments: DelegationRequest[] = input.assignments
+        ? input.assignments.map((assignment) => ({
+          ...assignment,
+          role: assignment.role as ExpertRole,
+        }))
+        : [{
+          role: input.role as ExpertRole,
+          task: input.task!,
+          ...(input.taskDescription ? { taskDescription: input.taskDescription } : {}),
+          ...(input.councilId ? { councilId: input.councilId } : {}),
+          ...(input.workspace ? { workspace: input.workspace } : {}),
+          ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+        }];
+      const receipts = assignments.map((assignment) => {
+        const handle = council.startDelegation(assignment);
+        return {
+          executionId: handle.executionId,
+          role: assignment.role,
+          ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
+          status: "running" as const,
+        };
       });
-      return response({ executionId: handle.executionId, status: "running" });
+      return response(input.assignments
+        ? { status: "running", executions: receipts }
+        : { executionId: receipts[0]!.executionId, status: "running" });
     },
   );
   server.registerTool(

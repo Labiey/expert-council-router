@@ -53,6 +53,31 @@ describe("workspace isolation", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("warns when detached mutation worktrees would omit source changes", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "expert-council-dirty-repo-"));
+    try {
+      await execFileAsync("git", ["init", repo]);
+      await execFileAsync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
+      await execFileAsync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
+      await writeFile(path.join(repo, "file.txt"), "committed\n", "utf8");
+      await execFileAsync("git", ["-C", repo, "add", "file.txt"]);
+      await execFileAsync("git", ["-C", repo, "commit", "-m", "initial"]);
+      await writeFile(path.join(repo, "file.txt"), "uncommitted\n", "utf8");
+      await writeFile(path.join(repo, "new.txt"), "untracked\n", "utf8");
+
+      const config = parseCouncilConfig({ security: { workspaceStrategy: "auto", allowInPlaceMutations: false } });
+      const capability = await new WorkspaceBoundary(repo, config.security).mutationCapability();
+      expect(capability).toMatchObject({
+        mutation: true,
+        workspaceIsolation: "git-worktree",
+        sourceWorkspaceDirty: true,
+      });
+      expect(capability.limitations.join(" ")).toContain("will not include them");
+    } finally {
+      await rm(repo, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("durable council state", () => {
@@ -65,6 +90,22 @@ describe("durable council state", () => {
       await store.save(snapshot);
       expect(await store.load()).toEqual(snapshot);
       expect(await readFile(file, "utf8")).not.toContain(".tmp");
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects structurally invalid nested plans and results", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "expert-council-state-invalid-"));
+    const file = path.join(directory, "state.json");
+    try {
+      await writeFile(file, JSON.stringify({
+        version: 1,
+        plans: [{ id: "forged", task: "missing required plan fields" }],
+        executions: [],
+        results: [],
+      }), "utf8");
+      await expect(new JsonCouncilStateStore(file).load()).rejects.toThrow("plans.0");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

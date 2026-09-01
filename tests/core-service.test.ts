@@ -6,12 +6,38 @@ import {
   observedAdjustment,
   sanitizeOutcome,
 } from "../packages/core/src/index.js";
+import type { CouncilStateSnapshot } from "../packages/core/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
 const profiles = {
   "cheap/one": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
   "quality/two": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
 };
+
+describe("durable Main Agent model assessment", () => {
+  it("persists a dated sourced assessment and reuses it for later councils", async () => {
+    let saved: CouncilStateSnapshot | undefined;
+    const runtime = new MockRuntime([model("p", "old"), model("p", "new")]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      persistence: { save: async (snapshot) => { saved = snapshot; } },
+    });
+    const assessment = {
+      asOf: "2026-09-01T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: {
+        "p/old": { coding: 4, toolReliability: 4, autonomousExecution: 4, bashReliability: 4 },
+        "p/new": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+      },
+      summary: "Main Agent cross-checked current coding and agentic results.",
+    };
+    const first = await service.buildCouncil({ task: "Implement a small feature", modelAssessment: assessment });
+    const second = await service.buildCouncil({ task: "Implement another small feature" });
+    expect(first.experts[0]?.model).toBe("p/new");
+    expect(second.experts[0]?.model).toBe("p/new");
+    expect(saved?.modelAssessment).toEqual(assessment);
+    expect((await service.inspectResources()).modelAssessment).toEqual(assessment);
+  });
+});
 
 describe("retry and escalation", () => {
   it("starts delegation immediately and exposes feedback only after completion", async () => {
@@ -67,6 +93,16 @@ describe("retry and escalation", () => {
     expect(runtime.requests).toHaveLength(2);
     expect(runtime.requests[0]?.model).toBe(runtime.requests[1]?.model);
     expect(result.executionMetadata?.usage).toEqual({ inputTokens: 30, outputTokens: 6 });
+    const execution = (await service.getStatus()).executions[0]!;
+    expect(execution.attemptHistory).toHaveLength(2);
+    expect(execution.attemptHistory?.[0]).toMatchObject({
+      attempt: 1,
+      status: "failed",
+      failureType: "tool_call_error",
+      summary: "bad tool arguments",
+    });
+    expect(execution.attemptHistory?.[1]).toMatchObject({ attempt: 2, status: "success" });
+    expect(execution.attemptHistory?.[1]).not.toHaveProperty("summary");
   });
 
   it("moves to the next candidate after repeated failures", async () => {
@@ -244,5 +280,31 @@ describe("telemetry privacy and aggregation", () => {
     const runtime = new MockRuntime([model("p", "present")], [], capabilities);
     const service = new ExpertCouncilService(runtime, { profiles: { models: { "p/missing": { review: 9 } } } });
     expect((await service.inspectResources()).warnings[0]).toContain("p/missing");
+  });
+});
+
+describe("Skill trust policy", () => {
+  it("requires an explicit trusted provenance or configured allowlist", async () => {
+    const untrustedRuntime = new MockRuntime(
+      [model("cheap", "one")],
+      [],
+      capabilities,
+      [{ name: "planning", installed: true, enabled: true }],
+    );
+    await new ExpertCouncilService(untrustedRuntime, { profiles: { models: profiles } })
+      .delegate({ role: "planner", task: "Plan a bounded change" });
+    expect(untrustedRuntime.requests[0]?.skills).toEqual([]);
+
+    const allowlistedRuntime = new MockRuntime(
+      [model("cheap", "one")],
+      [],
+      capabilities,
+      [{ name: "planning", installed: true, enabled: true }],
+    );
+    await new ExpertCouncilService(allowlistedRuntime, {
+      profiles: { models: profiles },
+      security: { trustedSkills: ["planning"] },
+    }).delegate({ role: "planner", task: "Plan a bounded change" });
+    expect(allowlistedRuntime.requests[0]?.skills).toEqual(["planning"]);
   });
 });

@@ -65,9 +65,9 @@ export const DEFAULT_ROLES: Record<ExpertRole, RoleDefinition> = {
   },
   verifier: {
     role: "verifier",
-    description: "Run tests and validate diffs and acceptance criteria without editing.",
+    description: "Inspect reported tests, diffs, and acceptance criteria without mutation-capable tools.",
     readOnly: true,
-    tools: ["read", "grep", "find", "ls", "bash", "powershell"],
+    tools: readOnlyTools,
     skills: ["testing"],
     minimumToolReliability: 4,
     weights: { toolReliability: 0.3, bashReliability: 0.25, autonomousExecution: 0.15, debugging: 0.1, speed: 0.1, costEfficiency: 0.1 },

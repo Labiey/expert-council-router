@@ -85,17 +85,24 @@ export function modelInventoryFingerprint(models: readonly AvailableModel[]): st
 }
 
 export function rolesForTask(taskClass: TaskClass, maxExperts: number): ExpertRole[] {
-  const roles: ExpertRole[] =
-    taskClass === "tiny"
-      ? ["implementation-worker"]
-      : taskClass === "normal"
-        ? ["implementation-worker", "verifier"]
-        : taskClass === "complex-debugging"
-          ? ["scout", "debugger", "architecture-oracle", "verifier"]
-          : taskClass === "architecture"
-            ? ["architecture-oracle", "reviewer"]
-            : ["planner", "implementation-worker", "reviewer", "verifier"];
-  return roles.slice(0, Math.max(1, maxExperts));
+  const limit = Number.isFinite(maxExperts) ? Math.max(1, Math.floor(maxExperts)) : 1;
+  if (taskClass === "tiny") return ["implementation-worker"];
+  if (taskClass === "normal") {
+    return limit === 1 ? ["implementation-worker"] : ["implementation-worker", "verifier"];
+  }
+  if (taskClass === "architecture") {
+    return limit === 1 ? ["architecture-oracle"] : ["architecture-oracle", "reviewer"];
+  }
+  if (taskClass === "complex-debugging") {
+    if (limit === 1) return ["debugger"];
+    if (limit === 2) return ["debugger", "verifier"];
+    if (limit === 3) return ["scout", "debugger", "verifier"];
+    return ["scout", "debugger", "architecture-oracle", "verifier"];
+  }
+  if (limit === 1) return ["implementation-worker"];
+  if (limit === 2) return ["implementation-worker", "verifier"];
+  if (limit === 3) return ["planner", "implementation-worker", "verifier"];
+  return ["planner", "implementation-worker", "reviewer", "verifier"];
 }
 
 export function buildCouncilPlan(
@@ -109,6 +116,11 @@ export function buildCouncilPlan(
   const roles = rolesForTask(taskClass, maxExperts);
   const experts: CouncilMember[] = [];
   const warnings: string[] = [];
+  const fullCouncilRoles = rolesForTask(taskClass, 8);
+  const omittedRoles = fullCouncilRoles.filter((role) => !roles.includes(role));
+  if (omittedRoles.length) {
+    warnings.push(`Council capped at ${roles.length} expert(s); omitted roles: ${omittedRoles.join(", ")}.`);
+  }
   const selectedModels: string[] = [];
 
   for (const role of roles) {
@@ -142,6 +154,10 @@ export function buildCouncilPlan(
     });
   }
 
+  if (request.constraints?.runtimeCapabilities?.sourceWorkspaceDirty && experts.some((expert) => !expert.readOnly)) {
+    warnings.unshift("Source workspace has uncommitted changes; mutation worktrees start from committed HEAD and will not include them.");
+  }
+
   return {
     id: `council_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
     taskClass,
@@ -149,6 +165,7 @@ export function buildCouncilPlan(
     experts,
     createdAt: new Date().toISOString(),
     warnings,
+    ...(request.constraints?.costPolicy ? { costPolicy: request.constraints.costPolicy } : {}),
     inventoryFingerprint: modelInventoryFingerprint(models),
   };
 }

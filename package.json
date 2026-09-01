@@ -1,6 +1,6 @@
 {
   "name": "expert-council-monorepo",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Dynamic, cost-aware multi-model expert orchestration for Pi and Codex",
   "license": "MIT",
@@ -22,7 +22,7 @@
     "smoke:codex": "node scripts/smoke-mcp.mjs packages/codex-integration/plugin/expert-council/dist/server.mjs",
     "smoke:installed-codex": "node scripts/smoke-installed-codex.mjs",
     "smoke:live:pi": "npm run build && node scripts/smoke-live-pi.mjs",
-    "validate": "npm run test && npm run typecheck && npm run pack:check"
+    "validate": "npm run build && npm run test && npm run typecheck && npm pack --workspaces --dry-run"
   },
   "engines": {
     "node": ">=22.19.0"

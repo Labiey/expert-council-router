@@ -48,6 +48,29 @@ export const modelProfileSchema = z.object({
   incompatibleRoles: z.array(expertRoleSchema).optional(),
 });
 
+const auditedCapabilityProfileSchema = z.object(capabilityFields).strict().refine(
+  (profile) => Object.values(profile).some((value) => typeof value === "number"),
+  { message: "must contain at least one numeric capability score" },
+);
+
+export const modelAssessmentSnapshotSchema = z.object({
+  asOf: z.string().datetime({ offset: true }),
+  sources: z.array(z.string().url().max(2_000)).min(1).max(12),
+  models: z.record(
+    z.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/),
+    auditedCapabilityProfileSchema,
+  ).refine((models) => Object.keys(models).length > 0 && Object.keys(models).length <= 64, {
+    message: "must contain between 1 and 64 assessed models",
+  }),
+  billing: z.record(
+    z.string().min(1).max(200).regex(/^[^\u0000-\u001f]+$/),
+    billingEntrySchema,
+  ).refine((providers) => Object.keys(providers).length <= 32, {
+    message: "must contain at most 32 provider billing assessments",
+  }).optional(),
+  summary: z.string().min(1).max(2_000).optional(),
+}).strict();
+
 const weightSchema = z.record(
   z.enum([
     "reasoning",
@@ -159,6 +182,16 @@ export function parseCouncilConfig(input: unknown = {}): CouncilConfig {
   if (!result.success) {
     throw new ConfigValidationError(
       result.error.issues.map((issue) => `${issue.path.join(".") || "root"}: ${issue.message}`),
+    );
+  }
+  return result.data;
+}
+
+export function parseModelAssessmentSnapshot(input: unknown) {
+  const result = modelAssessmentSnapshotSchema.safeParse(input);
+  if (!result.success) {
+    throw new ConfigValidationError(
+      result.error.issues.map((issue) => `modelAssessment.${issue.path.join(".") || "root"}: ${issue.message}`),
     );
   }
   return result.data;

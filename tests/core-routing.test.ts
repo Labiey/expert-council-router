@@ -71,6 +71,44 @@ describe("billing and deterministic role scoring", () => {
     expect(ranked.candidates[0]?.model).toBe("metered/cheap");
   });
 
+  it("lets a Main Agent billing audit prefer included Token Plan access over metered access", () => {
+    const config = parseCouncilConfig({});
+    const ranked = rankModels({
+      models: [
+        model("qwen-token-plan-cn", "glm-5.2", { apiCost: { inputPerMillion: 0, outputPerMillion: 0 } }),
+        model("zai", "glm-5.2", { apiCost: { inputPerMillion: 1.4, outputPerMillion: 4.4 } }),
+      ],
+      role: "scout",
+      config,
+      constraints: {
+        costPolicy: "economy",
+        billingOverrides: {
+          "qwen-token-plan-cn": {
+            billingType: "subscription",
+            marginalCostClass: "very-low",
+            usagePreference: "consume-first",
+          },
+          zai: { billingType: "metered", marginalCostClass: "normal" },
+        },
+      },
+    });
+    expect(ranked.candidates[0]?.model).toBe("qwen-token-plan-cn/glm-5.2");
+  });
+
+  it("keeps explicit user billing authoritative over a Main Agent assessment", () => {
+    const config = parseCouncilConfig({
+      billing: { providers: { p: { billingType: "quota", marginalCostClass: "scarce" } } },
+    });
+    expect(rankModels({
+      models: [model("p", "m")],
+      role: "scout",
+      config,
+      constraints: {
+        billingOverrides: { p: { billingType: "free", marginalCostClass: "very-low" } },
+      },
+    }).candidates[0]?.reasons).toContain("quota/scarce billing");
+  });
+
   it("prefers a different reviewer provider and model family when quality is otherwise equal", () => {
     const config = parseCouncilConfig({});
     const ranked = rankModels({
@@ -101,6 +139,23 @@ describe("billing and deterministic role scoring", () => {
       constraints: { runtimeCapabilities: capabilities },
     });
     expect(ranked.candidates[0]?.model).toBe("p/worker");
+  });
+
+  it("makes audited speed materially more important under the speed policy", () => {
+    const config = parseCouncilConfig({
+      profiles: { models: {
+        "p/steady": { coding: 7, toolReliability: 7, autonomousExecution: 7, bashReliability: 7, speed: 2 },
+        "p/fast": { coding: 6, toolReliability: 6, autonomousExecution: 6, bashReliability: 6, speed: 10 },
+      } },
+    });
+    const models = [model("p", "steady"), model("p", "fast")];
+    expect(rankModels({ models, role: "implementation-worker", config }).candidates[0]?.model).toBe("p/steady");
+    expect(rankModels({
+      models,
+      role: "implementation-worker",
+      config,
+      constraints: { costPolicy: "speed" },
+    }).candidates[0]?.model).toBe("p/fast");
   });
 
   it("lets a long-context subscription model win oracle work", () => {
@@ -153,7 +208,41 @@ describe("council sizing and permissions", () => {
     expect(classifyTask("Rename a local symbol")).toBe("tiny");
     expect(rolesForTask("tiny", 4)).toEqual(["implementation-worker"]);
     expect(rolesForTask("normal", 4)).toEqual(["implementation-worker", "verifier"]);
-    expect(rolesForTask("complex-feature", 3)).toHaveLength(3);
+    expect(rolesForTask("complex-feature", 3)).toEqual(["planner", "implementation-worker", "verifier"]);
+  });
+
+  it("keeps the execution-critical role when a complex council is capped", () => {
+    expect(rolesForTask("complex-feature", 1)).toEqual(["implementation-worker"]);
+    expect(rolesForTask("complex-feature", 2)).toEqual(["implementation-worker", "verifier"]);
+    expect(rolesForTask("complex-debugging", 1)).toEqual(["debugger"]);
+    expect(rolesForTask("complex-debugging", 2)).toEqual(["debugger", "verifier"]);
+    expect(rolesForTask("complex-debugging", 3)).toEqual(["scout", "debugger", "verifier"]);
+    expect(rolesForTask("architecture", 1)).toEqual(["architecture-oracle"]);
+  });
+
+  it("warns when a council cap omits supporting roles", () => {
+    const config = parseCouncilConfig({ routing: { maxExperts: 1 } });
+    const plan = buildCouncilPlan(
+      { task: "Implement a complex cross-package security feature", constraints: { runtimeCapabilities: capabilities } },
+      [model("p", "present")],
+      config,
+    );
+    expect(plan.experts.map((expert) => expert.role)).toEqual(["implementation-worker"]);
+    expect(plan.warnings[0]).toContain("omitted roles: planner, reviewer, verifier");
+  });
+
+  it("warns mutation councils when worktrees would omit source changes", () => {
+    const config = parseCouncilConfig({});
+    const plan = buildCouncilPlan(
+      {
+        task: "Implement a complex cross-package security feature",
+        constraints: { runtimeCapabilities: { ...capabilities, sourceWorkspaceDirty: true } },
+      },
+      [model("p", "present")],
+      config,
+    );
+    expect(plan.experts.some((expert) => !expert.readOnly)).toBe(true);
+    expect(plan.warnings[0]).toContain("uncommitted changes");
   });
 
   it("classifies equivalent English and Chinese tasks consistently", () => {

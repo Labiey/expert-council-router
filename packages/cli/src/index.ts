@@ -1,4 +1,4 @@
-import type { ExpertCouncil, ExpertRole } from "@expert-council/core";
+import type { CostPolicy, ExpertCouncil, ExpertRole } from "@expert-council/core";
 import { createExpertCouncil } from "@expert-council/pi-runtime";
 
 export interface CliIo {
@@ -15,10 +15,32 @@ const ROLES = new Set<ExpertRole>([
   "reviewer",
   "verifier",
 ]);
+const COST_POLICIES = new Set<CostPolicy>(["economy", "balanced", "speed", "quality"]);
+
+function bounded(value: string, label: string, maximum: number): string {
+  if (!value || value.length > maximum || value.includes("\0")) {
+    throw new Error(`${label} must be non-empty, at most ${maximum} characters, and contain no NUL bytes`);
+  }
+  return value;
+}
 
 function option(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
+}
+
+function integerOption(args: string[], name: string, minimum: number, maximum: number): number | undefined {
+  const index = args.indexOf(name);
+  if (index < 0) return undefined;
+  const value = args[index + 1];
+  if (!value || !/^\d+$/.test(value)) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
+  }
+  return parsed;
 }
 
 function positional(args: string[]): string[] {
@@ -34,7 +56,7 @@ function positional(args: string[]): string[] {
 }
 
 function help(): string {
-  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n`;
+  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -74,27 +96,34 @@ export async function runCli(
         result = await service.inspectResources();
         break;
       case "build": {
-        const task = values.join(" ").trim();
-        if (!task) throw new Error("build requires a task description");
-        const maxExpertsText = option(args, "--max-experts");
-        const maxExperts = maxExpertsText ? Number.parseInt(maxExpertsText, 10) : undefined;
+        const task = bounded(values.join(" ").trim(), "build task", 100_000);
+        const maxExperts = integerOption(args, "--max-experts", 1, 8);
+        const costPolicyText = option(args, "--cost-policy");
+        if (costPolicyText && !COST_POLICIES.has(costPolicyText as CostPolicy)) {
+          throw new Error(`--cost-policy must be one of: ${[...COST_POLICIES].join(", ")}`);
+        }
+        const costPolicy = costPolicyText as CostPolicy | undefined;
         result = await service.buildCouncil({
           task,
-          ...(maxExperts !== undefined ? { constraints: { maxExperts } } : {}),
+          ...(maxExperts !== undefined || costPolicy ? {
+            constraints: {
+              ...(maxExperts !== undefined ? { maxExperts } : {}),
+              ...(costPolicy ? { costPolicy } : {}),
+            },
+          } : {}),
         });
         break;
       }
       case "delegate": {
         const role = values[0] as ExpertRole | undefined;
         if (!role || !ROLES.has(role)) throw new Error(`delegate requires a valid semantic role: ${[...ROLES].join(", ")}`);
-        const task = values.slice(1).join(" ").trim();
-        if (!task) throw new Error("delegate requires a bounded task description");
-        const timeoutText = option(args, "--timeout-ms");
+        const task = bounded(values.slice(1).join(" ").trim(), "delegate task", 100_000);
+        const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000);
         result = await service.delegate({
           role,
           task,
-          ...(option(args, "--workspace") ? { workspace: option(args, "--workspace") } : {}),
-          ...(timeoutText ? { timeoutMs: Number.parseInt(timeoutText, 10) } : {}),
+          ...(option(args, "--workspace") ? { workspace: bounded(option(args, "--workspace")!, "workspace", 32_768) } : {}),
+          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
         });
         break;
       }
@@ -103,7 +132,7 @@ export async function runCli(
         break;
       case "feedback": {
         const executionId = values[0];
-        if (!executionId) throw new Error("feedback requires an execution ID");
+        if (!executionId || !/^[a-zA-Z0-9_-]{1,200}$/.test(executionId)) throw new Error("feedback requires a valid execution ID");
         const verification = option(args, "--verification");
         if (verification !== "passed" && verification !== "failed") {
           throw new Error("feedback requires --verification passed|failed");
@@ -113,7 +142,7 @@ export async function runCli(
       }
       case "cleanup": {
         const executionId = values[0];
-        if (!executionId) throw new Error("cleanup requires an execution ID");
+        if (!executionId || !/^[a-zA-Z0-9_-]{1,200}$/.test(executionId)) throw new Error("cleanup requires a valid execution ID");
         result = await service.cleanup(executionId);
         break;
       }

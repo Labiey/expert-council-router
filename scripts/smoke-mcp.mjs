@@ -27,7 +27,18 @@ try {
     throw new Error(`Unexpected MCP tools: ${names.join(", ")}`);
   }
   const result = await client.callTool({ name: "expert_inspect", arguments: {} });
-  console.log(JSON.stringify({ entry, tools: names, inspectContentBlocks: result.content.length }));
+  const text = result.content.find((block) => block.type === "text")?.text;
+  const inspect = text ? JSON.parse(text) : undefined;
+  if (inspect?.detail !== "compact" || typeof inspect?.summary?.modelCount !== "number" || Array.isArray(inspect?.models)) {
+    throw new Error("expert_inspect did not return the compact default presentation");
+  }
+  console.log(JSON.stringify({
+    entry,
+    tools: names,
+    inspectContentBlocks: result.content.length,
+    inspectDetail: inspect.detail,
+    modelCount: inspect.summary.modelCount,
+  }));
 } finally {
   await client.close();
 }

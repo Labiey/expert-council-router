@@ -17,6 +17,7 @@ export type CapabilityProfile = Partial<Record<CapabilityDimension, number | nul
 export type BillingType = "subscription" | "metered" | "quota" | "free" | "unknown";
 export type MarginalCostClass = "very-low" | "low" | "normal" | "high" | "scarce";
 export type UsagePreference = "consume-first" | "balanced" | "quality-sensitive" | "escalation-only";
+export type CostPolicy = "economy" | "balanced" | "speed" | "quality";
 export type ExpertRole =
   | "planner"
   | "scout"
@@ -77,6 +78,7 @@ export interface RuntimeCapabilities {
   subagentBackend: boolean;
   mutation: boolean;
   workspaceIsolation: "git-worktree" | "bounded-workspace" | "none";
+  sourceWorkspaceDirty?: boolean;
   supportedTools: string[];
   limitations: string[];
 }
@@ -174,16 +176,28 @@ export interface RoleDefinition {
 
 export interface RoutingConstraints {
   maxExperts?: number;
-  costPolicy?: "economy" | "balanced" | "quality";
+  costPolicy?: CostPolicy;
   minimumContextWindow?: number;
   allowEscalationOnly?: boolean;
   runtimeCapabilities?: RuntimeCapabilities;
   modelOverrides?: Record<string, ModelProfile>;
+  billingOverrides?: Record<string, BillingPolicyEntry>;
+}
+
+export interface ModelAssessmentSnapshot {
+  asOf: string;
+  sources: string[];
+  models: Record<string, CapabilityProfile>;
+  /** Main Agent assessment of the actual access method; omit providers that cannot be verified. */
+  billing?: Record<string, BillingPolicyEntry>;
+  summary?: string;
 }
 
 export interface BuildCouncilRequest {
   task: string;
   constraints?: RoutingConstraints;
+  /** Optional Main Agent capability audit. The latest supplied snapshot is reused durably. */
+  modelAssessment?: ModelAssessmentSnapshot;
 }
 
 export interface RankedCandidate {
@@ -217,6 +231,7 @@ export interface CouncilPlan {
   experts: CouncilMember[];
   createdAt: string;
   warnings: string[];
+  costPolicy?: CostPolicy;
   inventoryFingerprint?: string;
 }
 
@@ -318,6 +333,7 @@ export interface ResourceInventory {
   billing: Record<string, BillingPolicyEntry>;
   roles: RoleDefinition[];
   runtimeCapabilities: RuntimeCapabilities;
+  modelAssessment?: ModelAssessmentSnapshot;
   warnings: string[];
 }
 
@@ -325,6 +341,7 @@ export interface CouncilStatus {
   plans: Array<{ id: string; taskClass: TaskClass; expertCount: number; createdAt: string }>;
   executions: ExecutionStateSnapshot[];
   telemetry: TelemetryAggregate[];
+  modelAssessment?: ModelAssessmentSnapshot;
 }
 
 export interface ExecutionStateSnapshot {
@@ -333,9 +350,21 @@ export interface ExecutionStateSnapshot {
   status: "running" | "success" | "partial" | "failed";
   model?: string;
   attempts: number;
+  attemptHistory?: ExecutionAttemptSnapshot[];
   taskCategory?: TaskClass;
   startedAt: string;
   finishedAt?: string;
+}
+
+export interface ExecutionAttemptSnapshot {
+  attempt: number;
+  model: string;
+  status: "running" | "success" | "partial" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  failureType?: FailureType;
+  /** Bounded diagnostic summary. Successful expert feedback remains in expert_result. */
+  summary?: string;
 }
 
 export interface CouncilStateSnapshot {
@@ -343,6 +372,7 @@ export interface CouncilStateSnapshot {
   plans: CouncilPlan[];
   executions: ExecutionStateSnapshot[];
   results: Array<{ executionId: string; result: ExpertResult }>;
+  modelAssessment?: ModelAssessmentSnapshot;
 }
 
 export interface CouncilStatePersistence {

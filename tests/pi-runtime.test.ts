@@ -1,24 +1,29 @@
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { parseCouncilConfig } from "../packages/core/src/index.js";
 import { PiExpertRuntime, validatePiSdk, type PiSdkLike } from "../packages/pi-runtime/src/index.js";
 
-const originalRoleDir = process.env.EXPERT_COUNCIL_ROLE_DIR;
+const roleDirectory = path.resolve("packages/core/src/roles/prompts");
 
-afterEach(() => {
-  if (originalRoleDir === undefined) delete process.env.EXPERT_COUNCIL_ROLE_DIR;
-  else process.env.EXPERT_COUNCIL_ROLE_DIR = originalRoleDir;
-});
+class SafeResourceLoader {
+  constructor(_options: Record<string, unknown>) {}
+  async reload() {}
+  getSkills() { return { skills: [], diagnostics: [] }; }
+  getExtensions() { return { extensions: [], diagnostics: [] }; }
+}
+
+const safeResourceApis = {
+  SettingsManager: { create: () => ({}) },
+  DefaultResourceLoader: SafeResourceLoader,
+  getAgentDir: () => path.resolve(".pi-test-agent"),
+} satisfies Partial<PiSdkLike>;
 
 describe("Pi runtime adapter", () => {
   it("fails explicitly when an injected Pi SDK is contract-incompatible", () => {
-    expect(() => validatePiSdk({ ModelRuntime: {} }, "test-sdk")).toThrow(
-      "missing callable API(s): ModelRuntime.create, createAgentSession",
-    );
+    expect(() => validatePiSdk({ ModelRuntime: {} }, "test-sdk")).toThrow("ModelRuntime.create");
   });
 
   it("discovers runtime models and enforces read-only tool removal", async () => {
-    process.env.EXPERT_COUNCIL_ROLE_DIR = path.resolve("packages/core/src/roles/prompts");
     let sessionOptions: Record<string, unknown> | undefined;
     const nativeModel = { provider: "p", id: "m" };
     const modelRuntime = {
@@ -35,6 +40,7 @@ describe("Pi runtime adapter", () => {
       getModel: () => nativeModel,
     };
     const sdk: PiSdkLike = {
+      ...safeResourceApis,
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
@@ -49,7 +55,7 @@ describe("Pi runtime adapter", () => {
             state: {
               messages: [{
                 role: "assistant",
-                content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "scouted", findings: ["x"] }) }],
+                content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "scouted\u0000\u202e", findings: ["x\u0007"] }) }],
                 usage: { input: 120, output: 30, cacheRead: 10, cacheWrite: 2, cost: { total: 0.02 } },
               }],
             },
@@ -62,13 +68,14 @@ describe("Pi runtime adapter", () => {
       config: parseCouncilConfig({}),
       sdk,
       modelRuntime,
+      roleDirectory,
     });
     expect(await runtime.listAvailableModels()).toMatchObject([{ provider: "p", id: "m", displayName: "Mock" }]);
     const result = await runtime.executeExpert({
       role: "scout",
       task: "Find the entrypoint",
       model: "p/m",
-      tools: ["read", "grep", "edit", "write"],
+      tools: ["read", "grep", "edit", "write", "powershell"],
       skills: [],
       reasoningLevel: "low",
       readOnly: false,
@@ -88,13 +95,66 @@ describe("Pi runtime adapter", () => {
     expect(sessionOptions?.model).toBe(nativeModel);
   });
 
-  it("classifies malformed structured output as a reasoning failure", async () => {
-    process.env.EXPERT_COUNCIL_ROLE_DIR = path.resolve("packages/core/src/roles/prompts");
+  it("loads no extensions and exposes only user or explicitly allowlisted project Skills", async () => {
+    let loaderOptions: Record<string, unknown> | undefined;
+    let settingsOptions: { projectTrusted?: boolean } | undefined;
+    class FilteringResourceLoader {
+      private skills: Array<Record<string, unknown>> = [];
+      constructor(private readonly options: Record<string, unknown>) { loaderOptions = options; }
+      async reload(options?: { resolveProjectTrust?: (context: unknown) => Promise<boolean> }) {
+        expect(await options?.resolveProjectTrust?.({})).toBe(true);
+        const current = {
+          skills: [
+            { name: "user-skill", sourceInfo: { scope: "user" } },
+            { name: "approved-project-skill", sourceInfo: { scope: "project" } },
+            { name: "hostile-project-skill", sourceInfo: { scope: "project" } },
+          ],
+          diagnostics: [],
+        };
+        const override = this.options.skillsOverride as (value: typeof current) => typeof current;
+        this.skills = override(current).skills;
+      }
+      getSkills() { return { skills: this.skills, diagnostics: [] }; }
+      getExtensions() { return { extensions: [], diagnostics: [] }; }
+    }
     const modelRuntime = {
       getAvailable: async () => [{ provider: "p", id: "m" }],
       getModel: () => ({ provider: "p", id: "m" }),
     };
     const sdk: PiSdkLike = {
+      ModelRuntime: { create: async () => modelRuntime },
+      createAgentSession: async () => { throw new Error("not used"); },
+      SettingsManager: { create: (_cwd, _agentDir, options) => { settingsOptions = options; return {}; } },
+      DefaultResourceLoader: FilteringResourceLoader,
+      getAgentDir: () => path.resolve(".pi-test-agent"),
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({ security: { trustedSkills: ["approved-project-skill"] } }),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    expect(await runtime.listSkills()).toMatchObject([
+      { name: "user-skill", trusted: true },
+      { name: "approved-project-skill", trusted: true },
+    ]);
+    expect(settingsOptions).toEqual({ projectTrusted: true });
+    expect(loaderOptions).toMatchObject({
+      noExtensions: true,
+      noPromptTemplates: true,
+      noThemes: true,
+      noContextFiles: true,
+    });
+  });
+
+  it("classifies malformed structured output as a reasoning failure", async () => {
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m" }],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
       ModelRuntime: { create: async () => modelRuntime },
       createAgentSession: async () => ({
         session: {
@@ -105,7 +165,7 @@ describe("Pi runtime adapter", () => {
         },
       }),
     };
-    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime });
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "scout",
       task: "Inspect files",
@@ -120,7 +180,6 @@ describe("Pi runtime adapter", () => {
   });
 
   it("refreshes callable models before every execution", async () => {
-    process.env.EXPERT_COUNCIL_ROLE_DIR = path.resolve("packages/core/src/roles/prompts");
     let discoveryCalls = 0;
     let sessionCalls = 0;
     const modelRuntime = {
@@ -128,13 +187,14 @@ describe("Pi runtime adapter", () => {
       getModel: () => ({ provider: "p", id: "m" }),
     };
     const sdk: PiSdkLike = {
+      ...safeResourceApis,
       ModelRuntime: { create: async () => modelRuntime },
       createAgentSession: async () => {
         sessionCalls += 1;
         throw new Error("must not create a session for a stale model");
       },
     };
-    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime });
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     expect(await runtime.listAvailableModels()).toHaveLength(1);
     const result = await runtime.executeExpert({
       role: "scout",
@@ -151,13 +211,13 @@ describe("Pi runtime adapter", () => {
   });
 
   it("applies the timeout to waitForIdle and aborts a stalled session", async () => {
-    process.env.EXPERT_COUNCIL_ROLE_DIR = path.resolve("packages/core/src/roles/prompts");
     let abortCalls = 0;
     const modelRuntime = {
       getAvailable: async () => [{ provider: "p", id: "m" }],
       getModel: () => ({ provider: "p", id: "m" }),
     };
     const sdk: PiSdkLike = {
+      ...safeResourceApis,
       ModelRuntime: { create: async () => modelRuntime },
       createAgentSession: async () => ({
         session: {
@@ -168,7 +228,7 @@ describe("Pi runtime adapter", () => {
         },
       }),
     };
-    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime });
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "scout",
       task: "Inspect files",

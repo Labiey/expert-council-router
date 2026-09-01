@@ -173,6 +173,22 @@ toolReliability bashReliability autonomousExecution speed
 
 模型键必须使用 `models --json` 返回的精确 `provider/model`。新发现或没有本地画像的模型会获得保守默认值；不可用模型的残留配置只会产生警告，不会导致路由崩溃。
 
+### 主代理能力审查与首次组建偏好
+
+用户不需要逐个模型维护使用优先级。主代理决定当前任务值得组建委员会后，如果这是新对话中的第一个委员会且用户尚未表达偏好，应先询问一次：
+
+```text
+价格优先（economy）
+综合价格、时间与成功率（balanced）
+速度优先（speed）
+```
+
+Pi Package 把选择记录在当前 Pi Session 的隐藏扩展状态中；本对话后续委员会自动复用，除非用户主动改变。`economy` 会增强成本权重，`speed` 会增强经过审查的速度维度，`balanced` 使用正常的角色权重。旧的 `quality` API 值保留兼容，但不会作为默认提问选项。
+
+模型能力由主代理审查，而不是要求用户手工排序。若尚无审查、可调用模型发生显著变化、现有数据对当前决策已经过时，或用户明确要求“重新审查模型能力”，主代理可使用宿主已经具备的联网工具，仅研究 `expert_inspect` 返回的可调用模型，并通过 `expert_build.modelAssessment` 提交带 ISO 日期、来源 URL、0–10 能力维度及可验证 Provider 访问/计费方式的紧凑快照。快照持久化在项目的 `.expert-council/state.json`，后续路由直接复用，不会每次任务都联网。显式用户计费配置始终高于主代理的判断；不能确认的计费方式保持 `unknown`。
+
+推荐交叉验证而不是信任单榜：[Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) 可提供 Coding、Agentic、价格、吞吐与延迟数据，[LiveBench](https://livebench.ai/) 提供 Coding 与 Agentic Coding，[Arena](https://arena.ai/leaderboard/text) 反映人类偏好，Provider 官方资料用于核对版本、上下文、工具与访问方式。[OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) 主要反映实际使用量，只作为采用度信号，不能单独证明模型质量。若宿主没有联网工具，继续使用保守元数据和本地结果；Expert Council 不会自动安装插件、Skill 或第三方可执行包。
+
 ### 角色权重
 
 每个语义角色都有归一化默认权重。Implementation Worker 更重视工具可靠性、编码、自治执行与 Shell 可靠性；Architecture Oracle 更重视架构、规划、长上下文与审查。
@@ -191,7 +207,7 @@ toolReliability bashReliability autonomousExecution speed
 }
 ```
 
-权重会自动重新归一化。`costPolicy: economy` 会提高成本因素的影响，`quality` 则会降低成本因素，但它们不会绕过安全或兼容性硬约束。
+权重会自动重新归一化。`costPolicy: economy` 会提高成本因素的影响，`speed` 会提高速度并降低成本因素的影响，旧的 `quality` 会降低成本因素；它们都不会绕过安全或兼容性硬约束。
 
 ## 语义角色与团队规模
 
@@ -205,7 +221,7 @@ toolReliability bashReliability autonomousExecution speed
 | Implementation Worker | 可写 | 有边界的代码修改和聚焦测试 |
 | Debugger | 可写 | 复现、定位、修复和验证 |
 | Reviewer | 只读 | 回归、边界条件和设计审查 |
-| Verifier | 只读 + Shell | 测试、Diff 与验收标准验证 |
+| Verifier | 只读 | 检查已报告的测试、Diff 与验收标准 |
 
 微小任务只使用一个 Worker；普通任务使用 Worker 与 Verifier；复杂功能使用 Planner、Worker、Reviewer 与 Verifier；复杂调试使用 Scout、Debugger、Oracle 与 Verifier。`maxExperts` 会限制团队规模，主代理永远不会再被复制成一个多余的 `lead` 专家。
 
@@ -231,9 +247,9 @@ toolReliability bashReliability autonomousExecution speed
 
 主代理共享指导的唯一源文件是 [`shared/skills/expert-council/SKILL.md`](shared/skills/expert-council/SKILL.md)。构建过程会把它同步到 Pi 与 Codex 分发。共享角色提示位于 `packages/core/src/roles/prompts/`，作为包资源复制，而不是为不同宿主重复编写。
 
-只读角色永远不会获得 `edit` 或 `write`，即使调用者试图把它们加入工具列表。Pi 会话使用真实的 `tools` allowlist，因此它比仅靠 Prompt 约束更强。Windows 使用 `powershell`，Unix 使用 `bash`。
+只读角色永远不会获得 `edit`、`write`、`bash` 或 `powershell`，即使调用者试图把它们加入工具列表。Pi 会话使用真实的 `tools` allowlist，因此它比仅靠 Prompt 约束更强。在提供专用的无副作用命令运行器之前，需要 Shell 执行测试的任务应交给隔离 worktree 中的写入型角色。
 
-系统只会激活已经安装并启用、且当前角色需要的 Pi Skill。被标记为不受信任的 Skill 默认排除，除非用户通过 `security.trustedSkills` 显式允许。Expert Council 不会下载或安装任何 Skill 或可执行扩展。
+系统只会激活已经安装并启用、且当前角色需要的 Pi Skill。用户级 Skill 默认可信；项目级和临时 Skill 默认排除，只有名称精确列入 `security.trustedSkills` 才能启用。每个专家资源加载器都会禁用扩展、Prompt 模板、主题和项目上下文文件；无法强制这些策略的 Pi SDK 版本会被拒绝。Expert Council 不会下载或安装任何 Skill 或可执行扩展。
 
 专家提示要求：修改前先阅读、验证路径、优先局部编辑、失败后诊断再换方法、使用有限时非交互命令、检查执行结果、禁止递归委派，并返回紧凑 JSON，而不是私人思维过程。
 
@@ -260,7 +276,7 @@ missing_context permission_error unknown
 
 1. 规范化请求工作区路径。
 2. 要求路径位于允许的根目录内。
-3. 从仓库当前 `HEAD` 在系统临时目录创建 detached worktree。
+3. 从仓库当前 `HEAD` 在系统临时目录内当前用户专属的私有目录中创建 detached worktree。
 4. 在该 worktree 中为 Worker 提供写入工具。
 5. 返回 worktree 路径和修改文件列表。
 6. 由 Codex 或 Pi 主代理检查、整合并最终验收。
@@ -324,7 +340,22 @@ MCP 表面刻意保持为 8 个语义工具：
 - `expert_escalate`
 - `expert_status`
 
-`expert_delegate` 会启动后台任务并立即返回 `executionId`。可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。任务完成后使用 `expert_result` 获取结果，主代理验收后再用 `expert_feedback` 记录验证结论。通用 MCP 宿主通过 `expert_result` 或 `expert_status` 查询；原生 Pi Package 还会主动向主 Agent 发送完成通知。
+`expert_inspect` 和 `expert_build` 默认返回面向宿主的紧凑视图。只有确实需要准确模型元数据、备选项、评分、工具或 Skill 时才传入 `detail: "full"`。
+
+`expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。存在两个以上相互独立的任务时，应在主代理结束当前回合前一次发配整个批次：
+
+```json
+{
+  "assignments": [
+    { "role": "scout", "task": "定位相关文件", "taskDescription": "仓库映射" },
+    { "role": "reviewer", "task": "审查边界设计", "taskDescription": "边界审查" }
+  ]
+}
+```
+
+`assignments` 必须是实际 JSON 数组，不能是包含 JSON 文本的字符串。原生 Pi 适配器对部分模型偶发的字符串化数组提供有界兼容解析，但正常调用仍应直接生成数组。
+
+可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。任务完成后使用 `expert_result` 获取结果，主代理验收后再用 `expert_feedback` 记录验证结论。`expert_status` 会返回有界的逐次尝试历史，包括模型、状态、失败类型和精简失败摘要。通用 MCP 宿主通过 `expert_result` 或 `expert_status` 查询；原生 Pi Package 还会主动向主 Agent 发送完成通知。
 
 直接启动 stdio Server：
 
@@ -340,6 +371,8 @@ node packages/mcp-server/dist/bin.js
 - `EXPERT_COUNCIL_STATE`：持久化计划、执行和结果状态路径。
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`：同步 MCP 操作的有限超时，默认 30000 毫秒。
 - `PI_CODING_AGENT_MODULE`：自动解析失败时显式指定 Pi 包目录。
+
+环境变量覆盖和 CLI 路径参数属于“受信任的操作者输入”。其中 `PI_CODING_AGENT_MODULE` 会加载可执行代码，配置、工作区、遥测和状态路径会选择本地文件；不要从不受信任仓库、任务文本或模型输出中接受这些值。
 
 Codex 插件已经内置并配置该 MCP Server，不需要复制业务逻辑。
 
@@ -359,7 +392,7 @@ pi -e ./packages/pi-package
 
 Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 8 个语义工具，不包含另一套独立路由实现。
 
-Pi 委派是非阻断式的。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。由于原生 Pi 会在任务完成后自动重新唤醒主 Agent，主 Agent 派发完任务或完成其他有价值操作后应直接结束当前回合，不要轮询或静默等待消耗 token。
+Pi 委派是非阻断式的；一个调用最多可在返回前启动 8 个相互独立的后台任务。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。主 Agent 应先发完当前已准备好的整个批次再结束回合，之后不要轮询或静默等待消耗 token。
 
 ## Codex 插件
 
@@ -385,9 +418,10 @@ npm test
 npm run typecheck
 npm run build
 npm run pack:check
+npm run validate
 ```
 
-测试覆盖模型归一化、公开价格与真实策略计费、Worker 可靠性、Oracle 评分、Reviewer 多样性、硬约束、未知和缺失模型、团队规模、重试、结构化失败分类、升级、重试上限、角色权限、配置校验、遥测隐私/反馈/用量聚合、Core 宿主独立性、模拟 Pi 发现与执行、CLI JSON、MCP Schema、Pi 扩展注册和真实 Git worktree 隔离。
+`npm run validate` 会先构建，确保全新克隆在测试前已经生成 workspace 包入口。测试覆盖模型归一化、公开价格与真实策略计费、Worker 可靠性、Oracle 评分、Reviewer 多样性、硬约束、未知和缺失模型、团队规模、重试和逐次诊断、结构化失败分类、升级、重试上限、角色权限、紧凑宿主输出、配置校验、遥测隐私/反馈/用量聚合、Core 宿主独立性、模拟 Pi 发现与执行、CLI JSON、MCP Schema、真实 Pi 0.84.4 扩展加载/包装及异步批量通知、Pi 扩展注册和真实 Git worktree 隔离。
 
 普通测试只使用 Mock Runtime，绝不会调用付费模型。真实只读 Pi 执行必须同时指定模型并明确确认成本：
 
@@ -418,7 +452,7 @@ Codex Integration 是独立插件制品，不是 Pi Package 的复制品。提�
 - Pi API 变化较快。V1 已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
 - Pi 没有统一的真实计费类型 API。无法确认的计费保持 `unknown`，订阅、额度和促销访问需要用户配置。
 - V1 不会根据模型名称推断主观编码质量，也不会自动下载基准预设。
-- Detached worktree 从已提交的 `HEAD` 开始，不会复制主工作区未提交改动。这是刻意的隔离设计。
+- Detached worktree 从已提交的 `HEAD` 开始，不会复制主工作区未提交改动。这是刻意的隔离设计；运行时会检测脏源工作区，并在委派前通过运行时限制和 mutation 委员会警告提示该偏差。
 - Worktree 修改只返回给主代理审查，不会自动合并或应用；验收或拒绝后应调用 `expert_cleanup`，否则将在保留期结束后自动清理。
 - 非 Git 工作区的写入需要显式原地修改授权。
 - 正在进行的模型调用不会在 Server 重启后续跑；持久化状态会把它关闭为明确的中断失败，同时保留计划和已完成结果。

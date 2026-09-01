@@ -59,6 +59,41 @@ describe("CLI JSON integration", () => {
     expect(code).toBe(0);
     expect(JSON.parse(stdout)).toEqual({ executionId: "exec_mock", status: "recorded", verificationPassed: true });
   });
+
+  it.each([
+    ["--max-experts", "abc"],
+    ["--max-experts", "4abc"],
+    ["--max-experts", "0"],
+    ["--max-experts", "9"],
+  ])("rejects an invalid CLI numeric option %s=%s", async (name, value) => {
+    let stderr = "";
+    const code = await runCli(["build", "review", name, value, "--json"], {
+      stdout: { write: () => {} },
+      stderr: { write: (output) => { stderr += output; } },
+    }, mockCouncil());
+    expect(code).toBe(1);
+    expect(JSON.parse(stderr).error).toContain(`${name} must be an integer`);
+  });
+
+  it.each(["abc", "1000ms", "999", "3600001"])("rejects invalid --timeout-ms=%s", async (value) => {
+    let stderr = "";
+    const code = await runCli(["delegate", "scout", "review", "--timeout-ms", value, "--json"], {
+      stdout: { write: () => {} },
+      stderr: { write: (output) => { stderr += output; } },
+    }, mockCouncil());
+    expect(code).toBe(1);
+    expect(JSON.parse(stderr).error).toContain("--timeout-ms must be an integer");
+  });
+
+  it("rejects a numeric option with no value", async () => {
+    let stderr = "";
+    const code = await runCli(["build", "review", "--max-experts", "--json"], {
+      stdout: { write: () => {} },
+      stderr: { write: (output) => { stderr += output; } },
+    }, mockCouncil());
+    expect(code).toBe(1);
+    expect(JSON.parse(stderr).error).toContain("--max-experts must be an integer");
+  });
 });
 
 describe("MCP semantic surface", () => {
@@ -74,9 +109,25 @@ describe("MCP semantic surface", () => {
       "expert_status",
     ]);
     expect(MCP_INPUT_SCHEMAS.expert_build.task.safeParse("fix race").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_build.constraints.unwrap().shape.costPolicy.safeParse("speed").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_build.modelAssessment.safeParse({
+      asOf: "2026-09-01T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/model": { coding: 8, speed: 7 } },
+      billing: { p: { billingType: "subscription", marginalCostClass: "very-low" } },
+    }).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_inspect.detail.safeParse("compact").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_inspect.detail.safeParse("everything").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.role.safeParse("lead").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.taskDescription.safeParse("Review authentication").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.taskDescription.safeParse("x".repeat(501)).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.workspace.safeParse("bad\0path").success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.task.safeParse("x".repeat(100_001)).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_result.executionId.safeParse("../outside").success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
+      { role: "scout", task: "map files" },
+      { role: "reviewer", task: "review findings" },
+    ]).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_feedback.verificationPassed.safeParse(true).success).toBe(true);
   });
 
@@ -103,19 +154,42 @@ describe("Pi adapter registration", () => {
         return { id: "c", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [] };
       },
     };
+    const sessionEntries: Array<{ type: string; customType: string; data: unknown }> = [];
     piExtension({
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+      appendEntry: (customType: string, data: unknown) => sessionEntries.push({ type: "custom", customType, data }),
     } as never, { councilFor: async () => council });
+
+    const firstAttempt = await tools.get("expert_build")!.execute(
+      "call",
+      { task: "review" },
+      undefined,
+      undefined,
+      { cwd: ".", sessionManager: { getBranch: () => sessionEntries } },
+    );
+    expect(JSON.parse(firstAttempt.content[0]!.text)).toMatchObject({ status: "preference-required" });
+    expect(received).toBeUndefined();
 
     await tools.get("expert_build")!.execute(
       "call",
-      { task: "review", minimumContextWindow: 128_000 },
+      { task: "review", minimumContextWindow: 128_000, costPolicy: "speed" },
       undefined,
       undefined,
-      { cwd: "." },
+      { cwd: ".", sessionManager: { getBranch: () => sessionEntries } },
     );
 
     expect(received?.constraints?.minimumContextWindow).toBe(128_000);
+    expect(received?.constraints?.costPolicy).toBe("speed");
+
+    received = undefined;
+    await tools.get("expert_build")!.execute(
+      "call",
+      { task: "review again" },
+      undefined,
+      undefined,
+      { cwd: ".", sessionManager: { getBranch: () => sessionEntries } },
+    );
+    expect(received?.constraints?.costPolicy).toBe("speed");
   });
 
   it.each([
@@ -184,5 +258,50 @@ describe("Pi adapter registration", () => {
       { cwd: ".", isIdle: () => true },
     );
     expect(JSON.parse(fetched.content[0]!.text).result.summary).toBe("private feedback");
+  });
+
+  it("dispatches a complete independent batch before returning", async () => {
+    type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
+    const tools = new Map<string, Tool>();
+    const received: Array<{ role: string; task: string }> = [];
+    let nextId = 0;
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      startDelegation: (request) => {
+        received.push(request);
+        nextId += 1;
+        return {
+          executionId: `exec_batch_${nextId}`,
+          result: new Promise(() => {}),
+        };
+      },
+    };
+    piExtension({
+      registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+      sendMessage: () => {},
+    } as never, { councilFor: async () => council });
+
+    const delegated = await tools.get("expert_delegate")!.execute(
+      "call",
+      { assignments: [
+        { role: "scout", task: "map files", taskDescription: "repository map" },
+        { role: "reviewer", task: "review findings" },
+      ] },
+      undefined,
+      undefined,
+      { cwd: ".", isIdle: () => false },
+    );
+
+    expect(received.map(({ role, task }) => ({ role, task }))).toEqual([
+      { role: "scout", task: "map files" },
+      { role: "reviewer", task: "review findings" },
+    ]);
+    expect(JSON.parse(delegated.content[0]!.text)).toEqual({
+      status: "running",
+      executions: [
+        { executionId: "exec_batch_1", role: "scout", taskDescription: "repository map", status: "running" },
+        { executionId: "exec_batch_2", role: "reviewer", status: "running" },
+      ],
+    });
   });
 });

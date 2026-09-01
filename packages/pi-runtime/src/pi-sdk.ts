@@ -19,9 +19,13 @@ export interface PiSdkLike {
   ModelRuntime: { create(options?: Record<string, unknown>): Promise<PiModelRuntimeLike> };
   createAgentSession(options?: Record<string, unknown>): Promise<{ session: PiSessionLike }>;
   SessionManager?: { inMemory(cwd?: string): unknown };
+  SettingsManager?: {
+    create(cwd: string, agentDir?: string, options?: { projectTrusted?: boolean }): unknown;
+  };
   DefaultResourceLoader?: new (options: Record<string, unknown>) => {
-    reload(): Promise<void>;
+    reload(options?: { resolveProjectTrust?: (context: unknown) => Promise<boolean> }): Promise<void>;
     getSkills(): { skills: Array<Record<string, unknown>>; diagnostics?: unknown[] };
+    getExtensions(): { extensions: unknown[]; diagnostics?: unknown[] };
   };
   getAgentDir?: () => string;
 }
@@ -40,6 +44,7 @@ export function validatePiSdk(value: unknown, source = "Pi SDK"): PiSdkLike {
   if (typeof candidate.createAgentSession !== "function") missing.push("createAgentSession");
   const sessionManager = candidate.SessionManager as Record<string, unknown> | undefined;
   if (sessionManager && typeof sessionManager.inMemory !== "function") missing.push("SessionManager.inMemory");
+  if (candidate.DefaultResourceLoader === undefined) missing.push("DefaultResourceLoader constructor");
   if (candidate.DefaultResourceLoader !== undefined) {
     if (typeof candidate.DefaultResourceLoader !== "function") {
       missing.push("DefaultResourceLoader constructor");
@@ -47,8 +52,12 @@ export function validatePiSdk(value: unknown, source = "Pi SDK"): PiSdkLike {
       const prototype = (candidate.DefaultResourceLoader as { prototype?: Record<string, unknown> }).prototype;
       if (typeof prototype?.reload !== "function") missing.push("DefaultResourceLoader.reload");
       if (typeof prototype?.getSkills !== "function") missing.push("DefaultResourceLoader.getSkills");
+      if (typeof prototype?.getExtensions !== "function") missing.push("DefaultResourceLoader.getExtensions");
     }
+    const settingsManager = candidate.SettingsManager as Record<string, unknown> | undefined;
+    if (typeof settingsManager?.create !== "function") missing.push("SettingsManager.create");
   }
+  if (typeof candidate.getAgentDir !== "function") missing.push("getAgentDir");
   if (missing.length) {
     throw new Error(`${source} is incompatible with Expert Council; missing callable API(s): ${missing.join(", ")}.`);
   }
