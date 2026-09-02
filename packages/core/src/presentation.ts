@@ -10,6 +10,8 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
     modelCount: number;
     reasoningModelCount: number;
     billingType: string;
+    billingSource?: string;
+    billingReason?: string;
   }>();
   for (const model of inventory.models) {
     const current = providers.get(model.provider) ?? {
@@ -17,6 +19,12 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
       modelCount: 0,
       reasoningModelCount: 0,
       billingType: inventory.billing[model.billingProfile ?? model.provider]?.billingType ?? "unknown",
+      ...(inventory.billingSources?.[model.billingProfile ?? model.provider]
+        ? {
+            billingSource: inventory.billingSources[model.billingProfile ?? model.provider]!.source,
+            billingReason: inventory.billingSources[model.billingProfile ?? model.provider]!.reason,
+          }
+        : {}),
     };
     current.modelCount += 1;
     if (model.reasoning) current.reasoningModelCount += 1;
@@ -48,19 +56,33 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
         : {}),
       limitations: inventory.runtimeCapabilities.limitations,
     },
-    modelAssessment: inventory.modelAssessment
+    modelAssessment: inventory.modelAssessmentStatus?.status === "required"
       ? {
-          status: "available" as const,
-          asOf: inventory.modelAssessment.asOf,
-          modelCount: Object.keys(inventory.modelAssessment.models).length,
-          billingProviderCount: Object.keys(inventory.modelAssessment.billing ?? {}).length,
-          sources: inventory.modelAssessment.sources,
-          ...(inventory.modelAssessment.summary ? { summary: inventory.modelAssessment.summary } : {}),
+          status: "required" as const,
+          reason: inventory.modelAssessmentStatus.reason,
+          assessedAt: inventory.modelAssessmentStatus.assessedAt,
+          maxAgeDays: inventory.modelAssessmentStatus.maxAgeDays,
+          requiredModels: inventory.modelAssessmentStatus.requiredModels,
+          researchModels: inventory.modelAssessmentStatus.researchModels,
+          missingModels: inventory.modelAssessmentStatus.missingModels,
+          unavailableAssessedModels: inventory.modelAssessmentStatus.unavailableAssessedModels,
+          instructions: inventory.modelAssessmentStatus.instructions,
         }
-      : {
-          status: "missing" as const,
-          refreshHint: "Ask the Main Agent to audit currently available models when current external research is worthwhile.",
-        },
+      : inventory.modelAssessment
+        ? {
+            status: "current" as const,
+            asOf: inventory.modelAssessment.asOf,
+            refreshAfter: inventory.modelAssessmentStatus?.refreshAfter,
+            modelCount: Object.keys(inventory.modelAssessment.models).length,
+            billingProviderCount: Object.keys(inventory.modelAssessment.billing ?? {}).length,
+            sources: inventory.modelAssessment.sources,
+            ...(inventory.modelAssessment.summary ? { summary: inventory.modelAssessment.summary } : {}),
+          }
+        : {
+            status: "required" as const,
+            reason: "missing" as const,
+            refreshHint: "A current web-audited modelAssessment is required before expert_build can assemble a council.",
+          },
     warnings: inventory.warnings,
     detail: "compact" as const,
     fullDetailHint: "Call expert_inspect with detail='full' only when exact model metadata is required.",

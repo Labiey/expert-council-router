@@ -25,6 +25,7 @@ const BILLING_TYPE_BONUS = { free: 2, subscription: 1.5, metered: 0, quota: -1, 
 const PREFERENCE_BONUS = { "consume-first": 1, balanced: 0, "quality-sensitive": -0.1, "escalation-only": -2 } as const;
 
 function clampScore(value: number): number {
+  if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(10, value));
 }
 
@@ -46,7 +47,7 @@ export function billingCostScore(entry: BillingPolicyEntry, apiCost?: ApiCost, a
   const policyScore = clampScore(base + BILLING_TYPE_BONUS[entry.billingType] + PREFERENCE_BONUS[entry.usagePreference ?? "balanced"]);
   const publishedScore = publishedApiCostScore(apiCost);
   if (publishedScore === undefined || !["metered", "unknown"].includes(entry.billingType)) return policyScore;
-  const weight = Math.max(0, Math.min(1, apiPriceWeight));
+  const weight = Number.isFinite(apiPriceWeight) ? Math.max(0, Math.min(1, apiPriceWeight)) : 0.35;
   return clampScore(policyScore * (1 - weight) + publishedScore * weight);
 }
 

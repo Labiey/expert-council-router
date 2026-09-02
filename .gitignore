@@ -12,3 +12,4 @@ coverage/
 .expert-council/worktrees/
 .pi/
 *.log
+TMP/

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  inferFailureType,
   normalizePiModels,
   getRole,
   type AvailableModel,
@@ -9,6 +10,7 @@ import {
   type ExpertResult,
   type ExpertRuntime,
   type FailureType,
+  type RuntimeBillingDiscovery,
   type RuntimeCapabilities,
   type SkillInfo,
 } from "@expert-council/core";
@@ -33,6 +35,39 @@ export interface PiExpertRuntimeOptions {
 }
 
 class ExecutionTimeoutError extends Error {}
+
+export function inferPiProviderBilling(
+  provider: string,
+  runtimeSubscription = false,
+  hasPublishedMeteredPrice = false,
+): RuntimeBillingDiscovery {
+  if (runtimeSubscription) {
+    return {
+      policy: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" },
+      source: "pi-runtime",
+      reason: "Pi reports that the authenticated provider uses subscription access.",
+    };
+  }
+  if (/(?:^|-)token-plan(?:-|$)/i.test(provider)) {
+    return {
+      policy: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" },
+      source: "pi-provider-catalog",
+      reason: `Pi provider ${provider} is a named Token Plan access catalog.`,
+    };
+  }
+  if (hasPublishedMeteredPrice) {
+    return {
+      policy: { billingType: "metered", marginalCostClass: "normal", usagePreference: "quality-sensitive" },
+      source: "pi-model-catalog",
+      reason: `Pi exposes non-zero per-token catalog prices for provider ${provider} and does not report subscription access.`,
+    };
+  }
+  return {
+    policy: { billingType: "unknown", marginalCostClass: "normal", usagePreference: "balanced" },
+    source: "unverified",
+    reason: "Pi confirms authentication but does not expose a reliable billing/access classification for this provider.",
+  };
+}
 
 const FAILURE_TYPES = new Set<FailureType>([
   "tool_call_error",
@@ -123,24 +158,6 @@ function safeText(value: unknown, maximum: number): string | undefined {
   return sanitized ? sanitized.slice(0, maximum) : undefined;
 }
 
-function failureFromError(error: unknown): FailureType {
-  const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-  if (error instanceof ExecutionTimeoutError || message.includes("timeout")) return "timeout";
-  if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) return "permission_error";
-  if (
-    message.includes("provider") ||
-    message.includes("api key") ||
-    message.includes("rate limit") ||
-    message.includes("model registry") ||
-    message.includes("not currently available") ||
-    message.includes("model unavailable")
-  ) return "provider_error";
-  if (message.includes("tool")) return "tool_call_error";
-  if (message.includes("test") || message.includes("assertion")) return "test_failure";
-  if (message.includes("context") || message.includes("missing file") || message.includes("missing information")) return "missing_context";
-  return "unknown";
-}
-
 function normalizeResult(
   parsed: Record<string, unknown> | undefined,
   request: ExpertExecutionRequest,
@@ -170,11 +187,14 @@ function normalizeResult(
   const explicitFailureType = typeof parsed?.failureType === "string" && FAILURE_TYPES.has(parsed.failureType as FailureType)
     ? parsed.failureType as FailureType
     : undefined;
-  const summaryFailureType = failureFromError(typeof parsed?.summary === "string" ? parsed.summary : rawText);
+  const summaryFailureType = inferFailureType(
+    typeof parsed?.summary === "string" ? parsed.summary : rawText,
+    "reasoning_failure",
+  );
   const inferredFailureType = status !== "success"
     ? explicitFailureType
       ?? (tests?.some((test) => test.status === "failed") ? "test_failure" : undefined)
-      ?? (summaryFailureType === "unknown" ? "reasoning_failure" : summaryFailureType)
+      ?? summaryFailureType
     : undefined;
 
   return {
@@ -208,11 +228,12 @@ async function rolePrompt(role: string, roleDirectory?: string): Promise<string>
 }
 
 function executionPrompt(request: ExpertExecutionRequest, roleInstructions: string): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
 }
 
 export class PiExpertRuntime implements ExpertRuntime {
   private readonly boundary: WorkspaceBoundary;
+  private skillDiscoveryWarning?: string;
 
   private constructor(
     private readonly sdk: PiSdkLike,
@@ -236,6 +257,23 @@ export class PiExpertRuntime implements ExpertRuntime {
   async listAvailableModels(): Promise<AvailableModel[]> {
     const raw = await this.models.getAvailable();
     return normalizePiModels(raw, true).map((model) => ({ ...model }));
+  }
+
+  async listProviderBilling(): Promise<Record<string, RuntimeBillingDiscovery>> {
+    const models = await this.listAvailableModels();
+    const providers = [...new Set(models.map((model) => model.provider))];
+    return Object.fromEntries(providers.map((provider) => {
+      let runtimeSubscription = false;
+      try {
+        runtimeSubscription = this.models.isUsingSubscription?.(provider) === true;
+      } catch {
+        // Optional Pi compatibility signal; provider-catalog evidence may still be available.
+      }
+      const hasPublishedMeteredPrice = models
+        .filter((model) => model.provider === provider)
+        .some((model) => Object.values(model.apiCost ?? {}).some((price) => typeof price === "number" && price > 0));
+      return [provider, inferPiProviderBilling(provider, runtimeSubscription, hasPublishedMeteredPrice)];
+    }));
   }
 
   private skillIsTrusted(skill: Record<string, unknown>): boolean {
@@ -283,7 +321,11 @@ export class PiExpertRuntime implements ExpertRuntime {
     try {
       const loader = await this.createSafeResourceLoader(this.options.cwd);
       if (!loader) return [];
-      return loader.getSkills().skills.flatMap((skill) =>
+      const discovered = loader.getSkills();
+      this.skillDiscoveryWarning = discovered.diagnostics?.length
+        ? `Pi Skill discovery reported ${discovered.diagnostics.length} diagnostic(s).`
+        : undefined;
+      return discovered.skills.flatMap((skill) =>
         typeof skill.name === "string"
           ? [{
               name: skill.name,
@@ -295,7 +337,8 @@ export class PiExpertRuntime implements ExpertRuntime {
             }]
           : [],
       );
-    } catch {
+    } catch (error) {
+      this.skillDiscoveryWarning = `Pi Skill discovery failed: ${error instanceof Error ? error.message : String(error)}`;
       return [];
     }
   }
@@ -316,6 +359,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
+        ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
         ...workspace.limitations,
         ...(workspace.workspaceIsolation === "git-worktree"
           ? [`Mutation worktrees are retained for review until expert_cleanup is called or the ${this.options.config.security.worktreeRetentionMs}ms retention window expires.`]
@@ -400,7 +444,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         summary: safeText(error instanceof Error ? error.message : String(error), 4_000) ?? "Expert execution failed.",
         executionMetadata: {
           attempts: request.attempt,
-          failureType: failureFromError(error),
+          failureType: inferFailureType(error),
           durationMs: Date.now() - started,
           ...(workspace ? { workspace: workspace.root, isolated: workspace.isolated } : {}),
         },

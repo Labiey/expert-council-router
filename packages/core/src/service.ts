@@ -7,11 +7,14 @@ import {
   parseModelAssessmentSnapshot,
 } from "./config.js";
 import { decideEscalation } from "./escalation.js";
+import { failureTypeForResult } from "./failures.js";
+import { evaluateModelAssessment } from "./model-assessment.js";
 import { listRoles } from "./roles.js";
 import { rankModels } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
 import type {
   BuildCouncilRequest,
+  BillingPolicyEntry,
   CouncilPlan,
   CouncilStateOptions,
   CouncilStateSnapshot,
@@ -26,12 +29,14 @@ import type {
   ExpertOutcome,
   ExpertResult,
   ExpertResultLookup,
+  ExpertWaitRequest,
+  ExpertWaitResult,
   ExpertRuntime,
   ExecutionAttemptSnapshot,
   ExecutionStateSnapshot,
-  FailureType,
   ModelAssessmentSnapshot,
   ResourceInventory,
+  RuntimeBillingDiscovery,
   RoutingConstraints,
   TelemetryStore,
 } from "./types.js";
@@ -45,25 +50,6 @@ function executionId(): string {
 function parseModelKey(key: string): { provider: string; id: string } {
   const [provider, ...parts] = key.split("/");
   return { provider: provider ?? "unknown", id: parts.join("/") };
-}
-
-function failureType(result: ExpertResult): FailureType {
-  if (result.executionMetadata?.failureType) return result.executionMetadata.failureType;
-  if (result.tests?.some((test) => test.status === "failed")) return "test_failure";
-  const summary = result.summary.toLowerCase();
-  if (summary.includes("timeout") || summary.includes("timed out")) return "timeout";
-  if (summary.includes("permission") || summary.includes("workspace") || summary.includes("worktree")) return "permission_error";
-  if (
-    summary.includes("provider") ||
-    summary.includes("api key") ||
-    summary.includes("rate limit") ||
-    summary.includes("model registry") ||
-    summary.includes("not currently available")
-  ) return "provider_error";
-  if (summary.includes("tool")) return "tool_call_error";
-  if (summary.includes("test")) return "test_failure";
-  if (summary.includes("context")) return "missing_context";
-  return "unknown";
 }
 
 function approximateUsage(result: ExpertResult): ExpertOutcome["approximateUsage"] | undefined {
@@ -90,6 +76,7 @@ function constraintsWithAssessment(
   constraints: RoutingConstraints | undefined,
   assessment: ModelAssessmentSnapshot | undefined,
   runtimeCapabilities?: Awaited<ReturnType<ExpertRuntime["getCapabilities"]>>,
+  runtimeBilling: Record<string, BillingPolicyEntry> = {},
 ): RoutingConstraints {
   const audited = assessment?.models ?? {};
   const explicit = constraints?.modelOverrides ?? {};
@@ -102,8 +89,8 @@ function constraintsWithAssessment(
     ...(runtimeCapabilities ? { runtimeCapabilities } : {}),
     ...(keys.size ? { modelOverrides } : {}),
     ...(
-      assessment?.billing || constraints?.billingOverrides
-        ? { billingOverrides: { ...assessment?.billing, ...constraints?.billingOverrides } }
+      Object.keys(runtimeBilling).length || assessment?.billing || constraints?.billingOverrides
+        ? { billingOverrides: { ...runtimeBilling, ...assessment?.billing, ...constraints?.billingOverrides } }
         : {}
     ),
   };
@@ -114,6 +101,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   private readonly plans = new Map<string, CouncilPlan>();
   private readonly executions = new Map<string, ExecutionState>();
   private readonly results = new Map<string, ExpertResult>();
+  private readonly executionPromises = new Map<string, Promise<ExpertResult>>();
   private modelAssessment?: ModelAssessmentSnapshot;
   private persistenceQueue: Promise<void> = Promise.resolve();
 
@@ -177,52 +165,93 @@ export class ExpertCouncilService implements ExpertCouncil {
     };
   }
 
-  private persistState(): Promise<void> {
+  private persistState(replaceModelAssessment = false): Promise<void> {
     if (!this.stateOptions.persistence) return Promise.resolve();
     const snapshot = this.snapshot();
     this.persistenceQueue = this.persistenceQueue
       .catch(() => undefined)
-      .then(() => this.stateOptions.persistence!.save(snapshot));
+      .then(() => this.stateOptions.persistence!.save(snapshot, { replaceModelAssessment }));
     return this.persistenceQueue;
   }
 
   async inspectResources(): Promise<ResourceInventory> {
-    const [models, skills, runtimeCapabilities] = await Promise.all([
+    const [models, skills, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.runtime.listSkills(),
-      this.runtime.getCapabilities(),
+      this.runtime.listProviderBilling?.() ?? Promise.resolve<Record<string, RuntimeBillingDiscovery>>({}),
     ]);
+    // Read capabilities after resource discovery so runtime adapters can expose
+    // any discovery degradation recorded during this inspection.
+    const runtimeCapabilities = await this.runtime.getCapabilities();
     const configuredUnavailable = Object.keys(this.config.profiles.models).filter(
       (key) => !models.some((model) => `${model.provider}/${model.id}` === key),
     );
     const assessedUnavailable = Object.keys(this.modelAssessment?.models ?? {}).filter(
       (key) => !models.some((model) => `${model.provider}/${model.id}` === key),
     );
+    const runtimeBillingPolicies = Object.fromEntries(
+      Object.entries(runtimeBilling).map(([provider, discovery]) => [provider, discovery.policy]),
+    );
+    const billing = {
+      ...runtimeBillingPolicies,
+      ...this.modelAssessment?.billing,
+      ...this.config.billing.providers,
+    };
+    const billingSources = Object.fromEntries(
+      Object.keys(billing).map((provider) => {
+        if (this.config.billing.providers[provider]) {
+          return [provider, { source: "user-config" as const, reason: "Explicit user billing configuration is authoritative." }];
+        }
+        if (this.modelAssessment?.billing?.[provider]) {
+          return [provider, { source: "model-assessment" as const, reason: "Verified by the saved Main Agent assessment." }];
+        }
+        const discovery = runtimeBilling[provider];
+        return [provider, {
+          source: discovery?.source ?? "unverified",
+          reason: discovery?.reason ?? "The runtime exposed no reliable access-method billing evidence.",
+        }];
+      }),
+    );
+    const providers = [...new Set(models.map((model) => model.provider))];
     return {
       models,
       skills,
-      billing: { ...this.config.billing.providers },
+      billing,
+      billingSources,
       roles: listRoles(),
       runtimeCapabilities,
       ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
+      modelAssessmentStatus: evaluateModelAssessment(models, this.modelAssessment),
       warnings: [
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
+        ...providers
+          .filter((provider) => (billing[provider]?.billingType ?? "unknown") === "unknown")
+          .map((provider) => `Provider ${provider} billing is unknown: ${billingSources[provider]?.reason ?? "no reliable evidence"}`),
       ],
     };
   }
 
   async buildCouncil(request: BuildCouncilRequest): Promise<CouncilPlan> {
-    const [models, aggregates, runtimeCapabilities] = await Promise.all([
+    const [models, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
       this.runtime.getCapabilities(),
+      this.runtime.listProviderBilling?.() ?? Promise.resolve<Record<string, RuntimeBillingDiscovery>>({}),
     ]);
     if (request.modelAssessment) this.modelAssessment = parseModelAssessmentSnapshot(request.modelAssessment);
-    const constraints = constraintsWithAssessment(request.constraints, this.modelAssessment, runtimeCapabilities);
+    const runtimeBillingPolicies = Object.fromEntries(
+      Object.entries(runtimeBilling).map(([provider, discovery]) => [provider, discovery.policy]),
+    );
+    const constraints = constraintsWithAssessment(
+      request.constraints,
+      this.modelAssessment,
+      runtimeCapabilities,
+      runtimeBillingPolicies,
+    );
     const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates);
     this.plans.set(plan.id, plan);
-    await this.persistState();
+    await this.persistState(Boolean(request.modelAssessment));
     return plan;
   }
 
@@ -268,6 +297,8 @@ export class ExpertCouncilService implements ExpertCouncil {
       void this.persistState().catch(() => undefined);
       return completed;
     });
+    this.executionPromises.set(id, result);
+    void result.then(() => this.executionPromises.delete(id));
     return { executionId: id, result };
   }
 
@@ -380,7 +411,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       Object.assign(attemptSnapshot, { finishedAt: new Date().toISOString() });
       if (lastResult.status !== "success") {
         Object.assign(attemptSnapshot, {
-          failureType: failureType(lastResult),
+          failureType: failureTypeForResult(lastResult),
           summary: boundedFailureSummary(lastResult.summary),
         });
       }
@@ -396,7 +427,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       }
 
       if (lastResult.status === "success") break;
-      const failure = failureType(lastResult);
+      const failure = failureTypeForResult(lastResult);
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
       const decision = decideEscalation(
         { role: request.role, task: request.task, currentModel: current.model, previousFailures: failures },
@@ -463,6 +494,59 @@ export class ExpertCouncilService implements ExpertCouncil {
     return result
       ? { executionId, status: "completed", result }
       : { executionId, status: "running" };
+  }
+
+  async waitForResults(request: ExpertWaitRequest): Promise<ExpertWaitResult> {
+    const started = Date.now();
+    const executionIds = [...new Set(request.executionIds)];
+    const mode = request.mode ?? "all";
+    if (executionIds.length !== request.executionIds.length) {
+      throw new Error("expert_wait execution IDs must be unique.");
+    }
+    if (executionIds.length < 1 || executionIds.length > 8) {
+      throw new Error("expert_wait requires between one and eight unique execution IDs.");
+    }
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1_000 || request.timeoutMs > 3_600_000) {
+      throw new Error("expert_wait timeoutMs must be an integer between 1000 and 3600000.");
+    }
+
+    const snapshot = (): ExpertWaitResult => {
+      const completed = executionIds.filter((id) => this.results.has(id));
+      const running = executionIds.filter((id) => this.executions.has(id) && !this.results.has(id));
+      const notFound = executionIds.filter((id) => !this.executions.has(id));
+      const conditionMet = mode === "any"
+        ? completed.length > 0
+        : completed.length === executionIds.length;
+      return {
+        status: conditionMet ? "completed" : notFound.length > 0 && running.length === 0 ? "not-found" : "timed-out",
+        mode,
+        completed,
+        running,
+        notFound,
+        waitedMs: Date.now() - started,
+      };
+    };
+
+    const initial = snapshot();
+    if (initial.status === "completed" || initial.status === "not-found") return initial;
+    const pending = initial.running
+      .map((id) => this.executionPromises.get(id))
+      .filter((promise): promise is Promise<ExpertResult> => promise !== undefined);
+    if (pending.length === 0) return snapshot();
+
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, request.timeoutMs);
+    });
+    const completion = mode === "any"
+      ? Promise.race(pending).then(() => undefined)
+      : Promise.all(pending).then(() => undefined);
+    try {
+      await Promise.race([completion, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+    return snapshot();
   }
 
   async cleanup(executionId: string): Promise<ExpertCleanupResult> {

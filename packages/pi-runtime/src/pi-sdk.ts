@@ -1,7 +1,14 @@
+import { execFile } from "node:child_process";
+import { access, readFile } from "node:fs/promises";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+
 export interface PiModelRuntimeLike {
   getAvailable(providerId?: string): Promise<readonly unknown[]>;
   getAvailableSnapshot?(): readonly unknown[];
   getModel(provider: string, id: string): unknown;
+  isUsingSubscription?(providerId: string): boolean;
 }
 
 export interface PiSessionLike {
@@ -144,8 +151,3 @@ export async function loadPiSdk(): Promise<{ sdk: PiSdkLike; packageName: string
     `No compatible Pi SDK is installed. Install a supported Pi coding-agent package.\n${errors.join("\n")}`,
   );
 }
-import { execFile } from "node:child_process";
-import { access, readFile } from "node:fs/promises";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";

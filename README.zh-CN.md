@@ -15,7 +15,7 @@ V1 已包含：
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 包含 8 个异步语义工具、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
+- 包含 9 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件。
 - 不会消耗模型额度的确定性自动化测试。
@@ -134,7 +134,7 @@ node packages/cli/dist/bin.js delegate architecture-oracle "分析并发调用�
 subscription  metered  quota  free  unknown
 ```
 
-边际成本和使用偏好是两个独立字段，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。对于 `metered` 和 `unknown` 访问方式，归一化后的非零公开输入/输出单价也会按 `routing.apiPriceWeight`（默认 `0.35`）参与成本效率评分；全零价格表按“未提供”处理，不会猜测为免费。订阅、免费和额度策略仍以用户配置为准，不会被无关的标价扭曲。
+边际成本和使用偏好是两个独立字段，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。Pi Runtime 适配器会把运行时明确报告的订阅或具名 Token Plan 目录识别为 `subscription`；否则，Pi 模型目录存在非零单价的 Provider 识别为 `metered`，没有可靠证据的保持 `unknown`。`expert_inspect` 会返回推断来源，显式用户配置始终具有最高优先级。同一按量 Provider 内的模型仍会通过 `routing.apiPriceWeight`（默认 `0.35`）比较具体单价；全零价格表按“未提供”处理，不会猜测为免费。
 
 ```json
 {
@@ -185,9 +185,9 @@ toolReliability bashReliability autonomousExecution speed
 
 Pi Package 把选择记录在当前 Pi Session 的隐藏扩展状态中；本对话后续委员会自动复用，除非用户主动改变。`economy` 会增强成本权重，`speed` 会增强经过审查的速度维度，`balanced` 使用正常的角色权重。旧的 `quality` API 值保留兼容，但不会作为默认提问选项。
 
-模型能力由主代理审查，而不是要求用户手工排序。若尚无审查、可调用模型发生显著变化、现有数据对当前决策已经过时，或用户明确要求“重新审查模型能力”，主代理可使用宿主已经具备的联网工具，仅研究 `expert_inspect` 返回的可调用模型，并通过 `expert_build.modelAssessment` 提交带 ISO 日期、来源 URL、0–10 能力维度及可验证 Provider 访问/计费方式的紧凑快照。快照持久化在项目的 `.expert-council/state.json`，后续路由直接复用，不会每次任务都联网。显式用户计费配置始终高于主代理的判断；不能确认的计费方式保持 `unknown`。
+模型能力由主代理审查，而不是要求用户手工排序。`expert_inspect` 会返回强制评估门禁：若尚无审查、审查已超过 30 天、可调用模型发生变化，或用户明确要求重新审查，主代理必须使用宿主已经具备的联网工具研究门禁列出的每个可调用模型；完成前 `expert_build` 不会组建委员会。主代理提交一份完整 `modelAssessment`，其中 ISO 时间必须读取宿主真实时钟，来源应合并为 1–12 个 URL，并包含 0–10 能力维度及可验证 Provider 访问/计费方式。未来时间戳会单独报告，修正时间时无需重新联网研究。若检查结果表明已保存评估仍为 `current`，宿主调用 `expert_build` 时应省略 `modelAssessment`；不完整、过期或未来时间的替代表不能覆盖当前有效快照。评估在当前用户数据目录只保存一份，只要可调用模型清单仍兼容，新对话和其他工作区都直接复用；普通计划和执行状态保存只保留全局评估，不会让持有旧内存快照的服务实例覆盖它，只有显式提交并成功通过门禁的新评估才会全局替换旧评分。显式用户计费配置始终高于主代理判断，不能确认的计费方式保持 `unknown`。
 
-推荐交叉验证而不是信任单榜：[Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) 可提供 Coding、Agentic、价格、吞吐与延迟数据，[LiveBench](https://livebench.ai/) 提供 Coding 与 Agentic Coding，[Arena](https://arena.ai/leaderboard/text) 反映人类偏好，Provider 官方资料用于核对版本、上下文、工具与访问方式。[OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) 主要反映实际使用量，只作为采用度信号，不能单独证明模型质量。若宿主没有联网工具，继续使用保守元数据和本地结果；Expert Council 不会自动安装插件、Skill 或第三方可执行包。
+推荐交叉验证而不是信任单榜：[Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) 可提供 Coding、Agentic、价格、吞吐与延迟数据，[LiveBench](https://livebench.ai/) 提供 Coding 与 Agentic Coding，[Arena](https://arena.ai/leaderboard/text) 反映人类偏好，Provider 官方资料用于核对版本、上下文、工具与访问方式。[OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) 主要反映实际使用量，只作为采用度信号，不能单独证明模型质量。门禁要求审查而宿主没有联网工具时，主代理必须说明限制并停止组建，不能静默使用未经审查的默认值；Expert Council 不会自动安装插件、Skill 或第三方可执行包。
 
 ### 角色权重
 
@@ -245,7 +245,7 @@ Pi Package 把选择记录在当前 Pi Session 的隐藏扩展状态中；本对
 
 ## Skill 与最小权限
 
-主代理共享指导的唯一源文件是 [`shared/skills/expert-council/SKILL.md`](shared/skills/expert-council/SKILL.md)。构建过程会把它同步到 Pi 与 Codex 分发。共享角色提示位于 `packages/core/src/roles/prompts/`，作为包资源复制，而不是为不同宿主重复编写。
+平台无关的主代理指导唯一源文件是 [`shared/skills/expert-council/SKILL.md`](shared/skills/expert-council/SKILL.md)。构建过程会把它与 `shared/skills/expert-council/hosts/` 下的小型宿主适配层合成，生成不同的 Pi 与 Codex `SKILL.md`，而不复制公共工作流。Pi 产物只说明完成后的 `steer`/`followUp` 行为，完全不暴露 `expert_wait`；Codex 产物才说明有限时的 `expert_wait` 流程。共享角色提示位于 `packages/core/src/roles/prompts/`，作为包资源复制，而不是为不同宿主重复编写。
 
 只读角色永远不会获得 `edit`、`write`、`bash` 或 `powershell`，即使调用者试图把它们加入工具列表。Pi 会话使用真实的 `tools` allowlist，因此它比仅靠 Prompt 约束更强。在提供专用的无副作用命令运行器之前，需要 Shell 执行测试的任务应交给隔离 worktree 中的写入型角色。
 
@@ -280,7 +280,7 @@ missing_context permission_error unknown
 4. 在该 worktree 中为 Worker 提供写入工具。
 5. 返回 worktree 路径和修改文件列表。
 6. 由 Codex 或 Pi 主代理检查、整合并最终验收。
-7. 整合或拒绝结果后调用 `expert_cleanup`。无人认领的 worktree 会在 `security.worktreeRetentionMs` 后自动清理，默认保留 24 小时，并同步 prune Git 元数据。
+7. 整合或拒绝结果后调用 `expert_cleanup`。一次调用会删除该 execution ID 因重试或升级创建的全部 worktree，并返回所有已删除路径。无人认领的 worktree 会在 `security.worktreeRetentionMs` 后自动清理，默认保留 24 小时，并同步 prune Git 元数据。
 
 非 Git 工作区默认拒绝写入。若确实需要原地修改，必须显式配置：
 
@@ -298,11 +298,11 @@ missing_context permission_error unknown
 
 ## 遥测与本地学习
 
-默认本地存储文件为 `.expert-council/telemetry.jsonl`。它只记录不透明 execution ID、模型、Provider、角色、任务分类、成功状态、首轮成功、工具错误数量、重试、超时、可选验证结果、升级次数、总尝试次数、宿主类型，以及 Pi 可提供的近似 Token/成本用量。主代理验收后调用 `expert_feedback`；同一 execution 的更新在聚合时覆盖早期样本，不会重复计数。
+默认用户数据根目录为：Windows `%LOCALAPPDATA%\ExpertCouncil`，Linux `$XDG_STATE_HOME/expert-council` 或 `~/.local/state/expert-council`，macOS `~/Library/Application Support/ExpertCouncil`。共享的 `telemetry.jsonl` 保存不透明执行结果，使实际可靠性能够跨对话和工作区复用；同一 execution 的反馈会覆盖早期样本，不会重复计数。共享的 `model-assessment.json` 保存最新的显式能力与计费评分。可用 `EXPERT_COUNCIL_DATA_DIR`、`EXPERT_COUNCIL_TELEMETRY`、`EXPERT_COUNCIL_MODEL_ASSESSMENT` 和 `EXPERT_COUNCIL_STATE` 覆盖位置。
 
 它不会记录 Prompt、源码内容、凭据、API Key、Secret 或思维过程。聚合指标包括按角色成功率、首轮成功率、工具错误率、重试率、验证通过率和平均尝试次数。V1 没有远程分析端点。
 
-计划、执行状态和已完成的结构化结果另行保存在 `.expert-council/state.json`。进程重启后仍可查询计划和已完成结果；重启时仍在运行的任务会被关闭为明确的中断失败，而不会继续显示为活动任务。该本地状态可能包含有限的任务描述和专家摘要，应按项目数据保护。
+计划、执行状态和已完成结构化结果仍按工作区隔离，保存在 `workspaces/<工作区哈希>/state.json`。进程重启后仍可查询；重启时仍在运行的任务会被关闭为明确的中断失败。旧版项目内 `.expert-council` 和 `%USERPROFILE%\.expert-council` 目录不会被自动删除。
 
 ## CLI
 
@@ -329,11 +329,12 @@ expert-council status
 
 ## MCP Server
 
-MCP 表面刻意保持为 8 个语义工具：
+MCP 表面刻意保持为 9 个语义工具：
 
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
+- `expert_wait`
 - `expert_result`
 - `expert_feedback`
 - `expert_cleanup`
@@ -342,20 +343,30 @@ MCP 表面刻意保持为 8 个语义工具：
 
 `expert_inspect` 和 `expert_build` 默认返回面向宿主的紧凑视图。只有确实需要准确模型元数据、备选项、评分、工具或 Skill 时才传入 `detail: "full"`。
 
-`expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。存在两个以上相互独立的任务时，应在主代理结束当前回合前一次发配整个批次：
+`expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。主代理应根据任务难度为每项任务显式设置 `timeoutMs`，而不是依赖运行时的十分钟兜底值。存在两个以上相互独立的任务时，应在继续其他主代理工作前一次发配整个批次：
 
 ```json
 {
   "assignments": [
-    { "role": "scout", "task": "定位相关文件", "taskDescription": "仓库映射" },
-    { "role": "reviewer", "task": "审查边界设计", "taskDescription": "边界审查" }
+    { "role": "scout", "task": "定位相关文件", "taskDescription": "仓库映射", "timeoutMs": 300000 },
+    { "role": "reviewer", "task": "审查边界设计", "taskDescription": "边界审查", "timeoutMs": 600000 }
   ]
 }
 ```
 
 `assignments` 必须是实际 JSON 数组，不能是包含 JSON 文本的字符串。原生 Pi 适配器对部分模型偶发的字符串化数组提供有界兼容解析，但正常调用仍应直接生成数组。
 
-可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。任务完成后使用 `expert_result` 获取结果，主代理验收后再用 `expert_feedback` 记录验证结论。`expert_status` 会返回有界的逐次尝试历史，包括模型、状态、失败类型和精简失败摘要。通用 MCP 宿主通过 `expert_result` 或 `expert_status` 查询；原生 Pi Package 还会主动向主 Agent 发送完成通知。
+可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。派发后主代理应继续所有可独立完成的工作；无其他有用工作时，调用一次 `expert_wait`，传入最多 8 个 execution ID、通常使用 `mode: "all"`（任一早期结果即可推进时使用 `"any"`），并按预计剩余难度设置 `timeoutMs`。等待由执行 Promise 的完成事件驱动而不是轮询；阻断当前 MCP 调用属于预期行为，等待期间不会继续消耗主模型 Token。
+
+```json
+{
+  "executionIds": ["exec_a", "exec_b"],
+  "mode": "all",
+  "timeoutMs": 900000
+}
+```
+
+`expert_wait` 只返回完成状态和任务 ID，随后使用 `expert_result` 获取正式反馈，并在主代理验收后调用 `expert_feedback`。`expert_wait.timeoutMs` 只限制本次等待，不会延长各专家自己的执行期限。Codex 插件把 MCP 传输安全上限设为 3660 秒，以便最长一小时的合理等待留有结束余量；所有可能阻断的 Expert Council、Bash、PowerShell 或其他 MCP 调用仍必须按操作难度附带更小的显式有限超时。其余同步 Expert Council 操作继续受独立的 30 秒 Server 内部上限保护。`expert_status` 会返回有界的逐次尝试历史。原生 Pi Package 使用主动完成通知，因此不暴露 `expert_wait`。
 
 直接启动 stdio Server：
 
@@ -378,19 +389,43 @@ Codex 插件已经内置并配置该 MCP Server，不需要复制业务逻辑。
 
 ## 原生 Pi Package
 
-构建 monorepo 后可在本地试用：
+在仓库根目录构建并安装本地候选版。即使在 Windows 上，只要命令可能经过 Pi 的 Bash 兼容 Shell，也应使用正斜杠；未正确引用的 `.\packages\pi-package` 会在到达 Pi 前丢失反斜杠。
 
 ```bash
-pi install ./packages/pi-package
+npm run build
+pi install "./packages/pi-package"
+pi list
+pi --verbose
 ```
+
+`pi list` 应显示配置中的 source 及解析后的绝对 Package 目录。新启动的 verbose Pi 会话应显示 `dist/extension.js`、`expert-council` Skill，以及不含 `expert_wait` 的 8 个语义工具。已经运行的 Pi 进程不会热加载重新构建或已移除的 Package。
 
 或仅在当前运行中临时加载：
 
 ```bash
-pi -e ./packages/pi-package
+pi --verbose -e "./packages/pi-package"
 ```
 
-Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册与 MCP 相同的 8 个语义工具，不包含另一套独立路由实现。
+无费用装载检查只需让 Pi 调用 `expert_inspect`。真实编排检查应在新对话中组建一个只读委员会，一次性批量派发两个相互独立的只读任务，确认 `expert_delegate` 立即返回 execution ID，再用 `expert_result` 和 `expert_feedback` 验收每个完成结果。若测试写入型专家，还应确认一次 `expert_cleanup` 会在 `workspaces` 中报告该 execution 的全部重试 worktree，且随后 `git worktree list` 只剩主工作区。
+
+移除持久安装前，先退出所有已经加载该 Package 的 Pi 进程，然后仍在仓库根目录执行：
+
+```bash
+pi remove "./packages/pi-package"
+pi list
+```
+
+如果当前目录已经变化，请改用解析后的绝对路径。PowerShell 示例：
+
+```powershell
+$ecPiPackage = (Resolve-Path "./packages/pi-package").Path
+pi remove "$ecPiPackage"
+pi list
+```
+
+如果通过 Pi 的 Bash 兼容 Shell 执行移除，请使用 `pi list` 第二行显示的正斜杠绝对路径，例如 `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`。不要直接复制 `pi list` 中缩进显示的相对 source，除非命令也从相同的 settings 目录上下文解析。
+
+Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册 8 个语义工具；由于原生 Pi 已提供完成 `steer`/`followUp`，因此省略 MCP 专用的 `expert_wait`。它不包含另一套路由实现。
 
 Pi 委派是非阻断式的；一个调用最多可在返回前启动 8 个相互独立的后台任务。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。主 Agent 应先发完当前已准备好的整个批次再结束回合，之后不要轮询或静默等待消耗 token。
 
@@ -407,7 +442,7 @@ packages/codex-integration/plugin/expert-council/
   dist/roles/*.md
 ```
 
-它遵循当前 Codex 插件布局，清单引用 `skills/` 和内置 `.mcp.json`，stdio MCP Server 被打包在插件内，并通过用户现有的 Pi SDK 使用凭据，而不会嵌入或复制凭据。
+它遵循当前 Codex 插件布局，清单引用 `skills/` 和内置 `.mcp.json`，stdio MCP Server 被打包在插件内，并通过用户现有的 Pi SDK 使用凭据，而不会嵌入或复制凭据。内置 MCP 配置把宿主工具调用上限提高到 3660 秒以支持有限的 `expert_wait`；Skill 要求主代理仍按每次操作难度设置明确期限，不能把这个上限当作默认执行预算。
 
 本地安装应通过个人或仓库 marketplace 暴露该插件。项目不会自动修改用户或团队的 Codex marketplace 配置。
 
@@ -450,7 +485,7 @@ Codex Integration 是独立插件制品，不是 Pi Package 的复制品。提�
 ## 已知限制
 
 - Pi API 变化较快。V1 已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
-- Pi 没有统一的真实计费类型 API。无法确认的计费保持 `unknown`，订阅、额度和促销访问需要用户配置。
+- Pi 没有统一的真实计费类型 API。运行时订阅信号和具名 Token Plan 优先；否则非零目录价格按按量计费处理，没有可靠证据的 Provider 保持 `unknown`，直到评估或显式用户配置确认。
 - V1 不会根据模型名称推断主观编码质量，也不会自动下载基准预设。
 - Detached worktree 从已提交的 `HEAD` 开始，不会复制主工作区未提交改动。这是刻意的隔离设计；运行时会检测脏源工作区，并在委派前通过运行时限制和 mutation 委员会警告提示该偏差。
 - Worktree 修改只返回给主代理审查，不会自动合并或应用；验收或拒绝后应调用 `expert_cleanup`，否则将在保留期结束后自动清理。

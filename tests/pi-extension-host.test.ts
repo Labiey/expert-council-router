@@ -11,9 +11,15 @@ import { describe, expect, it } from "vitest";
 import type { ExpertCouncil, ExpertResult } from "../packages/core/src/index.js";
 
 function hostCouncil(startDelegation: ExpertCouncil["startDelegation"]): ExpertCouncil {
+  const assessment = {
+    asOf: "2026-09-01T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: { "p/m": { coding: 8 } },
+  };
   return {
     inspectResources: async () => ({
-      models: [], skills: [], billing: {}, roles: [], warnings: [],
+      models: [{ provider: "p", id: "m", available: true }], skills: [], billing: {}, roles: [], warnings: [],
+      modelAssessment: assessment,
       runtimeCapabilities: {
         hostType: "pi-host-test",
         modelDiscovery: true,
@@ -32,6 +38,9 @@ function hostCouncil(startDelegation: ExpertCouncil["startDelegation"]): ExpertC
     startDelegation,
     delegate: async (request) => (await startDelegation(request).result),
     getResult: async (executionId) => ({ executionId, status: "running" }),
+    waitForResults: async ({ executionIds, mode = "all" }) => ({
+      status: "timed-out", mode, completed: [], running: executionIds, notFound: [], waitedMs: 0,
+    }),
     cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     recordFeedback: async ({ executionId, verificationPassed }) => ({ executionId, status: "recorded", verificationPassed }),
     escalate: async () => ({ action: "stop", reason: "test" }),
@@ -110,7 +119,15 @@ describe("Pi 0.84.4 extension host integration", () => {
       });
       const selectedPreference = await build!.execute(
         "build-2",
-        { task: "review", costPolicy: "speed" },
+        {
+          task: "review",
+          costPolicy: "speed",
+          modelAssessment: {
+            asOf: "2026-09-02T00:00:00.000Z",
+            sources: ["https://livebench.ai/"],
+            models: {},
+          },
+        },
         undefined,
         undefined,
       );

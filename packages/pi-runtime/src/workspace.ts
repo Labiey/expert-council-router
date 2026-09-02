@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
 import { chmod, lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
@@ -20,6 +20,8 @@ export interface PreparedWorkspace {
 export interface WorkspaceCleanupResult {
   status: "cleaned" | "not-found" | "not-required" | "failed";
   workspace?: string;
+  workspaces?: string[];
+  removedCount?: number;
   message?: string;
 }
 
@@ -223,7 +225,7 @@ export class WorkspaceBoundary {
       const safeName = path.basename(gitRoot).replace(/[^a-zA-Z0-9._-]/g, "-");
       const worktree = path.join(
         worktreeBase,
-        `${safeName}-${Date.now()}-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+        `${safeName}-${Date.now()}-${randomUUID()}-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
       );
       await git(gitRoot, ["worktree", "add", "--detach", worktree, "HEAD"], 30_000);
       cleanupWorktree = worktree;
@@ -292,26 +294,40 @@ export class WorkspaceBoundary {
       const gitRoot = await this.defaultGitRoot();
       const base = await this.secureWorktreeBase();
       const suffix = `-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-      let worktree: string | undefined;
+      const worktrees: string[] = [];
       for (const listed of await this.listedWorktrees(gitRoot)) {
         try {
           const resolved = await canonical(listed);
           if (resolved !== base && isWithin(base, resolved) && path.basename(resolved).endsWith(suffix)) {
             assertOwnedAndPrivate(await stat(resolved), `Worktree ${resolved}`);
-            worktree = resolved;
-            break;
+            worktrees.push(resolved);
           }
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
         }
       }
-      if (!worktree) {
+      if (!worktrees.length) {
         await git(gitRoot, ["worktree", "prune"]);
         return { status: "not-found" };
       }
-      await git(gitRoot, ["worktree", "remove", "--force", worktree], 30_000);
+      worktrees.sort();
+      const removed: string[] = [];
+      const failures: string[] = [];
+      for (const worktree of worktrees) {
+        try {
+          await git(gitRoot, ["worktree", "remove", "--force", worktree], 30_000);
+          removed.push(worktree);
+        } catch (error) {
+          failures.push(`${worktree}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       await git(gitRoot, ["worktree", "prune"]);
-      return { status: "cleaned", workspace: worktree };
+      const details = {
+        ...(removed.length ? { workspace: removed.at(-1), workspaces: removed, removedCount: removed.length } : {}),
+      };
+      return failures.length
+        ? { status: "failed", ...details, message: `Unable to remove ${failures.length} matching worktree(s): ${failures.join("; ")}` }
+        : { status: "cleaned", ...details };
     } catch (error) {
       return { status: "failed", message: error instanceof Error ? error.message : String(error) };
     }

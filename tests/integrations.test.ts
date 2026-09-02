@@ -1,16 +1,27 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import type { ExpertCouncil } from "../packages/core/src/index.js";
+import {
+  MODEL_ASSESSMENT_JSON_SCHEMA,
+  modelAssessmentSnapshotSchema,
+  type ExpertCouncil,
+} from "../packages/core/src/index.js";
 import { runCli } from "../packages/cli/src/index.js";
 import { MCP_INPUT_SCHEMAS, MCP_TOOL_NAMES, withMcpTimeout } from "../packages/mcp-server/src/index.js";
 import piExtension from "../packages/pi-package/src/extension.js";
 
 function mockCouncil(): ExpertCouncil {
   const completed = { status: "success" as const, role: "reviewer" as const, model: "p/m", summary: "ok" };
+  const assessment = {
+    asOf: "2026-09-01T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: { "p/m": { coding: 8 } },
+  };
   return {
     inspectResources: async () => ({
       models: [{ provider: "p", id: "m", available: true }],
       skills: [],
       billing: {},
+      modelAssessment: assessment,
       roles: [],
       runtimeCapabilities: {
         hostType: "mock",
@@ -29,6 +40,14 @@ function mockCouncil(): ExpertCouncil {
     delegate: async (request) => ({ status: "success", role: request.role, model: "p/m", summary: "ok" }),
     startDelegation: () => ({ executionId: "exec_mock", result: Promise.resolve(completed) }),
     getResult: async (executionId) => ({ executionId, status: "completed", result: completed }),
+    waitForResults: async ({ executionIds, mode = "all" }) => ({
+      status: "completed",
+      mode,
+      completed: executionIds,
+      running: [],
+      notFound: [],
+      waitedMs: 0,
+    }),
     recordFeedback: async ({ executionId, verificationPassed }) => ({ executionId, status: "recorded", verificationPassed }),
     cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     escalate: async () => ({ action: "stop", reason: "done" }),
@@ -102,6 +121,7 @@ describe("MCP semantic surface", () => {
       "expert_inspect",
       "expert_build",
       "expert_delegate",
+      "expert_wait",
       "expert_result",
       "expert_feedback",
       "expert_cleanup",
@@ -116,6 +136,19 @@ describe("MCP semantic surface", () => {
       models: { "p/model": { coding: 8, speed: 7 } },
       billing: { p: { billingType: "subscription", marginalCostClass: "very-low" } },
     }).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_build.modelAssessment.safeParse({
+      asOf: "2026-09-01T00:00:00.000Z",
+      sources: Array.from({ length: 13 }, (_, index) => `https://example.com/source-${index}`),
+      models: { "p/model": { coding: 8 } },
+    }).success).toBe(false);
+    for (const candidate of [
+      { asOf: "2026-09-01T00:00:00.000Z", sources: ["https://livebench.ai/"], models: {} },
+      { asOf: "2026-09-01T00:00:00.000Z", sources: ["https://livebench.ai/"], models: { "p/model": {} } },
+    ]) {
+      expect(MCP_INPUT_SCHEMAS.expert_build.modelAssessment.safeParse(candidate).success)
+        .toBe(modelAssessmentSnapshotSchema.safeParse(candidate).success);
+    }
+    expect((MODEL_ASSESSMENT_JSON_SCHEMA.properties as Record<string, { minProperties?: number }>).models.minProperties).toBe(1);
     expect(MCP_INPUT_SCHEMAS.expert_inspect.detail.safeParse("compact").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_inspect.detail.safeParse("everything").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.role.safeParse("lead").success).toBe(false);
@@ -124,6 +157,10 @@ describe("MCP semantic surface", () => {
     expect(MCP_INPUT_SCHEMAS.expert_delegate.workspace.safeParse("bad\0path").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.task.safeParse("x".repeat(100_001)).success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_result.executionId.safeParse("../outside").success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_wait.executionIds.safeParse(["exec_one", "exec_two"]).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_wait.executionIds.safeParse(["exec_one", "exec_one"]).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_wait.timeoutMs.safeParse(999).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_wait.timeoutMs.safeParse(120_000).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
       { role: "scout", task: "map files" },
       { role: "reviewer", task: "review findings" },
@@ -137,10 +174,85 @@ describe("MCP semantic surface", () => {
 });
 
 describe("Pi adapter registration", () => {
+  it("documents shell-safe local Pi installation and removal commands", () => {
+    const readme = readFileSync("README.md", "utf8");
+    const chineseReadme = readFileSync("README.zh-CN.md", "utf8");
+    for (const document of [readme, chineseReadme]) {
+      expect(document).toContain('pi install "./packages/pi-package"');
+      expect(document).toContain('pi remove "./packages/pi-package"');
+      expect(document).not.toContain("pi remove .\\packages\\pi-package");
+    }
+  });
+
+  it("pins the tested Pi host and TypeBox peer ranges", () => {
+    const manifest = JSON.parse(readFileSync("packages/pi-package/package.json", "utf8")) as {
+      peerDependencies: Record<string, string>;
+    };
+    expect(manifest.peerDependencies["@earendil-works/pi-coding-agent"]).toBe(">=0.84.0 <1");
+    expect(manifest.peerDependencies.typebox).toBe("^1.3.7");
+  });
+
+  it("packages only the completion workflow supported by each host", () => {
+    const sharedSkill = readFileSync("shared/skills/expert-council/SKILL.md", "utf8");
+    const piSkill = readFileSync("packages/pi-package/skills/expert-council/SKILL.md", "utf8");
+    const codexSkill = readFileSync(
+      "packages/codex-integration/plugin/expert-council/skills/expert-council/SKILL.md",
+      "utf8",
+    );
+
+    expect(sharedSkill).not.toContain("expert_wait");
+    expect(piSkill).not.toContain("expert_wait");
+    expect(piSkill).toContain("`steer`");
+    expect(piSkill).toContain("`followUp`");
+    expect(codexSkill).toContain("`expert_wait`");
+    expect(codexSkill).not.toContain("`steer`");
+    expect(codexSkill).not.toContain("`followUp`");
+  });
+
   it("registers only the semantic Expert Council tools", () => {
     const names: string[] = [];
     piExtension({ registerTool: (tool: { name: string }) => names.push(tool.name) } as never);
-    expect(names).toEqual([...MCP_TOOL_NAMES]);
+    expect(names).toEqual(MCP_TOOL_NAMES.filter((name) => name !== "expert_wait"));
+  });
+
+  it("refuses to build before the mandatory model assessment is complete", async () => {
+    type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
+    const tools = new Map<string, Tool>();
+    let buildCalls = 0;
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      inspectResources: async () => ({
+        models: [{ provider: "p", id: "m", available: true }],
+        skills: [],
+        billing: { p: { billingType: "unknown" } },
+        roles: [],
+        runtimeCapabilities: (await mockCouncil().inspectResources()).runtimeCapabilities,
+        warnings: [],
+      }),
+      buildCouncil: async (request) => {
+        buildCalls += 1;
+        return { id: "unexpected", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [] };
+      },
+    };
+    piExtension({
+      registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+      appendEntry: () => {},
+    } as never, { councilFor: async () => council });
+
+    const result = await tools.get("expert_build")!.execute(
+      "call",
+      { task: "review", costPolicy: "balanced" },
+      undefined,
+      undefined,
+      { cwd: ".", sessionManager: { getBranch: () => [] } },
+    );
+    expect(JSON.parse(result.content[0]!.text)).toMatchObject({
+      status: "model-assessment-required",
+      assessmentStatus: "required",
+      reason: "missing",
+      requiredModels: ["p/m"],
+    });
+    expect(buildCalls).toBe(0);
   });
 
   it("forwards the MCP-compatible minimum context constraint", async () => {

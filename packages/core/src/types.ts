@@ -128,16 +128,27 @@ export interface ExpertResult {
 
 export interface ExpertRuntime {
   listAvailableModels(): Promise<AvailableModel[]>;
+  listProviderBilling?(): Promise<Record<string, RuntimeBillingDiscovery>>;
   executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult>;
   listSkills(): Promise<SkillInfo[]>;
   getCapabilities(): Promise<RuntimeCapabilities>;
   cleanupExecution?(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">>;
 }
 
+export interface RuntimeBillingDiscovery {
+  policy: BillingPolicyEntry;
+  source: "pi-runtime" | "pi-provider-catalog" | "pi-model-catalog" | "unverified";
+  reason: string;
+}
+
 export interface ExpertCleanupResult {
   executionId: string;
   status: "cleaned" | "not-found" | "not-required" | "failed" | "unsupported";
+  /** Newest matching worktree, retained for compatibility with V1 callers. */
   workspace?: string;
+  /** Every retry/escalation worktree removed for this execution. */
+  workspaces?: string[];
+  removedCount?: number;
   message?: string;
 }
 
@@ -191,6 +202,22 @@ export interface ModelAssessmentSnapshot {
   /** Main Agent assessment of the actual access method; omit providers that cannot be verified. */
   billing?: Record<string, BillingPolicyEntry>;
   summary?: string;
+}
+
+export interface ModelAssessmentStatus {
+  status: "current" | "required";
+  reason: "current" | "missing" | "stale" | "future-dated" | "inventory-changed";
+  inventoryFingerprint: string;
+  requiredModels: string[];
+  researchModels: string[];
+  missingModels: string[];
+  unavailableAssessedModels: string[];
+  maxAgeDays: number;
+  assessedAt?: string;
+  refreshAfter?: string;
+  futureSkewMinutes?: number;
+  allowedFutureSkewMinutes?: number;
+  instructions?: string[];
 }
 
 export interface BuildCouncilRequest {
@@ -254,6 +281,23 @@ export interface ExpertResultLookup {
   executionId: string;
   status: "running" | "completed" | "not-found";
   result?: ExpertResult;
+}
+
+export type ExpertWaitMode = "any" | "all";
+
+export interface ExpertWaitRequest {
+  executionIds: string[];
+  mode?: ExpertWaitMode;
+  timeoutMs: number;
+}
+
+export interface ExpertWaitResult {
+  status: "completed" | "timed-out" | "not-found";
+  mode: ExpertWaitMode;
+  completed: string[];
+  running: string[];
+  notFound: string[];
+  waitedMs: number;
 }
 
 export interface EscalationRequest {
@@ -331,9 +375,11 @@ export interface ResourceInventory {
   models: AvailableModel[];
   skills: SkillInfo[];
   billing: Record<string, BillingPolicyEntry>;
+  billingSources?: Record<string, Omit<RuntimeBillingDiscovery, "policy"> & { source: RuntimeBillingDiscovery["source"] | "model-assessment" | "user-config" }>;
   roles: RoleDefinition[];
   runtimeCapabilities: RuntimeCapabilities;
   modelAssessment?: ModelAssessmentSnapshot;
+  modelAssessmentStatus?: ModelAssessmentStatus;
   warnings: string[];
 }
 
@@ -376,7 +422,7 @@ export interface CouncilStateSnapshot {
 }
 
 export interface CouncilStatePersistence {
-  save(snapshot: CouncilStateSnapshot): Promise<void>;
+  save(snapshot: CouncilStateSnapshot, options?: { replaceModelAssessment?: boolean }): Promise<void>;
 }
 
 export interface CouncilStateOptions {
@@ -390,6 +436,7 @@ export interface ExpertCouncil {
   startDelegation(request: DelegationRequest): DelegationHandle;
   delegate(request: DelegationRequest): Promise<ExpertResult>;
   getResult(executionId: string): Promise<ExpertResultLookup>;
+  waitForResults(request: ExpertWaitRequest): Promise<ExpertWaitResult>;
   cleanup(executionId: string): Promise<ExpertCleanupResult>;
   recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult>;
   escalate(request: EscalationRequest): Promise<EscalationDecision>;

@@ -1,7 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
+  evaluateModelAssessment,
+  modelAssessmentSnapshotSchema,
   presentCouncilPlan,
   presentResourceInventory,
+  resolveModelAssessment,
   type DelegationRequest,
   type ExpertCouncil,
   type ExpertRole,
@@ -14,6 +17,7 @@ export const MCP_TOOL_NAMES = [
   "expert_inspect",
   "expert_build",
   "expert_delegate",
+  "expert_wait",
   "expert_result",
   "expert_feedback",
   "expert_cleanup",
@@ -48,47 +52,14 @@ const boundedText = (maximum: number) => z.string().min(1).max(maximum).refine(
 const taskText = boundedText(100_000);
 const workspacePath = boundedText(32_768);
 const executionIdentifier = z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/);
-const capabilityScore = z.number().min(0).max(10).optional();
-const auditedCapabilityProfile = z.object({
-  reasoning: capabilityScore,
-  planning: capabilityScore,
-  architecture: capabilityScore,
-  coding: capabilityScore,
-  debugging: capabilityScore,
-  review: capabilityScore,
-  longContext: capabilityScore,
-  toolReliability: capabilityScore,
-  bashReliability: capabilityScore,
-  autonomousExecution: capabilityScore,
-  speed: capabilityScore,
-}).strict().refine((profile) => Object.values(profile).some((value) => typeof value === "number"), {
-  message: "must contain at least one capability score",
-});
-const assessedBillingEntry = z.object({
-  billingType: z.enum(["subscription", "metered", "quota", "free", "unknown"]),
-  marginalCostClass: z.enum(["very-low", "low", "normal", "high", "scarce"]).optional(),
-  usagePreference: z.enum(["consume-first", "balanced", "quality-sensitive", "escalation-only"]).optional(),
-}).strict();
-const modelAssessment = z.object({
-  asOf: z.string().datetime({ offset: true }),
-  sources: z.array(z.string().url().max(2_000)).min(1).max(12),
-  models: z.record(
-    z.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/),
-    auditedCapabilityProfile,
-  ).refine((models) => Object.keys(models).length > 0 && Object.keys(models).length <= 64),
-  billing: z.record(
-    z.string().min(1).max(200).regex(/^[^\u0000-\u001f]+$/),
-    assessedBillingEntry,
-  ).refine((providers) => Object.keys(providers).length <= 32).optional(),
-  summary: boundedText(2_000).optional(),
-}).strict();
 const delegationAssignment = z.object({
   role,
   task: taskText.describe("A bounded semantic assignment"),
   taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
-  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional()
+    .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
 });
 
 export const MCP_INPUT_SCHEMAS = {
@@ -102,7 +73,7 @@ export const MCP_INPUT_SCHEMAS = {
       costPolicy: z.enum(["economy", "balanced", "speed", "quality"]).optional(),
       minimumContextWindow: z.number().int().positive().optional(),
     }).optional(),
-    modelAssessment: modelAssessment.optional(),
+    modelAssessment: modelAssessmentSnapshotSchema.optional(),
     detail,
   },
   expert_delegate: {
@@ -111,9 +82,18 @@ export const MCP_INPUT_SCHEMAS = {
     taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
     councilId: executionIdentifier.optional(),
     workspace: workspacePath.optional(),
-    timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+    timeoutMs: z.number().int().min(1_000).max(3_600_000).optional()
+      .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
     assignments: z.array(delegationAssignment).min(1).max(8).optional()
       .describe("Use for two or more independent assignments so all are dispatched before the host turn ends"),
+  },
+  expert_wait: {
+    executionIds: z.array(executionIdentifier).min(1).max(8)
+      .refine((ids) => new Set(ids).size === ids.length, { message: "executionIds must be unique" })
+      .describe("Execution IDs returned by expert_delegate"),
+    mode: z.enum(["any", "all"]).optional().describe("Wait for any execution or all executions; defaults to all"),
+    timeoutMs: z.number().int().min(1_000).max(3_600_000)
+      .describe("Bounded wait selected from expected remaining task difficulty; this does not extend expert execution deadlines"),
   },
   expert_result: {
     executionId: executionIdentifier,
@@ -157,7 +137,7 @@ export async function withMcpTimeout<T>(operation: Promise<T>, timeoutMs = MCP_T
 }
 
 export function createMcpServer(council: ExpertCouncil): McpServer {
-  const server = new McpServer({ name: "expert-council", version: "0.2.0" });
+  const server = new McpServer({ name: "expert-council", version: "0.3.0" });
 
   server.registerTool(
     "expert_inspect",
@@ -176,24 +156,50 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
     "expert_build",
     {
       title: "Build Expert Council",
-      description: "Classify a task and deterministically assemble a small semantic expert team, optionally using a dated Main Agent capability audit.",
+      description: "Classify a task and deterministically assemble a small semantic expert team. A current, complete, dated Main Agent model assessment is mandatory.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_build,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(presentCouncilPlan(
-      await withMcpTimeout(council.buildCouncil({
+    async (input) => {
+      const inventory = await withMcpTimeout(council.inspectResources());
+      const assessment = resolveModelAssessment(
+        inventory.models,
+        inventory.modelAssessment,
+        input.modelAssessment,
+      );
+      if (assessment.status.status === "required") {
+        return response({
+          ...assessment.status,
+          assessmentStatus: assessment.status.status,
+          status: "model-assessment-required",
+          providerBilling: inventory.billing,
+          billingSources: inventory.billingSources,
+          warning: "expert_build did not assemble a council. Complete the required web audit, then retry once with modelAssessment.",
+        });
+      }
+      const plan = await withMcpTimeout(council.buildCouncil({
         task: input.task,
         ...(input.constraints ? { constraints: input.constraints } : {}),
-        ...(input.modelAssessment ? { modelAssessment: input.modelAssessment } : {}),
-      })),
-      input.detail,
-    )),
+        ...(assessment.source === "submitted" && assessment.assessment
+          ? { modelAssessment: assessment.assessment }
+          : {}),
+      }));
+      return response(presentCouncilPlan({
+        ...plan,
+        warnings: [
+          ...plan.warnings,
+          ...(assessment.ignoredSubmittedAssessment
+            ? ["Ignored an incomplete, stale, or future-dated submitted modelAssessment and reused the current saved assessment."]
+            : []),
+        ],
+      }, input.detail));
+    },
   );
   server.registerTool(
     "expert_delegate",
     {
       title: "Delegate Expert Task",
-      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs.",
+      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Set each timeoutMs explicitly from task difficulty.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -203,6 +209,18 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       }
       if (!input.assignments && (!input.role || !input.task)) {
         throw new Error("expert_delegate requires role/task or a non-empty assignments array");
+      }
+      const inventory = await withMcpTimeout(council.inspectResources());
+      const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
+      if (assessmentStatus.status === "required") {
+        return response({
+          ...assessmentStatus,
+          assessmentStatus: assessmentStatus.status,
+          status: "model-assessment-required",
+          providerBilling: inventory.billing,
+          billingSources: inventory.billingSources,
+          warning: "expert_delegate did not start any execution. Complete the required web audit through expert_build first.",
+        });
       }
       const assignments: DelegationRequest[] = input.assignments
         ? input.assignments.map((assignment) => ({
@@ -232,6 +250,20 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
     },
   );
   server.registerTool(
+    "expert_wait",
+    {
+      title: "Wait for Expert Completion",
+      description: "After all other useful host work is finished, wait without polling for any or all background expert executions. Choose a finite timeoutMs from expected remaining task difficulty, then use expert_result for feedback.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_wait,
+      annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+    },
+    async (input) => response(await council.waitForResults({
+      executionIds: input.executionIds,
+      ...(input.mode ? { mode: input.mode } : {}),
+      timeoutMs: input.timeoutMs,
+    })),
+  );
+  server.registerTool(
     "expert_result",
     {
       title: "Get Expert Result",
@@ -255,7 +287,7 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
     "expert_cleanup",
     {
       title: "Clean Up Expert Workspace",
-      description: "Remove an isolated mutation worktree after its result has been integrated or rejected.",
+      description: "Remove every retry/escalation worktree for an execution after its result has been integrated or rejected.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_cleanup,
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },

@@ -5,14 +5,20 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
 import { parseCouncilConfig } from "../packages/core/src/index.js";
-import { JsonCouncilStateStore, JsonlTelemetryStore, WorkspaceBoundary } from "../packages/pi-runtime/src/index.js";
+import {
+  JsonCouncilStateStore,
+  JsonlTelemetryStore,
+  JsonModelAssessmentStore,
+  SplitCouncilStateStore,
+  WorkspaceBoundary,
+} from "../packages/pi-runtime/src/index.js";
 
 const execFileAsync = promisify(execFile);
 
 describe("workspace isolation", () => {
   it("runs mutation in a detached Git worktree and reports changes", async () => {
     const repo = await mkdtemp(path.join(tmpdir(), "expert-council-repo-"));
-    let isolated: string | undefined;
+    const isolated: string[] = [];
     try {
       await execFileAsync("git", ["init", repo]);
       await execFileAsync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
@@ -24,18 +30,22 @@ describe("workspace isolation", () => {
       const boundary = new WorkspaceBoundary(repo, config.security);
       const executionId = `test-${Date.now()}`;
       const prepared = await boundary.prepare(repo, false, executionId);
-      isolated = prepared.root;
+      isolated.push(prepared.root);
       expect(prepared.isolated).toBe(true);
       expect(prepared.root).not.toBe(repo);
       await writeFile(path.join(prepared.cwd, "file.txt"), "after\n", "utf8");
       expect(await boundary.changedFiles(prepared)).toEqual(["file.txt"]);
+      isolated.push((await boundary.prepare(repo, false, executionId)).root);
+      isolated.push((await boundary.prepare(repo, false, executionId)).root);
       const restartedBoundary = new WorkspaceBoundary(repo, config.security);
-      expect(await restartedBoundary.cleanupExecution(executionId)).toMatchObject({ status: "cleaned", workspace: isolated });
-      await expect(access(isolated)).rejects.toThrow();
-      isolated = undefined;
+      const cleanup = await restartedBoundary.cleanupExecution(executionId);
+      expect(cleanup).toMatchObject({ status: "cleaned", removedCount: 3 });
+      expect(cleanup.workspaces).toEqual(expect.arrayContaining(isolated));
+      for (const worktree of isolated) await expect(access(worktree)).rejects.toThrow();
+      isolated.length = 0;
     } finally {
-      if (isolated) {
-        await execFileAsync("git", ["-C", repo, "worktree", "remove", "--force", isolated]).catch(() => undefined);
+      for (const worktree of isolated) {
+        await execFileAsync("git", ["-C", repo, "worktree", "remove", "--force", worktree]).catch(() => undefined);
       }
       await rm(repo, { recursive: true, force: true });
     }
@@ -81,6 +91,67 @@ describe("workspace isolation", () => {
 });
 
 describe("durable council state", () => {
+  it("persists a reusable model capability and billing assessment independently of workspace state", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "expert-council-assessment-"));
+    const file = path.join(directory, "model-assessment.json");
+    try {
+      const store = new JsonModelAssessmentStore(file);
+      const assessment = {
+        asOf: "2026-09-02T00:00:00.000Z",
+        sources: ["https://livebench.ai/"],
+        models: { "p/model": { coding: 8, toolReliability: 7 } },
+        billing: { p: { billingType: "metered" as const, marginalCostClass: "normal" as const } },
+      };
+      await store.save(assessment);
+      expect(await new JsonModelAssessmentStore(file).load()).toEqual(assessment);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("reuses one shared assessment across different workspace state stores", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "expert-council-split-state-"));
+    try {
+      const assessmentFile = path.join(directory, "model-assessment.json");
+      const firstWorkspaceFile = path.join(directory, "workspace-a", "state.json");
+      const secondWorkspaceFile = path.join(directory, "workspace-b", "state.json");
+      const assessment = {
+        asOf: "2026-09-02T00:00:00.000Z",
+        sources: ["https://livebench.ai/"],
+        models: { "p/model": { coding: 9 } },
+      };
+      const first = new SplitCouncilStateStore(
+        new JsonCouncilStateStore(firstWorkspaceFile),
+        new JsonModelAssessmentStore(assessmentFile),
+      );
+      await first.save({ version: 1, plans: [], executions: [], results: [], modelAssessment: assessment });
+      expect((await new JsonCouncilStateStore(firstWorkspaceFile).load())?.modelAssessment).toBeUndefined();
+
+      const second = new SplitCouncilStateStore(
+        new JsonCouncilStateStore(secondWorkspaceFile),
+        new JsonModelAssessmentStore(assessmentFile),
+      );
+      expect((await second.load())?.modelAssessment).toEqual(assessment);
+
+      const newerAssessment = {
+        ...assessment,
+        asOf: "2026-09-02T01:00:00.000Z",
+        models: { "p/model": { coding: 10 } },
+      };
+      await first.save(
+        { version: 1, plans: [], executions: [], results: [], modelAssessment: newerAssessment },
+        { replaceModelAssessment: true },
+      );
+      await second.save(
+        { version: 1, plans: [], executions: [], results: [], modelAssessment: assessment },
+        { replaceModelAssessment: false },
+      );
+      expect((await new JsonModelAssessmentStore(assessmentFile).load())).toEqual(newerAssessment);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("writes snapshots atomically and restores them", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "expert-council-state-"));
     const file = path.join(directory, "state.json");

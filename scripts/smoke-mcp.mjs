@@ -17,6 +17,7 @@ try {
     "expert_inspect",
     "expert_build",
     "expert_delegate",
+    "expert_wait",
     "expert_result",
     "expert_feedback",
     "expert_cleanup",
@@ -32,12 +33,22 @@ try {
   if (inspect?.detail !== "compact" || typeof inspect?.summary?.modelCount !== "number" || Array.isArray(inspect?.models)) {
     throw new Error("expert_inspect did not return the compact default presentation");
   }
+  const waitResult = await client.callTool({
+    name: "expert_wait",
+    arguments: { executionIds: ["exec_smoke_missing"], timeoutMs: 1_000 },
+  });
+  const waitText = waitResult.content.find((block) => block.type === "text")?.text;
+  const waited = waitText ? JSON.parse(waitText) : undefined;
+  if (waited?.status !== "not-found" || waited?.notFound?.[0] !== "exec_smoke_missing") {
+    throw new Error("expert_wait did not return an immediate missing-execution result");
+  }
   console.log(JSON.stringify({
     entry,
     tools: names,
     inspectContentBlocks: result.content.length,
     inspectDetail: inspect.detail,
     modelCount: inspect.summary.modelCount,
+    waitStatus: waited.status,
   }));
 } finally {
   await client.close();

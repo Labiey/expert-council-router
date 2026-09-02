@@ -1,15 +1,24 @@
-import { cp, mkdir, readdir } from "node:fs/promises";
+import { cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 const root = process.cwd();
-const skill = path.join(root, "shared", "skills", "expert-council", "SKILL.md");
+const skillDirectory = path.join(root, "shared", "skills", "expert-council");
+const skill = path.join(skillDirectory, "SKILL.md");
 const skillTargets = [
-  path.join(root, "packages", "pi-package", "skills", "expert-council", "SKILL.md"),
-  path.join(root, "packages", "codex-integration", "plugin", "expert-council", "skills", "expert-council", "SKILL.md"),
+  {
+    host: "pi",
+    target: path.join(root, "packages", "pi-package", "skills", "expert-council", "SKILL.md"),
+  },
+  {
+    host: "codex",
+    target: path.join(root, "packages", "codex-integration", "plugin", "expert-council", "skills", "expert-council", "SKILL.md"),
+  },
 ];
-for (const target of skillTargets) {
+const sharedSkill = (await readFile(skill, "utf8")).trimEnd();
+for (const { host, target } of skillTargets) {
+  const hostGuidance = (await readFile(path.join(skillDirectory, "hosts", `${host}.md`), "utf8")).trim();
   await mkdir(path.dirname(target), { recursive: true });
-  await cp(skill, target);
+  await writeFile(target, `${sharedSkill}\n\n${hostGuidance}\n`, "utf8");
 }
 
 const roleSource = path.join(root, "packages", "core", "src", "roles", "prompts");

@@ -54,8 +54,12 @@ const auditedCapabilityProfileSchema = z.object(capabilityFields).strict().refin
 );
 
 export const modelAssessmentSnapshotSchema = z.object({
-  asOf: z.string().datetime({ offset: true }),
-  sources: z.array(z.string().url().max(2_000)).min(1).max(12),
+  asOf: z.string().datetime({ offset: true }).describe(
+    "ISO-8601 audit timestamp read from the actual host clock; do not synthesize a future time.",
+  ),
+  sources: z.array(z.string().url().max(2_000)).min(1).max(12).describe(
+    "Use 1 to 12 consolidated benchmark and provider URLs; do not submit one source per model.",
+  ),
   models: z.record(
     z.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/),
     auditedCapabilityProfileSchema,
@@ -70,6 +74,17 @@ export const modelAssessmentSnapshotSchema = z.object({
   }).optional(),
   summary: z.string().min(1).max(2_000).optional(),
 }).strict();
+
+/** JSON Schema form used by hosts that cannot consume the Core Zod schema. */
+export const MODEL_ASSESSMENT_JSON_SCHEMA = (() => {
+  const schema = z.toJSONSchema(modelAssessmentSnapshotSchema, { target: "draft-7" }) as Record<string, unknown>;
+  const properties = schema.properties as Record<string, Record<string, unknown>>;
+  properties.models = { ...properties.models, minProperties: 1, maxProperties: 64 };
+  properties.billing = { ...properties.billing, maxProperties: 32 };
+  const profile = properties.models.additionalProperties as Record<string, unknown>;
+  properties.models.additionalProperties = { ...profile, minProperties: 1 };
+  return schema;
+})();
 
 const weightSchema = z.record(
   z.enum([

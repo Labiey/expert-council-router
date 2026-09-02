@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   decideEscalation,
+  evaluateModelAssessment,
   ExpertCouncilService,
+  failureTypeForResult,
+  inferFailureType,
   MemoryTelemetryStore,
   observedAdjustment,
+  resolveModelAssessment,
   sanitizeOutcome,
 } from "../packages/core/src/index.js";
 import type { CouncilStateSnapshot } from "../packages/core/src/index.js";
@@ -14,12 +18,107 @@ const profiles = {
   "quality/two": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
 };
 
+describe("mandatory Main Agent model assessment gate", () => {
+  const models = [model("p", "one"), model("p", "two")];
+
+  it("requires research when the assessment is missing, stale, or misses a callable model", () => {
+    expect(evaluateModelAssessment(models, undefined, { now: new Date("2026-09-02T00:00:00.000Z") })).toMatchObject({
+      status: "required",
+      reason: "missing",
+      requiredModels: ["p/one", "p/two"],
+    });
+    expect(evaluateModelAssessment(models, {
+      asOf: "2026-07-01T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 7 }, "p/two": { coding: 7 } },
+    }, { now: new Date("2026-09-02T00:00:00.000Z") })).toMatchObject({ status: "required", reason: "stale" });
+    expect(evaluateModelAssessment(models, {
+      asOf: "2026-09-01T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 7 } },
+    }, { now: new Date("2026-09-02T00:00:00.000Z") })).toMatchObject({
+      status: "required",
+      reason: "inventory-changed",
+      missingModels: ["p/two"],
+      researchModels: ["p/two"],
+    });
+  });
+
+  it("accepts a complete current assessment", () => {
+    expect(evaluateModelAssessment(models, {
+      asOf: "2026-09-01T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 7 }, "p/two": { coding: 8 } },
+    }, { now: new Date("2026-09-02T00:00:00.000Z") })).toMatchObject({
+      status: "current",
+      reason: "current",
+      missingModels: [],
+      researchModels: [],
+    });
+  });
+
+  it("reuses a current saved assessment when a host submits an incomplete replacement", () => {
+    const saved = {
+      asOf: "2026-09-01T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 7 }, "p/two": { coding: 8 } },
+    };
+    const submitted = {
+      asOf: "2026-09-02T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 9 } },
+    };
+    const resolution = resolveModelAssessment(models, saved, submitted, {
+      now: new Date("2026-09-02T01:00:00.000Z"),
+    });
+    expect(resolution).toMatchObject({
+      assessment: saved,
+      status: { status: "current", reason: "current", researchModels: [] },
+      source: "saved",
+      ignoredSubmittedAssessment: true,
+    });
+  });
+
+  it("reports a future-dated assessment without requesting duplicate research", () => {
+    const status = evaluateModelAssessment(models, {
+      asOf: "2026-09-02T00:33:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 7 }, "p/two": { coding: 8 } },
+    }, { now: new Date("2026-09-02T00:00:00.000Z") });
+    expect(status).toMatchObject({
+      status: "required",
+      reason: "future-dated",
+      researchModels: [],
+      futureSkewMinutes: 33,
+      allowedFutureSkewMinutes: 5,
+    });
+    expect(status.instructions?.join(" ")).toContain("do not repeat web research");
+  });
+});
+
+describe("shared failure classification", () => {
+  it("uses one deterministic classifier for runtime errors and service results", () => {
+    expect(inferFailureType(new Error("Provider rate limit reached"))).toBe("provider_error");
+    expect(failureTypeForResult({
+      status: "failed",
+      role: "reviewer",
+      model: "p/m",
+      summary: "Assertion failed",
+    })).toBe("test_failure");
+    expect(inferFailureType("No recognizable marker", "reasoning_failure")).toBe("reasoning_failure");
+  });
+});
+
 describe("durable Main Agent model assessment", () => {
   it("persists a dated sourced assessment and reuses it for later councils", async () => {
     let saved: CouncilStateSnapshot | undefined;
+    const saveIntents: Array<boolean | undefined> = [];
     const runtime = new MockRuntime([model("p", "old"), model("p", "new")]);
     const service = new ExpertCouncilService(runtime, {}, undefined, {
-      persistence: { save: async (snapshot) => { saved = snapshot; } },
+      persistence: { save: async (snapshot, options) => {
+        saved = snapshot;
+        saveIntents.push(options?.replaceModelAssessment);
+      } },
     });
     const assessment = {
       asOf: "2026-09-01T00:00:00.000Z",
@@ -35,6 +134,7 @@ describe("durable Main Agent model assessment", () => {
     expect(first.experts[0]?.model).toBe("p/new");
     expect(second.experts[0]?.model).toBe("p/new");
     expect(saved?.modelAssessment).toEqual(assessment);
+    expect(saveIntents).toEqual([true, false]);
     expect((await service.inspectResources()).modelAssessment).toEqual(assessment);
   });
 });
@@ -68,6 +168,66 @@ describe("retry and escalation", () => {
       status: "completed",
       result,
     });
+  });
+
+  it("waits without polling until any requested background execution completes", async () => {
+    type Completed = { status: "success"; role: "reviewer"; model: string; summary: string };
+    const finishers: Array<(result: Completed) => void> = [];
+    const pending = [0, 1].map(() => new Promise<Completed>((resolve) => finishers.push(resolve)));
+    const runtime = new MockRuntime([model("cheap", "one")], pending);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const first = service.startDelegation({ role: "reviewer", task: "Review module A" });
+    const second = service.startDelegation({ role: "reviewer", task: "Review module B" });
+
+    const waited = service.waitForResults({
+      executionIds: [first.executionId, second.executionId],
+      mode: "any",
+      timeoutMs: 5_000,
+    });
+    finishers[0]!({ status: "success", role: "reviewer", model: "cheap/one", summary: "A complete" });
+
+    expect(await waited).toMatchObject({
+      status: "completed",
+      mode: "any",
+      completed: [first.executionId],
+      running: [second.executionId],
+      notFound: [],
+    });
+    finishers[1]!({ status: "success", role: "reviewer", model: "cheap/one", summary: "B complete" });
+    await second.result;
+  });
+
+  it("returns missing executions immediately instead of holding a wait open", async () => {
+    const service = new ExpertCouncilService(new MockRuntime([model("cheap", "one")]), {
+      profiles: { models: profiles },
+    });
+    expect(await service.waitForResults({ executionIds: ["exec_missing"], timeoutMs: 60_000 })).toMatchObject({
+      status: "not-found",
+      completed: [],
+      running: [],
+      notFound: ["exec_missing"],
+    });
+  });
+
+  it("returns a bounded timed-out wait while leaving the expert execution running", async () => {
+    vi.useFakeTimers();
+    try {
+      const pending = new Promise<never>(() => {});
+      const service = new ExpertCouncilService(new MockRuntime([model("cheap", "one")], [pending]), {
+        profiles: { models: profiles },
+      });
+      const handle = service.startDelegation({ role: "reviewer", task: "Review a long-running change" });
+      const waiting = service.waitForResults({ executionIds: [handle.executionId], timeoutMs: 1_000 });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await waiting).toMatchObject({
+        status: "timed-out",
+        completed: [],
+        running: [handle.executionId],
+        notFound: [],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("retries one correctable failure on the same model", async () => {

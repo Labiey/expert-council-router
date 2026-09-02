@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/mcp-server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Small semantic MCP surface for Expert Council",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,8 +19,8 @@
   "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@expert-council/core": "0.2.0",
-    "@expert-council/pi-runtime": "0.2.0",
+    "@expert-council/core": "0.3.0",
+    "@expert-council/pi-runtime": "0.3.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.5.4"
   }

@@ -1,7 +1,14 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCouncilConfig } from "../packages/core/src/index.js";
-import { PiExpertRuntime, validatePiSdk, type PiSdkLike } from "../packages/pi-runtime/src/index.js";
+import {
+  defaultCouncilDataRoot,
+  defaultCouncilStoragePaths,
+  inferPiProviderBilling,
+  PiExpertRuntime,
+  validatePiSdk,
+  type PiSdkLike,
+} from "../packages/pi-runtime/src/index.js";
 
 const roleDirectory = path.resolve("packages/core/src/roles/prompts");
 
@@ -19,6 +26,51 @@ const safeResourceApis = {
 } satisfies Partial<PiSdkLike>;
 
 describe("Pi runtime adapter", () => {
+  it("recognizes named Pi plan catalogs without treating authentication alone as billing evidence", () => {
+    expect(inferPiProviderBilling("qwen-token-plan-cn")).toMatchObject({
+      policy: { billingType: "subscription", marginalCostClass: "very-low" },
+      source: "pi-provider-catalog",
+    });
+    expect(inferPiProviderBilling("zai", false, true)).toMatchObject({
+      policy: { billingType: "metered", marginalCostClass: "normal" },
+      source: "pi-model-catalog",
+    });
+    expect(inferPiProviderBilling("custom-api")).toMatchObject({
+      policy: { billingType: "unknown" },
+      source: "unverified",
+    });
+    expect(inferPiProviderBilling("custom-oauth", true)).toMatchObject({
+      policy: { billingType: "subscription" },
+      source: "pi-runtime",
+    });
+  });
+
+  it("places default state outside the workspace and namespaces it deterministically", () => {
+    const dataRoot = path.resolve(".test-expert-council-data");
+    const first = defaultCouncilStoragePaths(process.cwd(), dataRoot);
+    const repeated = defaultCouncilStoragePaths(process.cwd(), dataRoot);
+    const other = defaultCouncilStoragePaths(path.resolve("tests"), dataRoot);
+    expect(first).toEqual(repeated);
+    expect(first.workspaceRoot.startsWith(dataRoot)).toBe(true);
+    expect(first.statePath).not.toContain(`${path.sep}.expert-council${path.sep}`);
+    expect(first.statePath).not.toBe(path.join(process.cwd(), ".expert-council", "state.json"));
+    expect(other.workspaceRoot).not.toBe(first.workspaceRoot);
+    expect(other.modelAssessmentPath).toBe(first.modelAssessmentPath);
+    expect(other.telemetryPath).toBe(first.telemetryPath);
+  });
+
+  it("selects a writable per-user data root on Windows, macOS, and Linux", () => {
+    const normalized = (value: string) => value.replaceAll("\\", "/");
+    expect(normalized(defaultCouncilDataRoot("win32", { LOCALAPPDATA: "C:/Users/Alice/AppData/Local" }, "C:/Users/Alice")))
+      .toBe("C:/Users/Alice/AppData/Local/ExpertCouncil");
+    expect(normalized(defaultCouncilDataRoot("darwin", {}, "/Users/alice")))
+      .toBe("/Users/alice/Library/Application Support/ExpertCouncil");
+    expect(normalized(defaultCouncilDataRoot("linux", { XDG_STATE_HOME: "/var/user-state" }, "/home/alice")))
+      .toBe("/var/user-state/expert-council");
+    expect(normalized(defaultCouncilDataRoot("linux", {}, "/home/alice")))
+      .toBe("/home/alice/.local/state/expert-council");
+  });
+
   it("fails explicitly when an injected Pi SDK is contract-incompatible", () => {
     expect(() => validatePiSdk({ ModelRuntime: {} }, "test-sdk")).toThrow("ModelRuntime.create");
   });
@@ -146,6 +198,37 @@ describe("Pi runtime adapter", () => {
       noThemes: true,
       noContextFiles: true,
     });
+  });
+
+  it("records Skill discovery failures as runtime limitations", async () => {
+    class BrokenResourceLoader {
+      constructor(_options: Record<string, unknown>) {}
+      async reload() { throw new Error("skill index unreadable"); }
+      getSkills() { return { skills: [], diagnostics: [] }; }
+      getExtensions() { return { extensions: [], diagnostics: [] }; }
+    }
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m" }],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ModelRuntime: { create: async () => modelRuntime },
+      createAgentSession: async () => { throw new Error("not used"); },
+      SettingsManager: { create: () => ({}) },
+      DefaultResourceLoader: BrokenResourceLoader,
+      getAgentDir: () => path.resolve(".pi-test-agent"),
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({}),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    expect(await runtime.listSkills()).toEqual([]);
+    expect((await runtime.getCapabilities()).limitations).toContain(
+      "Pi Skill discovery failed: skill index unreadable",
+    );
   });
 
   it("classifies malformed structured output as a reasoning failure", async () => {

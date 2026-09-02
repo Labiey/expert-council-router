@@ -71,6 +71,14 @@ describe("billing and deterministic role scoring", () => {
     expect(ranked.candidates[0]?.model).toBe("metered/cheap");
   });
 
+  it("keeps billing scores finite when a caller supplies a non-finite weight", () => {
+    expect(billingCostScore(
+      { billingType: "metered", marginalCostClass: "normal" },
+      { inputPerMillion: 1, outputPerMillion: 2 },
+      Number.NaN,
+    )).toSatisfy(Number.isFinite);
+  });
+
   it("lets a Main Agent billing audit prefer included Token Plan access over metered access", () => {
     const config = parseCouncilConfig({});
     const ranked = rankModels({

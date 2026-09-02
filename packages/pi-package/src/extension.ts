@@ -1,15 +1,19 @@
 import {
+  evaluateModelAssessment,
+  MODEL_ASSESSMENT_JSON_SCHEMA,
   presentCouncilPlan,
   presentResourceInventory,
+  resolveModelAssessment,
   type CostPolicy,
   type DelegationRequest,
   type ExpertCouncil,
   type ExpertRole,
   type FailureType,
+  type ModelAssessmentSnapshot,
 } from "@expert-council/core";
 import { createExpertCouncil } from "@expert-council/pi-runtime";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
+import { Type, type Static, type TSchema } from "typebox";
 
 const councils = new Map<string, Promise<ExpertCouncil>>();
 
@@ -53,55 +57,7 @@ const CostPolicySchema = Type.Union([
   Type.Literal("speed"),
   Type.Literal("quality"),
 ]);
-const CapabilityScore = Type.Optional(Type.Number({ minimum: 0, maximum: 10 }));
-const AuditedCapabilityProfile = Type.Object({
-  reasoning: CapabilityScore,
-  planning: CapabilityScore,
-  architecture: CapabilityScore,
-  coding: CapabilityScore,
-  debugging: CapabilityScore,
-  review: CapabilityScore,
-  longContext: CapabilityScore,
-  toolReliability: CapabilityScore,
-  bashReliability: CapabilityScore,
-  autonomousExecution: CapabilityScore,
-  speed: CapabilityScore,
-}, { additionalProperties: false });
-const AssessedBillingEntry = Type.Object({
-  billingType: Type.Union([
-    Type.Literal("subscription"),
-    Type.Literal("metered"),
-    Type.Literal("quota"),
-    Type.Literal("free"),
-    Type.Literal("unknown"),
-  ]),
-  marginalCostClass: Type.Optional(Type.Union([
-    Type.Literal("very-low"),
-    Type.Literal("low"),
-    Type.Literal("normal"),
-    Type.Literal("high"),
-    Type.Literal("scarce"),
-  ])),
-  usagePreference: Type.Optional(Type.Union([
-    Type.Literal("consume-first"),
-    Type.Literal("balanced"),
-    Type.Literal("quality-sensitive"),
-    Type.Literal("escalation-only"),
-  ])),
-}, { additionalProperties: false });
-const ModelAssessment = Type.Object({
-  asOf: Type.String({ minLength: 20, maxLength: 100, description: "ISO-8601 timestamp for the capability audit." }),
-  sources: Type.Array(Type.String({ minLength: 8, maxLength: 2000 }), { minItems: 1, maxItems: 12 }),
-  models: Type.Record(
-    Type.String({ minLength: 3, maxLength: 500, pattern: "^[^/\\x00-\\x1f]+/.+$" }),
-    AuditedCapabilityProfile,
-  ),
-  billing: Type.Optional(Type.Record(
-    Type.String({ minLength: 1, maxLength: 200, pattern: "^[^\\x00-\\x1f]+$" }),
-    AssessedBillingEntry,
-  )),
-  summary: Type.Optional(Type.String({ minLength: 1, maxLength: 2000 })),
-}, { additionalProperties: false });
+const ModelAssessment = Type.Unsafe<ModelAssessmentSnapshot>(MODEL_ASSESSMENT_JSON_SCHEMA as TSchema);
 const TaskText = Type.String({ minLength: 1, maxLength: 100_000, pattern: "^[^\\x00]+$" });
 const WorkspacePath = Type.String({ minLength: 1, maxLength: 32_768, pattern: "^[^\\x00]+$" });
 const ExecutionIdentifier = Type.String({ minLength: 1, maxLength: 200, pattern: "^[a-zA-Z0-9_-]+$" });
@@ -114,6 +70,17 @@ function parseStringifiedAssignments(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+function omitEmptyModelAssessment(args: unknown): unknown {
+  if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+  const candidate = args as Record<string, unknown>;
+  const assessment = candidate.modelAssessment;
+  if (!assessment || typeof assessment !== "object" || Array.isArray(assessment)) return args;
+  const models = (assessment as Record<string, unknown>).models;
+  if (!models || typeof models !== "object" || Array.isArray(models) || Object.keys(models).length > 0) return args;
+  const { modelAssessment: _ignored, ...rest } = candidate;
+  return rest;
 }
 
 function sessionAssemblyPreference(ctx: { sessionManager?: { getBranch?: () => readonly unknown[] } }): CostPolicy | undefined {
@@ -166,11 +133,13 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_build",
     label: "Expert Build",
-    description: "Build a small deterministic expert council. The first council in a Pi conversation requires a user-selected economy, balanced, or speed preference; later councils reuse it.",
+    description: "Build a small deterministic expert council. A current complete model assessment is mandatory; the first council in a Pi conversation also requires a user-selected economy, balanced, or speed preference.",
     promptGuidelines: [
       "Before the first council in a conversation, ask the user once to choose economy (lowest effective cost), balanced (cost/time/success), or speed (fastest completion), unless their request already states the choice. Never choose that first preference silently.",
       "After the first council, omit costPolicy to reuse the session preference. Supply it again only when the user explicitly changes preference.",
-      "When a durable capability audit is missing, materially stale, or explicitly requested, use an already available web/research tool to assess only callable models and verified provider access/billing methods, then pass a dated, sourced modelAssessment. Never install a web tool or third-party package automatically.",
+      "When the model-assessment gate reports missing, stale, or inventory-changed, do not build or delegate. Use an already available web/research tool for researchModels only, preserve saved scores for other requiredModels entries, then retry once with a complete dated, sourced modelAssessment. Never install a web tool or third-party package automatically.",
+      "Use the actual host clock for modelAssessment.asOf and 1 to 12 consolidated source URLs. If the gate reports future-dated, keep the existing evidence and scores, correct only the timestamp, and do not browse again.",
+      "When expert_inspect reports modelAssessment.status='current', omit modelAssessment from expert_build and reuse the saved snapshot. Never send an empty or reconstructed assessment.",
     ],
     parameters: Type.Object({
       task: TaskText,
@@ -180,6 +149,9 @@ export default function expertCouncilExtension(
       modelAssessment: Type.Optional(ModelAssessment),
       detail: Detail,
     }),
+    prepareArguments(args) {
+      return omitEmptyModelAssessment(args) as never;
+    },
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
       const previousPreference = sessionAssemblyPreference(ctx);
@@ -199,9 +171,28 @@ export default function expertCouncilExtension(
       if (requestedPreference && requestedPreference !== previousPreference) {
         pi.appendEntry(ASSEMBLY_PREFERENCE_ENTRY, { costPolicy: requestedPreference, recordedAt: new Date().toISOString() });
       }
-      const plan = await (await getCouncil(ctx.cwd)).buildCouncil({
+      const council = await getCouncil(ctx.cwd);
+      const inventory = await council.inspectResources();
+      const assessment = resolveModelAssessment(
+        inventory.models,
+        inventory.modelAssessment,
+        params.modelAssessment,
+      );
+      if (assessment.status.status === "required") {
+        return output({
+          ...assessment.status,
+          assessmentStatus: assessment.status.status,
+          status: "model-assessment-required",
+          providerBilling: inventory.billing,
+          billingSources: inventory.billingSources,
+          warning: "expert_build did not assemble a council. Complete the required web audit, then retry once with modelAssessment.",
+        });
+      }
+      const plan = await council.buildCouncil({
         task: params.task,
-        ...(params.modelAssessment ? { modelAssessment: params.modelAssessment } : {}),
+        ...(assessment.source === "submitted" && assessment.assessment
+          ? { modelAssessment: assessment.assessment }
+          : {}),
         ...(params.maxExperts !== undefined || params.costPolicy !== undefined || params.minimumContextWindow !== undefined ? {
           constraints: {
             ...(params.maxExperts ? { maxExperts: params.maxExperts } : {}),
@@ -211,7 +202,15 @@ export default function expertCouncilExtension(
         } : { constraints: { costPolicy } }),
       });
       return output({
-        ...presentCouncilPlan(plan, params.detail),
+        ...presentCouncilPlan({
+          ...plan,
+          warnings: [
+            ...plan.warnings,
+            ...(assessment.ignoredSubmittedAssessment
+              ? ["Ignored an incomplete, stale, or future-dated submitted modelAssessment and reused the current saved assessment."]
+              : []),
+          ],
+        }, params.detail),
         assemblyPreference: {
           costPolicy,
           source: requestedPreference ? "user-selected" : "reused-from-session",
@@ -264,6 +263,18 @@ export default function expertCouncilExtension(
       }
       if (!batch && (!params.role || !params.task)) {
         throw new Error("expert_delegate requires a non-empty assignments array or both role and task for one assignment.");
+      }
+      const inventory = await council.inspectResources();
+      const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
+      if (assessmentStatus.status === "required") {
+        return output({
+          ...assessmentStatus,
+          assessmentStatus: assessmentStatus.status,
+          status: "model-assessment-required",
+          providerBilling: inventory.billing,
+          billingSources: inventory.billingSources,
+          warning: "expert_delegate did not start any execution. Complete the required web audit through expert_build first.",
+        });
       }
       const requestedAssignments: DelegationAssignmentInput[] = batch ? rawAssignments as DelegationAssignmentInput[] : [{
         role: params.role!,
@@ -344,7 +355,7 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_cleanup",
     label: "Expert Cleanup",
-    description: "Remove an isolated mutation worktree after its result has been integrated or rejected.",
+    description: "Remove every retry/escalation worktree for an execution after its result has been integrated or rejected.",
     parameters: Type.Object({
       executionId: ExecutionIdentifier,
     }),

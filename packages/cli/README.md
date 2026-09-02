@@ -15,7 +15,7 @@ V1 includes:
 - Hard per-session tool allowlists and installed-Skill filtering.
 - Detached Git worktree isolation for mutation experts.
 - JSON CLI.
-- Eight-tool asynchronous semantic MCP server with explicit worktree cleanup.
+- Nine-tool asynchronous semantic MCP server with event-driven completion waiting and explicit worktree cleanup.
 - Native Pi Package.
 - Valid Codex plugin with a shared host Skill and bundled stdio MCP server.
 - Deterministic tests that never spend model credits.
@@ -126,7 +126,7 @@ Objective runtime metadata is merged separately. Local outcome data adjusts a ro
 
 ### Billing policy
 
-Billing types are `subscription`, `metered`, `quota`, `free`, and `unknown`. Marginal cost and usage preference are separate because published token prices do not describe subscriptions, fixed quotas, local inference, or promotional access. For `metered` and `unknown` access, normalized non-zero published input/output prices also contribute to cost efficiency with the configurable `routing.apiPriceWeight` (default `0.35`). An all-zero price table is treated as unspecified, not proof that access is free. Subscription, free, and quota policy remains authoritative instead of being distorted by an irrelevant list price.
+Billing types are `subscription`, `metered`, `quota`, `free`, and `unknown`. Marginal cost and usage preference are separate because published token prices do not describe subscriptions, fixed quotas, local inference, or promotional access. The Pi runtime adapter classifies an explicit runtime subscription or named Token Plan catalog as `subscription`; otherwise, a provider with non-zero Pi catalog prices is `metered`, and a provider without reliable evidence remains `unknown`. Every inference includes its source in `expert_inspect`, and explicit user configuration remains authoritative. Per-model catalog prices still distinguish models inside a metered provider through `routing.apiPriceWeight` (default `0.35`); an all-zero price table is treated as unspecified, not proof that access is free.
 
 ```json
 {
@@ -177,9 +177,9 @@ speed    fastest completion
 
 The Pi Package records the choice as hidden extension state in the current Pi Session. Later councils in that conversation reuse it unless the user explicitly changes it. `economy` increases cost weight, `speed` increases the audited speed dimension, and `balanced` keeps normal role weights. The legacy `quality` API value remains compatible but is not offered in the default question.
 
-The Main Agent assesses models instead of asking the user to rank them. When no audit exists, callable models materially change, current evidence is stale for the decision, or the user explicitly asks to re-audit model capabilities, the Main Agent may use an already available network tool to research only models returned by `expert_inspect`. It submits a compact `expert_build.modelAssessment` with an ISO timestamp, source URLs, normalized 0–10 capability dimensions, and verified provider access/billing classifications. The snapshot is persisted in project-local `.expert-council/state.json` and reused without browsing on every task. Explicit user billing configuration remains authoritative; unverifiable access remains `unknown`.
+The Main Agent assesses models instead of asking the user to rank them. `expert_inspect` reports a mandatory assessment gate. When no audit exists, it is older than 30 days, callable models change, or the user explicitly asks to re-audit capabilities, the Main Agent must use an already available network tool to research every callable model listed by the gate before `expert_build` can assemble a council. It submits one complete `modelAssessment` with an ISO timestamp read from the actual host clock, 1–12 consolidated source URLs, normalized 0–10 capability dimensions, and verified provider access/billing classifications. A future-dated timestamp is reported separately and can be corrected without repeating research. When inspection reports the saved assessment as current, the host omits `modelAssessment` from `expert_build`; an incomplete, stale, or future-dated replacement cannot displace a current saved snapshot. The assessment is stored once in the current user's data directory and reused across conversations and workspaces while the callable inventory remains compatible. Ordinary plan/execution state saves preserve that global assessment instead of rewriting it from a stale service instance; only an explicit successful assessment submission replaces it. Explicit user billing configuration remains authoritative; unverifiable access remains `unknown`.
 
-Triangulate rather than trusting one leaderboard: [Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) provides coding, agentic, pricing, throughput, and latency data; [LiveBench](https://livebench.ai/) covers coding and agentic coding; [Arena](https://arena.ai/leaderboard/text) measures human preference; provider documentation confirms versions, context, tools, and access methods. [OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) primarily measure real usage and should be treated only as adoption evidence, not proof of quality. If the host lacks a network tool, use conservative metadata and local outcomes. Expert Council never installs a browser, Skill, plugin, or executable package automatically.
+Triangulate rather than trusting one leaderboard: [Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) provides coding, agentic, pricing, throughput, and latency data; [LiveBench](https://livebench.ai/) covers coding and agentic coding; [Arena](https://arena.ai/leaderboard/text) measures human preference; provider documentation confirms versions, context, tools, and access methods. [OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) primarily measure real usage and should be treated only as adoption evidence, not proof of quality. If the host lacks a network tool when the gate requires an audit, it must report that limitation instead of silently routing with unaudited defaults. Expert Council never installs a browser, Skill, plugin, or executable package automatically.
 
 ### Role weights
 
@@ -241,7 +241,7 @@ Reasoning effort is optional and model-specific. A configured role preference is
 
 ## Skills and least privilege
 
-The canonical host guidance is [SKILL.md](shared/skills/expert-council/SKILL.md). The build synchronizes it into Pi and Codex distributions. Shared role prompts live under `packages/core/src/roles/prompts/` and are copied as package assets; they are not rewritten per host.
+The canonical platform-neutral host guidance is [SKILL.md](shared/skills/expert-council/SKILL.md). Small host overlays under `shared/skills/expert-council/hosts/` are composed with that base during the build, producing separate Pi and Codex `SKILL.md` artifacts without duplicating the shared workflow. The Pi artifact teaches completion `steer`/`followUp` behavior and never exposes `expert_wait`; the Codex artifact teaches the bounded `expert_wait` workflow. Shared role prompts live under `packages/core/src/roles/prompts/` and are copied as package assets; they are not rewritten per host.
 
 Read-only roles never receive `edit`, `write`, `bash`, or `powershell`, even if a caller tries to include them. Pi sessions use the actual `tools` allowlist, so this is stronger than prompt-only guidance. Shell-backed testing belongs to an isolated mutation role until a dedicated non-mutating command runner is available.
 
@@ -276,7 +276,7 @@ Mutation is not assumed safe merely because Codex itself is sandboxed. The exter
 4. Run the Worker there with mutation tools.
 5. Return the worktree path and changed-file list.
 6. Leave integration and final acceptance to Codex or the Pi Main Agent.
-7. Call `expert_cleanup` after integrating or rejecting the result. Unclaimed worktrees are removed after `security.worktreeRetentionMs` (24 hours by default), and Git metadata is pruned.
+7. Call `expert_cleanup` after integrating or rejecting the result. One call removes every worktree created by retries or escalations for that execution ID and reports all removed paths. Unclaimed worktrees are removed after `security.worktreeRetentionMs` (24 hours by default), and Git metadata is pruned.
 
 For a non-Git workspace, mutation fails safely by default. To opt into bounded in-place changes:
 
@@ -294,11 +294,11 @@ See [SECURITY.md](SECURITY.md) before enabling it.
 
 ## Telemetry and local learning
 
-The default local store is `.expert-council/telemetry.jsonl`. It records an opaque execution ID, model, provider, role, task category, success, first-pass outcome, tool-error count, retries, timeout, verification outcome when supplied, escalation count, attempts, host type, and optional approximate token/cost usage exposed by Pi. Call `expert_feedback` after Main Agent verification; updates for the same execution replace its earlier sample during aggregation rather than double-counting it.
+The default user data root is `%LOCALAPPDATA%\ExpertCouncil` on Windows, `$XDG_STATE_HOME/expert-council` or `~/.local/state/expert-council` on Linux, and `~/Library/Application Support/ExpertCouncil` on macOS. Shared `telemetry.jsonl` records opaque outcomes and makes observed reliability reusable across conversations and workspaces. Call `expert_feedback` after Main Agent verification; updates for the same execution replace earlier samples rather than double-counting them. Shared `model-assessment.json` stores the latest explicit capability/billing scores. `EXPERT_COUNCIL_DATA_DIR`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_MODEL_ASSESSMENT`, and `EXPERT_COUNCIL_STATE` can override these locations.
 
 It does not record prompts, source content, credentials, secrets, API keys, or chain-of-thought. Aggregates include role success rate, first-pass success, tool-error rate, retry rate, verification pass rate, and average attempts. There is no remote analytics endpoint.
 
-Plans, execution states, and completed structured results are stored separately in `.expert-council/state.json`. After restart, plans and completed results remain queryable; an execution that was still running is closed as a failed interrupted result rather than being falsely reported as active. This local state can contain bounded task descriptions and expert summaries, so protect it as project data.
+Plans, execution states, and completed structured results remain workspace-specific under `workspaces/<workspace-hash>/state.json`. After restart, plans and completed results remain queryable; an execution that was still running is closed as a failed interrupted result rather than being falsely reported as active. Older project-local `.expert-council` and `%USERPROFILE%\.expert-council` directories are not deleted automatically.
 
 ## CLI
 
@@ -323,6 +323,7 @@ The semantic surface is deliberately small:
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
+- `expert_wait`
 - `expert_result`
 - `expert_feedback`
 - `expert_cleanup`
@@ -331,20 +332,30 @@ The semantic surface is deliberately small:
 
 `expert_inspect` and `expert_build` return compact host-facing views by default. Pass `detail: "full"` only when exact model metadata, alternatives, scores, tools, or Skills are required.
 
-`expert_delegate` starts background work and immediately returns execution IDs. The original single-assignment shape remains supported. For two or more independent tasks, dispatch the whole batch before ending the host turn:
+`expert_delegate` starts background work and immediately returns execution IDs. The original single-assignment shape remains supported. Set an explicit `timeoutMs` for each assignment based on expected difficulty rather than relying on the ten-minute runtime fallback. For two or more independent tasks, dispatch the whole batch before doing other Main Agent work:
 
 ```json
 {
   "assignments": [
-    { "role": "scout", "task": "Map the relevant files", "taskDescription": "repository map" },
-    { "role": "reviewer", "task": "Review the proposed boundary", "taskDescription": "boundary review" }
+    { "role": "scout", "task": "Map the relevant files", "taskDescription": "repository map", "timeoutMs": 300000 },
+    { "role": "reviewer", "task": "Review the proposed boundary", "taskDescription": "boundary review", "timeoutMs": 600000 }
   ]
 }
 ```
 
 `assignments` must be a real JSON array, not a string containing JSON text. The native Pi adapter includes a bounded compatibility repair for models that occasionally stringify the array, but normal calls should emit the array directly.
 
-Its optional `taskDescription` is a concise host-facing label, not part of the expert assignment. Use `expert_result` to retrieve feedback once execution completes, then call `expert_feedback` with the Main Agent's verification outcome. `expert_status` includes a bounded per-attempt history with model, status, failure type, and short failure summary. Generic MCP hosts query `expert_result` or `expert_status`; the native Pi Package additionally pushes a completion message into the Main Agent session.
+Its optional `taskDescription` is a concise host-facing label, not part of the expert assignment. After dispatch, the Main Agent should continue any independent work. When no useful work remains, call `expert_wait` once with up to eight execution IDs, `mode: "all"` (or `"any"` when one early result is actionable), and a difficulty-based `timeoutMs`. The wait is event-driven rather than polling and intentionally blocks the current MCP tool call without consuming model tokens. It returns only completion state and IDs; use `expert_result` for feedback, then call `expert_feedback` with the Main Agent's verification outcome.
+
+```json
+{
+  "executionIds": ["exec_a", "exec_b"],
+  "mode": "all",
+  "timeoutMs": 900000
+}
+```
+
+`expert_wait.timeoutMs` limits only that wait and does not extend the per-assignment execution deadline. The Codex plugin sets its MCP transport safety ceiling to 3660 seconds so a justified one-hour wait can finish with margin; all blocking Expert Council and host shell/MCP calls should still carry a smaller explicit finite timeout chosen for the operation. Other synchronous Expert Council operations retain their separate 30-second server-side bound. `expert_status` includes a bounded per-attempt history with model, status, failure type, and short failure summary. The native Pi Package uses completion push instead of exposing `expert_wait`.
 
 Run the stdio server directly:
 
@@ -367,19 +378,43 @@ A generic Codex MCP configuration can launch that absolute script path. The nati
 
 ## Native Pi Package
 
-After building the monorepo, try the package locally:
+Build and install the local candidate from the repository root. Use forward slashes even on Windows when a command may pass through Pi's Bash-compatible shell; an unquoted Windows path such as `.\packages\pi-package` can lose its backslashes before Pi receives it.
 
 ```bash
-pi install ./packages/pi-package
+npm run build
+pi install "./packages/pi-package"
+pi list
+pi --verbose
 ```
+
+`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and eight semantic tools without `expert_wait`. Existing Pi processes do not hot-reload a rebuilt or removed package.
 
 Or for one run without persisting it:
 
 ```bash
-pi -e ./packages/pi-package
+pi --verbose -e "./packages/pi-package"
 ```
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers the same eight semantic tools as MCP. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
+For a no-cost loading check, ask Pi to call `expert_inspect` only. For a live orchestration check, start a new conversation, build one read-only council, batch two independent read-only assignments, confirm that `expert_delegate` immediately returns execution IDs, then verify each completion with `expert_result` and `expert_feedback`. A mutation test should additionally confirm that one `expert_cleanup` call reports every retry worktree in `workspaces` and that `git worktree list` contains only the main checkout afterwards.
+
+Exit every Pi process that loaded the package before removing the persisted entry:
+
+```bash
+pi remove "./packages/pi-package"
+pi list
+```
+
+Run removal from the same repository root used above. If the working directory has changed, pass the resolved absolute path instead. In PowerShell:
+
+```powershell
+$ecPiPackage = (Resolve-Path "./packages/pi-package").Path
+pi remove "$ecPiPackage"
+pi list
+```
+
+If removal is launched through Pi's Bash-compatible shell, use the forward-slash absolute path printed by `pi list`, for example `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`. Do not copy the indented relative source shown by `pi list` unless the command is being resolved from the same settings-directory context.
+
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers eight semantic tools; it omits MCP's `expert_wait` because native Pi provides completion `steer`/`followUp` delivery. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
 
 Pi delegation is non-blocking. A batch of up to eight independent assignments is started before the tool returns. When an expert finishes, the extension sends compact JSON containing its completed `executionId` and, only when supplied, `taskDescription`; it never includes feedback. If the Main Agent is working, the notification is delivered as `steer`; if it is idle, a `followUp` with `triggerTurn` wakes it immediately. The Main Agent then calls `expert_result` to fetch the structured feedback. The Main Agent should dispatch the entire ready batch before ending its turn, then avoid polling or silently waiting.
 
@@ -398,7 +433,7 @@ packages/codex-integration/plugin/expert-council/
   dist/roles/*.md
 ```
 
-It follows the current Codex plugin layout: the manifest points at `skills/` and a bundled `.mcp.json`; the stdio server is bundled into the plugin and locates the user's installed Pi SDK without embedding credentials.
+It follows the current Codex plugin layout: the manifest points at `skills/` and a bundled `.mcp.json`; the stdio server is bundled into the plugin and locates the user's installed Pi SDK without embedding credentials. The bundled MCP config raises the host tool-call ceiling to 3660 seconds for bounded `expert_wait` calls; the Skill requires the Main Agent to choose explicit operation-specific deadlines rather than treating that ceiling as a default budget.
 
 To test locally, expose the plugin through a personal or repo marketplace as documented by the current [OpenAI plugin packaging guide](https://developers.openai.com/plugins/build/plugins). No marketplace file is written automatically by this repository because that changes user or team Codex configuration. Validate the plugin itself with:
 
@@ -447,7 +482,7 @@ The Codex integration is a plugin artifact rather than a clone of the Pi Package
 ## Known limitations
 
 - Pi APIs evolve quickly. V1 is verified against the installed 0.84.4 SDK. Required SDK, model-runtime, resource-loader, and session methods are capability-validated; incompatible versions fail with a specific missing-contract diagnostic.
-- Pi does not expose a universal real-world billing type. Unknown billing stays `unknown`; users must configure subscriptions, quotas, and promotional access.
+- Pi does not expose a universal real-world billing type. Runtime subscription signals and named Token Plan catalogs take precedence; otherwise non-zero catalog prices imply metered routing, while providers without reliable evidence remain `unknown` until assessment or explicit configuration confirms them.
 - V1 does not infer subjective coding quality from model names or fetch benchmark presets.
 - Detached worktrees start from committed `HEAD`; uncommitted Main Agent changes are not copied. This is intentional isolation. The runtime detects a dirty source workspace and reports the mismatch in runtime limitations and mutation council warnings before delegation.
 - Worktree changes are returned for review, not automatically merged or applied. They require `expert_cleanup` after acceptance/rejection and otherwise expire after the configured retention window.
