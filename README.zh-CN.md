@@ -446,6 +446,10 @@ packages/codex-integration/plugin/expert-council/
 
 本地安装应通过个人或仓库 marketplace 暴露该插件。项目不会自动修改用户或团队的 Codex marketplace 配置。
 
+本地开发应复用同一个稳定的个人或仓库 marketplace，并在重新安装前更新插件 cachebuster。更换 marketplace 标识前先移除废弃的测试安装，避免多个副本同时声明同名 `expert-council` MCP Server，导致宿主诊断含糊。每次安装或重新安装后，都必须完整退出 Codex Desktop、等待其后台进程结束，再重新打开应用并新建任务；仅新建任务在部分 Desktop 版本中并不是可靠的 MCP 重载边界。
+
+正确加载时，`expert-council` Skill 和 9 个原生 `expert_*` MCP 工具必须同时可用。如果 Skill 已出现但工具缺失，应判定为插件加载失败。主代理不得通过 Bash 或 PowerShell 手工启动 `dist/server.mjs`、手写 JSON-RPC，或用 CLI 冒充缺失的 MCP 工具；应改为重启或重新安装插件。
+
 ## 测试
 
 ```bash

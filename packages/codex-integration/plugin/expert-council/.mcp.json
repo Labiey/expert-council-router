@@ -1,8 +1,9 @@
 {
   "mcpServers": {
-    "expert-council": {
+    "expert_council": {
       "command": "node",
-      "args": ["${PLUGIN_ROOT}/dist/server.mjs"],
+      "args": ["dist/server.mjs"],
+      "cwd": ".",
       "tool_timeout_sec": 3660
     }
   }

@@ -441,6 +441,10 @@ To test locally, expose the plugin through a personal or repo marketplace as doc
 python C:/path/to/plugin-creator/scripts/validate_plugin.py packages/codex-integration/plugin/expert-council
 ```
 
+For local development, reuse one stable personal or repository marketplace and update the plugin cachebuster before reinstalling. Remove obsolete test installations before changing marketplace identity; installing multiple copies that all declare the `expert-council` MCP server can make host diagnostics ambiguous. After every install or reinstall, fully quit Codex Desktop, wait for its backend process to exit, reopen the app, and start a new task. Merely opening a new task is not a reliable MCP reload boundary in every Desktop build.
+
+A correct load exposes both the `expert-council` Skill and all nine native `expert_*` MCP tools. If the Skill is present but those tools are absent, treat the installation as failed. The Main Agent must not launch `dist/server.mjs` from Bash or PowerShell, send hand-written JSON-RPC, or use the CLI to impersonate a missing MCP tool; restart or reinstall the plugin instead.
+
 The plugin's Main Agent guidance explicitly keeps final architecture and acceptance in Codex and avoids a redundant lead expert.
 
 ## Testing

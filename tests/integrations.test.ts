@@ -173,6 +173,25 @@ describe("MCP semantic surface", () => {
   });
 });
 
+describe("Codex plugin packaging", () => {
+  it("uses a plugin-relative cwd without relying on MCP argument interpolation", () => {
+    const mcpFile = JSON.parse(
+      readFileSync("packages/codex-integration/plugin/expert-council/.mcp.json", "utf8"),
+    ) as {
+      mcpServers: Record<string, { command: string; args: string[]; cwd?: string }>;
+    };
+    const server = mcpFile.mcpServers.expert_council;
+
+    expect(server).toMatchObject({
+      command: "node",
+      args: ["dist/server.mjs"],
+      cwd: ".",
+    });
+    expect(JSON.stringify(server)).not.toContain("${PLUGIN_ROOT}");
+    expect(mcpFile.mcpServers).not.toHaveProperty("expert-council");
+  });
+});
+
 describe("Pi adapter registration", () => {
   it("documents shell-safe local Pi installation and removal commands", () => {
     const readme = readFileSync("README.md", "utf8");
