@@ -12,3 +12,4 @@ coverage/
 *.log
 TMP/
 README.pre.md
+AGENTS.md
