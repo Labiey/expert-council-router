@@ -7,6 +7,9 @@ const PROVIDER_FAILURE_MARKERS = [
   "model registry",
   "not currently available",
   "model unavailable",
+  "access denied",
+  "access to model denied",
+  "accessdenied",
 ] as const;
 
 /**
@@ -29,6 +32,11 @@ const MODEL_UNAVAILABLE_MARKERS = [
   "no longer contains",
   "decommissioned",
   "has been discontinued",
+  "access to model denied",
+  "model access denied",
+  "accessdenied",
+  "unpurchased",
+  "not eligible for using the model",
 ] as const;
 
 export function indicatesModelUnavailable(summary: unknown): boolean {

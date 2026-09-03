@@ -111,6 +111,7 @@ const expertResult = z.object({
     workspace: boundedText(32_768).optional(),
     isolated: z.boolean().optional(),
     escalationCount: z.number().int().min(0).max(100).optional(),
+    unavailableModels: z.array(identifier).max(8).optional(),
   }).strict().optional(),
 }).strict();
 

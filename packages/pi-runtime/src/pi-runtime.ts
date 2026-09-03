@@ -103,6 +103,25 @@ function finalAssistantText(session: PiSessionLike): string {
   return "";
 }
 
+/**
+ * Pi sessions surface upstream provider failures as a final assistant message
+ * with `stopReason: "error"` and the provider diagnostic in `errorMessage`.
+ * Returning that diagnostic keeps model-access denials visible to routing
+ * instead of degrading into a vague empty-response result.
+ */
+function finalSessionError(session: PiSessionLike): string | undefined {
+  const messages = session.messages ?? session.state?.messages ?? [];
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index] as Record<string, unknown>;
+    if (message.role !== "assistant") continue;
+    if (message.stopReason !== "error") return undefined;
+    const error = message.errorMessage;
+    if (typeof error === "string" && error.trim()) return error;
+    return "The expert session ended with a provider error and no diagnostic message.";
+  }
+  return undefined;
+}
+
 function sessionUsage(session: PiSessionLike): Record<string, number> | undefined {
   const messages = session.messages ?? session.state?.messages ?? [];
   const total = {
@@ -432,6 +451,24 @@ export class PiExpertRuntime implements ExpertRuntime {
         if (timer) clearTimeout(timer);
       }
       const rawText = finalAssistantText(session);
+      const sessionError = finalSessionError(session);
+      if (sessionError) {
+        const usage = sessionUsage(session);
+        return {
+          status: "failed",
+          role: request.role,
+          model: request.model,
+          summary: safeText(sessionError, 4_000) ?? "Expert session failed.",
+          executionMetadata: {
+            attempts: request.attempt,
+            workspace: workspace.root,
+            isolated: workspace.isolated,
+            failureType: inferFailureType(sessionError),
+            durationMs: Date.now() - started,
+            ...(usage ? { usage } : {}),
+          },
+        };
+      }
       const changedFiles = await this.boundary.changedFiles(workspace);
       const result = normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session));
       result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };

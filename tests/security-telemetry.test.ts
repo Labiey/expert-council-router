@@ -183,6 +183,37 @@ describe("durable council state", () => {
     }
   });
 
+  it("round-trips availability reporting through the strict state schema", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "expert-council-state-availability-"));
+    const file = path.join(directory, "state.json");
+    try {
+      const store = new JsonCouncilStateStore(file);
+      const snapshot = {
+        version: 1 as const,
+        plans: [],
+        executions: [],
+        results: [{
+          executionId: "exec_test",
+          result: {
+            status: "failed" as const,
+            role: "scout" as const,
+            model: "p/dead",
+            summary: "403: access to model denied",
+            executionMetadata: {
+              attempts: 1,
+              failureType: "provider_error" as const,
+              unavailableModels: ["p/dead"],
+            },
+          },
+        }],
+      };
+      await store.save(snapshot);
+      expect(await store.load()).toEqual(snapshot);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it("writes snapshots atomically and restores them", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "expert-council-state-"));
     const file = path.join(directory, "state.json");

@@ -262,6 +262,50 @@ describe("Pi runtime adapter", () => {
     expect(result).toMatchObject({ status: "partial", executionMetadata: { failureType: "reasoning_failure" } });
   });
 
+  it("surfaces provider session errors instead of an empty-response result", async () => {
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m" }],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      createAgentSession: async () => ({
+        session: {
+          prompt: async () => {},
+          waitForIdle: async () => {},
+          dispose: () => {},
+          state: {
+            messages: [
+              { role: "user", content: [{ type: "text", text: "task" }] },
+              {
+                role: "assistant",
+                content: [],
+                stopReason: "error",
+                errorMessage: '403: Access to model denied. Please make sure you are eligible for using the model.',
+                usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
+              },
+            ],
+          },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const result = await runtime.executeExpert({
+      role: "scout",
+      task: "Inspect files",
+      model: "p/m",
+      tools: ["read"],
+      skills: [],
+      readOnly: true,
+      timeoutMs: 1_000,
+      attempt: 1,
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("Access to model denied");
+    expect(result.executionMetadata?.failureType).toBe("provider_error");
+  });
+
   it("refreshes callable models before every execution", async () => {
     let discoveryCalls = 0;
     let sessionCalls = 0;

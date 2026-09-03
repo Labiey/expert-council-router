@@ -186,6 +186,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   }
 
   async inspectResources(): Promise<ResourceInventory> {
+    await this.refreshSharedAssessment();
     const [models, skills, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.runtime.listSkills(),
@@ -245,6 +246,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   }
 
   async buildCouncil(request: BuildCouncilRequest): Promise<CouncilPlan> {
+    await this.refreshSharedAssessment();
     const [models, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
@@ -329,6 +331,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     started: number,
   ): Promise<ExpertResult> {
     const id = state.id;
+    await this.refreshSharedAssessment();
     const runtimeCapabilities = await this.runtime.getCapabilities();
     const [models, aggregates, availableSkills] = await Promise.all([
       this.runtime.listAvailableModels(),
@@ -519,16 +522,34 @@ export class ExpertCouncilService implements ExpertCouncil {
     return result;
   }
 
+  /**
+   * Adopt the newest shared assessment from durable storage before routing or
+   * inspection. Availability markers are persisted the moment they are
+   * learned, so the stored snapshot is always a superset of this instance's
+   * view and concurrent Pi/Codex instances observe each other's markers
+   * without a host restart.
+   */
+  private async refreshSharedAssessment(): Promise<void> {
+    if (!this.stateOptions.persistence?.readModelAssessment) return;
+    try {
+      const latest = await this.stateOptions.persistence.readModelAssessment();
+      if (latest) this.modelAssessment = latest;
+    } catch {
+      // Keep the in-memory snapshot when the shared store is temporarily unreadable.
+    }
+  }
+
   private async markModelUnavailable(modelKey: string, reason: string): Promise<void> {
     const observedAt = new Date().toISOString();
     if (this.modelAssessment) {
       this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt);
     }
-    const update = this.stateOptions.persistence?.updateModelAssessment;
-    if (update) {
-      // Targeted durable merge against the latest shared snapshot so concurrent
-      // Pi/Codex service instances never overwrite each other's newer assessment.
-      await update((current) => (current ? withModelAvailabilityMarker(current, modelKey, reason, observedAt) : undefined));
+    if (this.stateOptions.persistence?.updateModelAssessment) {
+      // Call through the persistence object: extracting the method would lose
+      // `this` and silently break the durable update.
+      await this.stateOptions.persistence.updateModelAssessment((current) =>
+        current ? withModelAvailabilityMarker(current, modelKey, reason, observedAt) : undefined,
+      );
     }
     void this.persistState().catch(() => undefined);
   }
@@ -648,6 +669,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   }
 
   async escalate(request: EscalationRequest) {
+    await this.refreshSharedAssessment();
     const [models, telemetry, runtimeCapabilities] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),

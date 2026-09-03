@@ -448,6 +448,12 @@ export interface CouncilStatePersistence {
   updateModelAssessment?(update: (
     current: ModelAssessmentSnapshot | undefined,
   ) => ModelAssessmentSnapshot | undefined): Promise<void>;
+  /**
+   * Read the latest shared model assessment from durable storage so a service
+   * instance observes availability markers written by another running instance
+   * without waiting for a host restart.
+   */
+  readModelAssessment?(): Promise<ModelAssessmentSnapshot | undefined>;
 }
 
 export interface CouncilStateOptions {

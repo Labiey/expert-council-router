@@ -100,6 +100,7 @@ describe("mandatory Main Agent model assessment gate", () => {
 describe("shared failure classification", () => {
   it("uses one deterministic classifier for runtime errors and service results", () => {
     expect(inferFailureType(new Error("Provider rate limit reached"))).toBe("provider_error");
+    expect(inferFailureType('403: Access to model denied. Please make sure you are eligible for using the model.')).toBe("provider_error");
     expect(failureTypeForResult({
       status: "failed",
       role: "reviewer",
@@ -496,16 +497,24 @@ describe("runtime availability marking", () => {
       },
       { status: "success", role: "scout", model: "p/alive", summary: "ok" },
     ]);
-    let latest = assessment;
-    const updates: Array<string | undefined> = [];
-    const persistence = {
-      save: async () => {},
-      updateModelAssessment: async (mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined) => {
-        const next = mutate(latest);
-        updates.push(next?.modelAvailability && "p/dead" in next.modelAvailability ? "p/dead" : undefined);
-        if (next) latest = next;
-      },
-    };
+    let updates: Array<string | undefined>;
+    // Class-based persistence (like SplitCouncilStateStore): the service must
+    // call updateModelAssessment through the object, never as an extracted
+    // unbound function, or `this` is lost.
+    class RecordingPersistence {
+      updates: Array<string | undefined> = [];
+      saved: ModelAssessmentSnapshot = assessment;
+      async save(): Promise<void> {}
+      async updateModelAssessment(
+        mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+      ): Promise<void> {
+        const next = mutate(this.saved);
+        this.updates.push(next?.modelAvailability && "p/dead" in next.modelAvailability ? "p/dead" : undefined);
+        if (next) this.saved = next;
+      }
+    }
+    const persistence = new RecordingPersistence();
+    updates = persistence.updates;
     const service = new ExpertCouncilService(runtime, {}, undefined, {
       initialState: initialState(assessment),
       persistence,
@@ -517,7 +526,7 @@ describe("runtime availability marking", () => {
     expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
     expect(result.risks?.join(" ")).toContain("marked in the persisted model assessment");
     expect(updates).toEqual(["p/dead"]);
-    expect(latest.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, source: "runtime-failure" });
+    expect(persistence.saved.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, source: "runtime-failure" });
 
     const plan = await service.buildCouncil({ task: "Implement a small bounded feature" });
     expect(plan.experts.map((expert) => expert.model)).not.toContain("p/dead");
@@ -603,5 +612,40 @@ describe("runtime availability marking", () => {
     expect(result.status).toBe("success");
     expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
     expect((await service.inspectResources()).modelAssessment).toBeUndefined();
+  });
+});
+
+describe("shared assessment freshness", () => {
+  it("observes availability markers written by another service instance without a restart", async () => {
+    const assessment = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: {
+        "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+        "p/alive": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+      },
+    };
+    const runtime = new MockRuntime([model("p", "dead"), model("p", "alive")]);
+    class SharedPersistence {
+      #stored: ModelAssessmentSnapshot | undefined = assessment;
+      async save(): Promise<void> {}
+      async updateModelAssessment(): Promise<void> {}
+      async readModelAssessment(): Promise<ModelAssessmentSnapshot | undefined> {
+        // Simulates another running Pi/Codex instance persisting a marker
+        // after this service instance was constructed.
+        this.#stored = withModelAvailabilityMarker(this.#stored!, "p/dead", "403: access to model denied", "2026-09-03T02:00:00.000Z");
+        return this.#stored;
+      }
+    }
+    const persistence = new SharedPersistence();
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: { version: 1, plans: [], executions: [], results: [], modelAssessment: assessment },
+      persistence,
+    });
+
+    const inventory = await service.inspectResources();
+    expect(inventory.warnings.join(" ")).toContain("marked unavailable by a runtime failure");
+    const plan = await service.buildCouncil({ task: "Implement a small bounded feature" });
+    expect(plan.experts.map((expert) => expert.model)).not.toContain("p/dead");
   });
 });

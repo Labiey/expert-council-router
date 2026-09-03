@@ -323,6 +323,9 @@ describe("runtime availability markers", () => {
     expect(indicatesModelUnavailable("Provider API returned model_not_found for p/dead.")).toBe(true);
     expect(indicatesModelUnavailable("Pi model registry no longer contains p/dead.")).toBe(true);
     expect(indicatesModelUnavailable("Upstream reported the model has been discontinued.")).toBe(true);
+    expect(indicatesModelUnavailable(
+      '403: {"message":"Access to model denied. Please make sure you are eligible for using the model.","code":"AccessDenied.Unpurchased"}',
+    )).toBe(true);
     expect(indicatesModelUnavailable("Provider rate limit reached")).toBe(false);
     expect(indicatesModelUnavailable("Invalid API key supplied")).toBe(false);
     expect(indicatesModelUnavailable("src/app.ts does not exist")).toBe(false);
