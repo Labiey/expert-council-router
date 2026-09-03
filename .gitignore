@@ -1,5 +1,6 @@
 node_modules/
 dist/
+packages/codex-integration/plugin/expert-council/hooks/record-workspace.mjs
 coverage/
 *.tsbuildinfo
 *.tgz

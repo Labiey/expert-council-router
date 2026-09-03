@@ -385,6 +385,8 @@ node packages/mcp-server/dist/bin.js
 
 环境变量覆盖和 CLI 路径参数属于“受信任的操作者输入”。其中 `PI_CODING_AGENT_MODULE` 会加载可执行代码，配置、工作区、遥测和状态路径会选择本地文件；不要从不受信任仓库、任务文本或模型输出中接受这些值。
 
+Codex 插件不会把自身安装目录当作任务工作区。`.mcp.json` 的工作目录只用于启动内置 Server。Server 优先使用当前本地项目的 MCP `file:` roots；对于尚未声明 MCP roots 的 Codex Desktop 版本，则使用随插件提供的同步 `PreToolUse` Hook：每次调用 `expert_*` 前，Hook 把宿主提供的会话 ID 和 `cwd` 写入插件私有的 `PLUGIN_DATA`，Server 只接受与自身 Codex 会话 ID 匹配的记录。安装后应检查并信任这个小型 Hook。显式配置的 `security.allowedWorkspaceRoots` 仍具有最高优先级，可进一步收窄边界。若两个受信任通道都不可用，插件会安全拒绝，而不会放宽到任意本地路径。`EXPERT_COUNCIL_WORKSPACE` 仍可作为受信任操作者回退。
+
 Codex 插件已经内置并配置该 MCP Server，不需要复制业务逻辑。
 
 ## 原生 Pi Package
@@ -437,16 +439,20 @@ Pi 委派是非阻断式的；一个调用最多可在返回前启动 8 个相�
 packages/codex-integration/plugin/expert-council/
   .codex-plugin/plugin.json
   .mcp.json
+  hooks/hooks.json
+  hooks/record-workspace.mjs
   skills/expert-council/SKILL.md
   dist/server.mjs
   dist/roles/*.md
 ```
 
-它遵循当前 Codex 插件布局，清单引用 `skills/` 和内置 `.mcp.json`，stdio MCP Server 被打包在插件内，并通过用户现有的 Pi SDK 使用凭据，而不会嵌入或复制凭据。内置 MCP 配置把宿主工具调用上限提高到 3660 秒以支持有限的 `expert_wait`；Skill 要求主代理仍按每次操作难度设置明确期限，不能把这个上限当作默认执行预算。
+它遵循当前 Codex 插件布局，清单引用 `skills/`、内置 `.mcp.json` 和工作区记录 Hook，stdio MCP Server 被打包在插件内，并通过用户现有的 Pi SDK 使用凭据，而不会嵌入或复制凭据。MCP 启动 `cwd` 只是已安装插件根目录，用于解析 `dist/server.mjs`；仓库授权路径另行来自 MCP roots，或来自受信任 Hook 写入且与当前会话匹配的记录。内置 MCP 配置把宿主工具调用上限提高到 3660 秒以支持有限的 `expert_wait`；Skill 要求主代理仍按每次操作难度设置明确期限，不能把这个上限当作默认执行预算。
 
 本地安装应通过个人或仓库 marketplace 暴露该插件。项目不会自动修改用户或团队的 Codex marketplace 配置。
 
-本地开发应复用同一个稳定的个人或仓库 marketplace，并在重新安装前更新插件 cachebuster。更换 marketplace 标识前先移除废弃的测试安装，避免多个副本同时声明同名 `expert-council` MCP Server，导致宿主诊断含糊。每次安装或重新安装后，都必须完整退出 Codex Desktop、等待其后台进程结束，再重新打开应用并新建任务；仅新建任务在部分 Desktop 版本中并不是可靠的 MCP 重载边界。
+本地开发应复用同一个稳定的个人或仓库 marketplace，并在重新安装前更新插件 cachebuster。更换 marketplace 标识前先移除废弃的测试安装，避免多个副本同时声明同名 `expert_council` MCP Server，导致宿主诊断含糊。每次安装或重新安装后，都必须完整退出 Codex Desktop、等待其后台进程结束，再重新打开应用并新建任务；仅新建任务在部分 Desktop 版本中并不是可靠的 MCP 重载边界。
+
+安装后的首次使用若 Codex 提示 Hook 信任，请先检查并信任内置 Hook。它仅在 `mcp__expert_council__expert_*` 调用前同步运行，只把宿主提供的会话 ID、规范化后的 `cwd` 和时间戳写入 `PLUGIN_DATA`，不向模型注入上下文，且最长运行 5 秒。已经支持 MCP roots 的 Codex 版本不依赖这份记录；保留该 Hook 是为了兼容 Desktop 0.152.x。
 
 正确加载时，`expert-council` Skill 和 9 个原生 `expert_*` MCP 工具必须同时可用。如果 Skill 已出现但工具缺失，应判定为插件加载失败。主代理不得通过 Bash 或 PowerShell 手工启动 `dist/server.mjs`、手写 JSON-RPC，或用 CLI 冒充缺失的 MCP 工具；应改为重启或重新安装插件。
 

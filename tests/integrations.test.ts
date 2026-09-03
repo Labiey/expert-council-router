@@ -1,4 +1,11 @@
 import { readFileSync } from "node:fs";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { ListRootsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { describe, expect, it } from "vitest";
 import {
   MODEL_ASSESSMENT_JSON_SCHEMA,
@@ -6,8 +13,17 @@ import {
   type ExpertCouncil,
 } from "../packages/core/src/index.js";
 import { runCli } from "../packages/cli/src/index.js";
-import { MCP_INPUT_SCHEMAS, MCP_TOOL_NAMES, withMcpTimeout } from "../packages/mcp-server/src/index.js";
+import {
+  createClientRootMcpServer,
+  MCP_INPUT_SCHEMAS,
+  MCP_TOOL_NAMES,
+  withMcpTimeout,
+} from "../packages/mcp-server/src/index.js";
 import piExtension from "../packages/pi-package/src/extension.js";
+import {
+  readCodexWorkspaceRoots,
+  recordCodexWorkspace,
+} from "../packages/codex-integration/workspace-record.js";
 
 function mockCouncil(): ExpertCouncil {
   const completed = { status: "success" as const, role: "reviewer" as const, model: "p/m", summary: "ok" };
@@ -178,7 +194,7 @@ describe("Codex plugin packaging", () => {
     const mcpFile = JSON.parse(
       readFileSync("packages/codex-integration/plugin/expert-council/.mcp.json", "utf8"),
     ) as {
-      mcpServers: Record<string, { command: string; args: string[]; cwd?: string }>;
+      mcpServers: Record<string, { command: string; args: string[]; cwd?: string; env_vars?: string[] }>;
     };
     const server = mcpFile.mcpServers.expert_council;
 
@@ -186,9 +202,113 @@ describe("Codex plugin packaging", () => {
       command: "node",
       args: ["dist/server.mjs"],
       cwd: ".",
+      env_vars: ["CODEX_SESSION_ID", "CODEX_THREAD_ID"],
     });
     expect(JSON.stringify(server)).not.toContain("${PLUGIN_ROOT}");
     expect(mcpFile.mcpServers).not.toHaveProperty("expert-council");
+    expect(readFileSync("packages/codex-integration/plugin/expert-council/hooks/hooks.json", "utf8"))
+      .toContain("^mcp__expert_council__expert_");
+  });
+
+  it("records and resolves the Codex session workspace without trusting model arguments", async () => {
+    const dataRoot = await mkdtemp(path.join(tmpdir(), "expert-council-plugin-data-"));
+    const workspace = await realpath(process.cwd());
+    const session = "session_workspace_test";
+    const environment = {
+      PLUGIN_DATA: dataRoot,
+      CODEX_SESSION_ID: session,
+    };
+    try {
+      await expect(recordCodexWorkspace({
+        hook_event_name: "PreToolUse",
+        tool_name: "mcp__expert_council__expert_inspect",
+        session_id: session,
+        cwd: workspace,
+      }, environment)).resolves.toBe(true);
+      await expect(readCodexWorkspaceRoots(environment)).resolves.toEqual([workspace]);
+      await expect(readCodexWorkspaceRoots({
+        ...environment,
+        CODEX_SESSION_ID: "another_session",
+      })).resolves.toEqual([]);
+    } finally {
+      await rm(dataRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("uses MCP client roots as trusted workspace boundaries", async () => {
+    const workspace = process.cwd();
+    let receivedOptions: { cwd?: string; trustedWorkspaceRoots?: string[] } | undefined;
+    const server = createClientRootMcpServer({}, async (options) => {
+      receivedOptions = options;
+      return mockCouncil();
+    });
+    const client = new Client(
+      { name: "roots-test", version: "0.1.0" },
+      { capabilities: { roots: { listChanged: true } } },
+    );
+    client.setRequestHandler(ListRootsRequestSchema, async () => ({
+      roots: [{ uri: pathToFileURL(workspace).href, name: "workspace" }],
+    }));
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      await client.callTool({ name: "expert_inspect", arguments: {} });
+      expect(receivedOptions).toMatchObject({
+        cwd: workspace,
+        trustedWorkspaceRoots: [workspace],
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("fails closed when the MCP client exposes no workspace roots", async () => {
+    let factoryCalled = false;
+    const server = createClientRootMcpServer({}, async () => {
+      factoryCalled = true;
+      return mockCouncil();
+    });
+    const client = new Client({ name: "no-roots-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({ name: "expert_inspect", arguments: {} });
+      expect(result.isError).toBe(true);
+      expect(result.content).toEqual(expect.arrayContaining([
+        expect.objectContaining({ text: expect.stringContaining("No trusted local workspace") }),
+      ]));
+      expect(factoryCalled).toBe(false);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it("uses a trusted host fallback when the MCP client does not implement roots", async () => {
+    const workspace = process.cwd();
+    let receivedOptions: { cwd?: string; trustedWorkspaceRoots?: string[] } | undefined;
+    const server = createClientRootMcpServer({}, async (options) => {
+      receivedOptions = options;
+      return mockCouncil();
+    }, async () => [workspace]);
+    const client = new Client({ name: "host-workspace-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({ name: "expert_inspect", arguments: {} });
+      expect(result.isError).not.toBe(true);
+      expect(receivedOptions).toMatchObject({
+        cwd: workspace,
+        trustedWorkspaceRoots: [workspace],
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });
 

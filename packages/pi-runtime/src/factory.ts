@@ -12,6 +12,7 @@ import { PiExpertRuntime } from "./pi-runtime.js";
 
 export interface CreateCouncilOptions {
   cwd?: string;
+  trustedWorkspaceRoots?: string[];
   configPath?: string;
   telemetryPath?: string;
   statePath?: string;
@@ -63,7 +64,21 @@ export function defaultCouncilStoragePaths(cwd: string, dataRoot = defaultCounci
 
 export async function createExpertCouncil(options: CreateCouncilOptions = {}): Promise<ExpertCouncil> {
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const config = await loadCouncilConfig(options.configPath);
+  const loadedConfig = await loadCouncilConfig(options.configPath);
+  const trustedWorkspaceRoots = options.trustedWorkspaceRoots?.map((root) => resolveOperatorPath(
+    cwd,
+    root,
+    "Trusted workspace root",
+  ));
+  const config = trustedWorkspaceRoots?.length && loadedConfig.security.allowedWorkspaceRoots.length === 0
+    ? {
+        ...loadedConfig,
+        security: {
+          ...loadedConfig.security,
+          allowedWorkspaceRoots: [...new Set(trustedWorkspaceRoots)],
+        },
+      }
+    : loadedConfig;
   const roleDirectory = options.roleDirectory
     ? resolveOperatorPath(cwd, options.roleDirectory, "Role directory")
     : undefined;

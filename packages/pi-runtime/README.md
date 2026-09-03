@@ -374,6 +374,8 @@ Environment:
 
 Environment overrides and CLI path flags are trusted operator inputs. In particular, `PI_CODING_AGENT_MODULE` loads executable code, while config, workspace, telemetry, and state paths select local files. Do not accept these values from an untrusted repository, task text, or model output.
 
+The Codex plugin does not use its installation directory as the task workspace. Its `.mcp.json` working directory exists only to launch the bundled server. The server prefers the current local project's MCP `file:` roots. Current Codex Desktop builds that do not advertise MCP roots use the bundled synchronous `PreToolUse` hook instead: immediately before an `expert_*` call, the hook records the host-supplied session ID and `cwd` in the plugin's private `PLUGIN_DATA` directory, and the server accepts only the record matching its own Codex session ID. Review and trust this small hook after installation. Explicit `security.allowedWorkspaceRoots` remains authoritative and may narrow that boundary. If neither trusted channel is available, the plugin fails closed rather than granting access to arbitrary local paths. `EXPERT_COUNCIL_WORKSPACE` remains a trusted operator fallback.
+
 A generic Codex MCP configuration can launch that absolute script path. The native Codex plugin below already bundles and configures the server.
 
 ## Native Pi Package
@@ -428,12 +430,14 @@ The built plugin root is:
 packages/codex-integration/plugin/expert-council/
   .codex-plugin/plugin.json
   .mcp.json
+  hooks/hooks.json
+  hooks/record-workspace.mjs
   skills/expert-council/SKILL.md
   dist/server.mjs
   dist/roles/*.md
 ```
 
-It follows the current Codex plugin layout: the manifest points at `skills/` and a bundled `.mcp.json`; the stdio server is bundled into the plugin and locates the user's installed Pi SDK without embedding credentials. The bundled MCP config raises the host tool-call ceiling to 3660 seconds for bounded `expert_wait` calls; the Skill requires the Main Agent to choose explicit operation-specific deadlines rather than treating that ceiling as a default budget.
+It follows the current Codex plugin layout: the manifest points at `skills/`, a bundled `.mcp.json`, and a workspace-recording hook; the stdio server is bundled into the plugin and locates the user's installed Pi SDK without embedding credentials. The MCP launch `cwd` is the installed plugin root only for resolving `dist/server.mjs`; authorized repository paths come separately from MCP roots or the matching session record written by the trusted hook. The bundled MCP config raises the host tool-call ceiling to 3660 seconds for bounded `expert_wait` calls; the Skill requires the Main Agent to choose explicit operation-specific deadlines rather than treating that ceiling as a default budget.
 
 To test locally, expose the plugin through a personal or repo marketplace as documented by the current [OpenAI plugin packaging guide](https://developers.openai.com/plugins/build/plugins). No marketplace file is written automatically by this repository because that changes user or team Codex configuration. Validate the plugin itself with:
 
@@ -441,7 +445,9 @@ To test locally, expose the plugin through a personal or repo marketplace as doc
 python C:/path/to/plugin-creator/scripts/validate_plugin.py packages/codex-integration/plugin/expert-council
 ```
 
-For local development, reuse one stable personal or repository marketplace and update the plugin cachebuster before reinstalling. Remove obsolete test installations before changing marketplace identity; installing multiple copies that all declare the `expert-council` MCP server can make host diagnostics ambiguous. After every install or reinstall, fully quit Codex Desktop, wait for its backend process to exit, reopen the app, and start a new task. Merely opening a new task is not a reliable MCP reload boundary in every Desktop build.
+For local development, reuse one stable personal or repository marketplace and update the plugin cachebuster before reinstalling. Remove obsolete test installations before changing marketplace identity; installing multiple copies that all declare the `expert_council` MCP server can make host diagnostics ambiguous. After every install or reinstall, fully quit Codex Desktop, wait for its backend process to exit, reopen the app, and start a new task. Merely opening a new task is not a reliable MCP reload boundary in every Desktop build.
+
+On first use after installation, review and trust the bundled hook when Codex prompts. It runs synchronously only before `mcp__expert_council__expert_*` calls, receives the host-provided session metadata, writes only the session ID, canonical `cwd`, and timestamp to `PLUGIN_DATA`, emits no model context, and has a five-second ceiling. Codex versions that already provide MCP roots do not depend on the record, but keeping the hook trusted preserves compatibility with Desktop 0.152.x.
 
 A correct load exposes both the `expert-council` Skill and all nine native `expert_*` MCP tools. If the Skill is present but those tools are absent, treat the installation as failed. The Main Agent must not launch `dist/server.mjs` from Bash or PowerShell, send hand-written JSON-RPC, or use the CLI to impersonate a missing MCP tool; restart or reinstall the plugin instead.
 

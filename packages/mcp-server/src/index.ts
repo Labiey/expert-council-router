@@ -1,4 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { fileURLToPath } from "node:url";
 import {
   evaluateModelAssessment,
   modelAssessmentSnapshotSchema,
@@ -136,7 +137,10 @@ export async function withMcpTimeout<T>(operation: Promise<T>, timeoutMs = MCP_T
   return Promise.race([operation, timeout]);
 }
 
-export function createMcpServer(council: ExpertCouncil): McpServer {
+type CouncilProvider = () => Promise<ExpertCouncil>;
+export type WorkspaceRootProvider = () => Promise<string[]>;
+
+function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
   const server = new McpServer({ name: "expert-council", version: "0.3.0" });
 
   server.registerTool(
@@ -147,10 +151,13 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_inspect,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(presentResourceInventory(
-      await withMcpTimeout(council.inspectResources()),
-      input.detail,
-    )),
+    async (input) => {
+      const council = await councilProvider();
+      return response(presentResourceInventory(
+        await withMcpTimeout(council.inspectResources()),
+        input.detail,
+      ));
+    },
   );
   server.registerTool(
     "expert_build",
@@ -161,6 +168,7 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
+      const council = await councilProvider();
       const inventory = await withMcpTimeout(council.inspectResources());
       const assessment = resolveModelAssessment(
         inventory.models,
@@ -204,6 +212,7 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
     async (input) => {
+      const council = await councilProvider();
       if (input.assignments && (input.role || input.task)) {
         throw new Error("expert_delegate accepts either role/task or assignments, not both");
       }
@@ -257,11 +266,14 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_wait,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await council.waitForResults({
-      executionIds: input.executionIds,
-      ...(input.mode ? { mode: input.mode } : {}),
-      timeoutMs: input.timeoutMs,
-    })),
+    async (input) => {
+      const council = await councilProvider();
+      return response(await council.waitForResults({
+        executionIds: input.executionIds,
+        ...(input.mode ? { mode: input.mode } : {}),
+        timeoutMs: input.timeoutMs,
+      }));
+    },
   );
   server.registerTool(
     "expert_result",
@@ -271,7 +283,10 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_result,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await withMcpTimeout(council.getResult(input.executionId))),
+    async (input) => {
+      const council = await councilProvider();
+      return response(await withMcpTimeout(council.getResult(input.executionId)));
+    },
   );
   server.registerTool(
     "expert_feedback",
@@ -281,7 +296,10 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_feedback,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await withMcpTimeout(council.recordFeedback(input))),
+    async (input) => {
+      const council = await councilProvider();
+      return response(await withMcpTimeout(council.recordFeedback(input)));
+    },
   );
   server.registerTool(
     "expert_cleanup",
@@ -291,7 +309,10 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_cleanup,
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
-    async (input) => response(await withMcpTimeout(council.cleanup(input.executionId))),
+    async (input) => {
+      const council = await councilProvider();
+      return response(await withMcpTimeout(council.cleanup(input.executionId)));
+    },
   );
   server.registerTool(
     "expert_escalate",
@@ -301,16 +322,19 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: MCP_INPUT_SCHEMAS.expert_escalate,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => response(await withMcpTimeout(council.escalate({
-      role: input.role as ExpertRole,
-      task: input.task,
-      currentModel: input.currentModel,
-      previousFailures: input.previousFailures.map((failure) => ({
-        model: failure.model,
-        type: failure.type as FailureType,
-        summary: failure.summary,
-      })),
-    }))),
+    async (input) => {
+      const council = await councilProvider();
+      return response(await withMcpTimeout(council.escalate({
+        role: input.role as ExpertRole,
+        task: input.task,
+        currentModel: input.currentModel,
+        previousFailures: input.previousFailures.map((failure) => ({
+          model: failure.model,
+          type: failure.type as FailureType,
+          summary: failure.summary,
+        })),
+      })));
+    },
   );
   server.registerTool(
     "expert_status",
@@ -320,11 +344,81 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async () => response(await withMcpTimeout(council.getStatus())),
+    async () => {
+      const council = await councilProvider();
+      return response(await withMcpTimeout(council.getStatus()));
+    },
   );
   return server;
 }
 
+export function createMcpServer(council: ExpertCouncil): McpServer {
+  return createMcpServerWithProvider(async () => council);
+}
+
 export async function createDefaultMcpServer(options: CreateCouncilOptions = {}): Promise<McpServer> {
   return createMcpServer(await createExpertCouncil(options));
+}
+
+function fileWorkspaceRoots(roots: Array<{ uri: string }>): string[] {
+  const paths: string[] = [];
+  for (const root of roots) {
+    let url: URL;
+    try {
+      url = new URL(root.uri);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== "file:") continue;
+    const workspace = fileURLToPath(url);
+    if (!paths.includes(workspace)) paths.push(workspace);
+  }
+  return paths;
+}
+
+export function createClientRootMcpServer(
+  options: CreateCouncilOptions = {},
+  councilFactory: (options: CreateCouncilOptions) => Promise<ExpertCouncil> = createExpertCouncil,
+  fallbackWorkspaceRoots?: WorkspaceRootProvider,
+): McpServer {
+  const configuredWorkspace = options.cwd;
+  const councilCache = new Map<string, Promise<ExpertCouncil>>();
+  let server: McpServer;
+
+  const councilProvider: CouncilProvider = async () => {
+    let workspaceRoots: string[];
+    if (configuredWorkspace) {
+      workspaceRoots = [configuredWorkspace];
+    } else {
+      if (server.server.getClientCapabilities()?.roots) {
+        workspaceRoots = fileWorkspaceRoots((await withMcpTimeout(server.server.listRoots(), 10_000)).roots);
+      } else {
+        workspaceRoots = [];
+      }
+      if (!workspaceRoots.length && fallbackWorkspaceRoots) {
+        workspaceRoots = await withMcpTimeout(fallbackWorkspaceRoots(), 10_000);
+      }
+      if (!workspaceRoots.length) {
+        throw new Error(
+          "No trusted local workspace was supplied by MCP roots or the Codex workspace hook. Trust the bundled hook and retry in a local project, or configure EXPERT_COUNCIL_WORKSPACE explicitly. Expert Council will not use its plugin installation directory.",
+        );
+      }
+    }
+
+    const cacheKey = JSON.stringify(workspaceRoots);
+    let council = councilCache.get(cacheKey);
+    if (!council) {
+      council = councilFactory({
+        ...options,
+        cwd: workspaceRoots[0],
+        trustedWorkspaceRoots: workspaceRoots,
+      });
+      councilCache.set(cacheKey, council);
+      void council.catch(() => councilCache.delete(cacheKey));
+    }
+    return council;
+  };
+
+  server = createMcpServerWithProvider(councilProvider);
+  return server;
 }
