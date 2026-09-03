@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/pi-runtime",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Pi-backed model discovery and least-privilege expert execution for Expert Council",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,7 +19,7 @@
   "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
   "publishConfig": { "access": "public" },
   "dependencies": {
-    "@expert-council/core": "0.3.0"
+    "@expert-council/core": "0.4.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84.0",

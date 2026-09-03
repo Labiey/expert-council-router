@@ -141,7 +141,7 @@ type CouncilProvider = () => Promise<ExpertCouncil>;
 export type WorkspaceRootProvider = () => Promise<string[]>;
 
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
-  const server = new McpServer({ name: "expert-council", version: "0.3.0" });
+  const server = new McpServer({ name: "expert-council", version: "0.4.0" });
 
   server.registerTool(
     "expert_inspect",

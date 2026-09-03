@@ -2,7 +2,7 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
-## Unreleased
+## 0.4.0 - 2026-09-03
 
 ### Added
 
