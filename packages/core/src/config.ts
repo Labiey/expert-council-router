@@ -46,12 +46,27 @@ export const modelProfileSchema = z.object({
   billingProfile: z.string().min(1).optional(),
   preferredReasoningByRole: z.record(expertRoleSchema, z.string().min(1).nullable()).optional(),
   incompatibleRoles: z.array(expertRoleSchema).optional(),
+  overrideUnavailableMarker: z.boolean().optional(),
 });
 
 const auditedCapabilityProfileSchema = z.object(capabilityFields).strict().refine(
   (profile) => Object.values(profile).some((value) => typeof value === "number"),
   { message: "must contain at least one numeric capability score" },
 );
+
+export const modelAvailabilityObservationSchema = z.object({
+  callable: z.literal(false),
+  observedAt: z.string().datetime({ offset: true }),
+  reason: z.string().min(1).max(500),
+  source: z.literal("runtime-failure"),
+});
+
+const modelAvailabilityRecordSchema = z.record(
+  z.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/),
+  modelAvailabilityObservationSchema,
+).refine((entries) => Object.keys(entries).length <= 64, {
+  message: "must contain at most 64 availability observations",
+});
 
 export const modelAssessmentSnapshotSchema = z.object({
   asOf: z.string().datetime({ offset: true }).describe(
@@ -73,6 +88,7 @@ export const modelAssessmentSnapshotSchema = z.object({
     message: "must contain at most 32 provider billing assessments",
   }).optional(),
   summary: z.string().min(1).max(2_000).optional(),
+  modelAvailability: modelAvailabilityRecordSchema.optional(),
 }).strict();
 
 /** JSON Schema form used by hosts that cannot consume the Core Zod schema. */
@@ -238,6 +254,7 @@ export function mergeModelProfiles(...profiles: Array<ModelProfile | undefined>)
     if (profile.disabled !== undefined) merged.disabled = profile.disabled;
     if (profile.billingProfile !== undefined) merged.billingProfile = profile.billingProfile;
     if (profile.incompatibleRoles !== undefined) merged.incompatibleRoles = [...profile.incompatibleRoles];
+    if (profile.overrideUnavailableMarker !== undefined) merged.overrideUnavailableMarker = profile.overrideUnavailableMarker;
     if (profile.preferredReasoningByRole) {
       const reasoning = { ...merged.preferredReasoningByRole };
       for (const [role, value] of Object.entries(profile.preferredReasoningByRole)) {

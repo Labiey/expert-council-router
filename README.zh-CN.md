@@ -112,6 +112,8 @@ node packages/cli/dist/bin.js delegate architecture-oracle "分析并发调用�
 
 运行时会依次尝试解析本地兼容 Pi SDK、`PI_CODING_AGENT_MODULE` 指定目录，以及全局 npm Pi 安装。若全部失败，会返回可操作的诊断信息，而不是伪造模型列表。
 
+Pi 在每个会话内只构建一次这份清单，且提供商目录可能保留失效的模型名称，因此 `listAvailableModels()` 可能包含一个上游已无法服务的模型。在真实调用失败之前，路由会把它视为可调用；这正是带失效模型证据的失败会在持久化模型评估中标记该模型不可用的原因（见上文路由一节）。标记会在 24 小时后过期，恢复的模型会自动重新被尝试。
+
 ## 配置
 
 通过 `EXPERT_COUNCIL_CONFIG` 环境变量，或 CLI 的 `--config PATH` 参数指定配置文件。可以从 [`config/examples/balanced.example.json`](config/examples/balanced.example.json) 开始。
@@ -239,7 +241,9 @@ Pi Package 把选择记录在当前 Pi Session 的隐藏扩展状态中；本对
   -> 返回选择、备选项和理由
 ```
 
-硬约束会排除不可用或已禁用模型、不兼容角色、工具可靠性不足、上下文不足、运行时不支持写入，以及日常任务中的 `escalation-only` 资源。
+硬约束会排除不可用或已禁用模型、不兼容角色、工具可靠性不足、上下文不足、运行时不支持写入、日常任务中的 `escalation-only` 资源，以及带有活跃运行时可用性标记的模型。
+
+Pi 会在会话内缓存模型清单，提供商目录也可能保留失效的模型名称，否则 Council 可能围绕一个上游已无法服务的模型组建。当一次委派尝试以 `provider_error` 失败且带失效模型证据（例如 `model_not_found`、未知或已停产的模型、以及运行时自身的预检可用性检查）时，服务会通过一次原子 read-modify-write 把 `modelAvailability` 标记写入持久化的共享模型评估（`EXPERT_COUNCIL_DATA_DIR`，Windows 上即 `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json`），且不会回退其他正在运行的 Pi/Codex 实例写入的更新快照。受影响的 `expert_result` 会在 `executionMetadata.unavailableModels` 和 `risks` 中点名该模型，`expert_inspect` 会警告活跃标记，后续 `expert_build`、委派和升级会以硬约束拒绝被标记的模型。标记是保守的本地证据：24 小时后自动过期，在提交全新审计时保留，并且显式的 `modelOverrides["provider/model"].overrideUnavailableMarker: true` 可以重新启用某个模型。限流或认证错误等瞬态提供商失败永远不会产生标记。若尚无已保存的评估，标记无法持久化，但失败仍会报告给主代理并记入本地遥测。
 
 推理等级是可选且与模型相关的。只有当 Pi 明确暴露选定模型支持某个等级时，角色偏好才会生效；否则 Pi 会保留或钳制到模型支持的默认值。
 

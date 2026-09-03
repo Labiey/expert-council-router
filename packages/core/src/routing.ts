@@ -75,6 +75,7 @@ function effectiveProfile(
   billingProfile?: string;
   incompatibleRoles?: ExpertRole[];
   preferredReasoningByRole?: Partial<Record<ExpertRole, string>>;
+  overrideUnavailableMarker?: boolean;
 } {
   const configured = getModelProfile(config, model.provider, model.id);
   const taskOverride = constraints?.modelOverrides?.[`${model.provider}/${model.id}`];
@@ -97,6 +98,12 @@ function hardConstraintFailures(
   if (!model.available) failures.push("model is not currently callable");
   if (profile.disabled || billing.disabled) failures.push("model or billing profile is disabled");
   if (profile.incompatibleRoles?.includes(role)) failures.push(`model is configured as incompatible with ${role}`);
+  if (!profile.overrideUnavailableMarker) {
+    const availability = constraints?.modelAvailability?.[`${model.provider}/${model.id}`];
+    if (availability) {
+      failures.push(`runtime marked model unavailable at ${availability.observedAt}: ${availability.reason}`);
+    }
+  }
   if (definition.requiresMutation && constraints?.runtimeCapabilities && !constraints.runtimeCapabilities.mutation) {
     failures.push("runtime cannot provide mutation");
   }

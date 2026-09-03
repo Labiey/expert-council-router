@@ -9,6 +9,33 @@ const PROVIDER_FAILURE_MARKERS = [
   "model unavailable",
 ] as const;
 
+/**
+ * Phrases whose provider failures indicate the model itself is gone, as opposed
+ * to transient conditions such as rate limits, quota exhaustion, or auth
+ * problems. Runtime availability markers are only recorded for these.
+ */
+const MODEL_UNAVAILABLE_MARKERS = [
+  "model not found",
+  "model_not_found",
+  "unknown model",
+  "no such model",
+  "invalid model",
+  "unsupported model",
+  "model does not exist",
+  "model is not available",
+  "model unavailable",
+  "model is unavailable",
+  "not currently available",
+  "no longer contains",
+  "decommissioned",
+  "has been discontinued",
+] as const;
+
+export function indicatesModelUnavailable(summary: unknown): boolean {
+  const message = (summary instanceof Error ? summary.message : String(summary ?? "")).toLowerCase();
+  return MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker));
+}
+
 export function inferFailureType(value: unknown, fallback: FailureType = "unknown"): FailureType {
   const message = value instanceof Error ? value.message.toLowerCase() : String(value).toLowerCase();
   if (message.includes("timeout") || message.includes("timed out")) return "timeout";

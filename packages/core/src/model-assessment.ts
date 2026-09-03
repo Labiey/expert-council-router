@@ -1,8 +1,91 @@
 import { modelInventoryFingerprint } from "./council.js";
-import type { AvailableModel, ModelAssessmentSnapshot, ModelAssessmentStatus } from "./types.js";
+import type { AvailableModel, ModelAssessmentSnapshot, ModelAssessmentStatus, ModelAvailabilityObservation } from "./types.js";
 
 export const DEFAULT_MODEL_ASSESSMENT_MAX_AGE_DAYS = 30;
 export const MAX_MODEL_ASSESSMENT_FUTURE_SKEW_MS = 5 * 60_000;
+
+/**
+ * Runtime availability markers are conservative, locally learned evidence. They
+ * steer routing away from a model for one day and expire without user action so
+ * a model that returns after a provider-side removal or outage is retried.
+ */
+export const MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 60_000;
+export const MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
+
+export function activeModelAvailability(
+  assessment: ModelAssessmentSnapshot | undefined,
+  now: Date = new Date(),
+  ttlMs = MODEL_AVAILABILITY_MARKER_TTL_MS,
+): Record<string, ModelAvailabilityObservation> {
+  const entries = assessment?.modelAvailability ?? {};
+  const active: Record<string, ModelAvailabilityObservation> = {};
+  for (const [key, marker] of Object.entries(entries)) {
+    const observedAtMs = Date.parse(marker.observedAt);
+    if (!Number.isFinite(observedAtMs) || now.getTime() - observedAtMs > ttlMs || now.getTime() < observedAtMs) continue;
+    active[key] = marker;
+  }
+  return active;
+}
+
+function availabilityWarning(key: string, marker: ModelAvailabilityObservation): string {
+  return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
+}
+
+export function modelAvailabilityWarnings(
+  assessment: ModelAssessmentSnapshot | undefined,
+  models: AvailableModel[],
+  now: Date = new Date(),
+): string[] {
+  const inventory = new Set(models.map((model) => `${model.provider}/${model.id}`));
+  return Object.entries(activeModelAvailability(assessment, now))
+    .filter(([key]) => inventory.has(key))
+    .map(([key, marker]) => availabilityWarning(key, marker));
+}
+
+/**
+ * Merge a runtime availability marker into a snapshot. Returns the same
+ * reference when the model is already marked, so callers can persist cheaply.
+ */
+export function withModelAvailabilityMarker(
+  assessment: ModelAssessmentSnapshot,
+  modelKey: string,
+  reason: string,
+  observedAt: string = new Date().toISOString(),
+): ModelAssessmentSnapshot {
+  const existing = assessment.modelAvailability?.[modelKey];
+  if (existing && Date.parse(existing.observedAt) >= Date.parse(observedAt)) return assessment;
+  const marker: ModelAvailabilityObservation = {
+    callable: false,
+    observedAt,
+    reason: reason.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_AVAILABILITY_REASON_LENGTH) || "model call failed",
+    source: "runtime-failure",
+  };
+  return {
+    ...assessment,
+    modelAvailability: {
+      ...assessment.modelAvailability,
+      [modelKey]: marker,
+    },
+  };
+}
+
+/**
+ * Carry runtime availability markers from the previously saved snapshot into a
+ * freshly submitted audit. Markers are runtime evidence, not audit conclusions,
+ * so a new web audit must not silently launder them away.
+ */
+export function preserveModelAvailability(
+  previous: ModelAssessmentSnapshot | undefined,
+  next: ModelAssessmentSnapshot,
+): ModelAssessmentSnapshot {
+  if (!previous?.modelAvailability) return next;
+  const merged = { ...previous.modelAvailability };
+  for (const [key, marker] of Object.entries(next.modelAvailability ?? {})) {
+    const previousMarker = merged[key];
+    if (!previousMarker || Date.parse(marker.observedAt) >= Date.parse(previousMarker.observedAt)) merged[key] = marker;
+  }
+  return { ...next, modelAvailability: merged };
+}
 
 export interface ResolvedModelAssessment {
   assessment?: ModelAssessmentSnapshot;

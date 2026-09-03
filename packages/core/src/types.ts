@@ -123,6 +123,8 @@ export interface ExpertResult {
     workspace?: string;
     isolated?: boolean;
     escalationCount?: number;
+    /** Models whose runtime failure marked them unavailable in the persisted model assessment during this execution. */
+    unavailableModels?: string[];
   };
 }
 
@@ -164,6 +166,8 @@ export interface ModelProfile extends CapabilityProfile {
   billingProfile?: string;
   preferredReasoningByRole?: Partial<Record<ExpertRole, string | null>>;
   incompatibleRoles?: ExpertRole[];
+  /** Explicit operator/host decision to route to a model even while a runtime availability marker is active. */
+  overrideUnavailableMarker?: boolean;
 }
 
 export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension, number>> {
@@ -171,6 +175,15 @@ export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension
   billingProfile?: string;
   preferredReasoningByRole?: Partial<Record<ExpertRole, string>>;
   incompatibleRoles?: ExpertRole[];
+  overrideUnavailableMarker?: boolean;
+}
+
+/** Runtime-observed evidence that a model listed by the host can no longer be called. */
+export interface ModelAvailabilityObservation {
+  callable: false;
+  observedAt: string;
+  reason: string;
+  source: "runtime-failure";
 }
 
 export interface RoleDefinition {
@@ -193,6 +206,8 @@ export interface RoutingConstraints {
   runtimeCapabilities?: RuntimeCapabilities;
   modelOverrides?: Record<string, ModelProfile>;
   billingOverrides?: Record<string, BillingPolicyEntry>;
+  /** Active runtime availability markers; marked models fail the routing hard constraints. */
+  modelAvailability?: Record<string, ModelAvailabilityObservation>;
 }
 
 export interface ModelAssessmentSnapshot {
@@ -202,6 +217,8 @@ export interface ModelAssessmentSnapshot {
   /** Main Agent assessment of the actual access method; omit providers that cannot be verified. */
   billing?: Record<string, BillingPolicyEntry>;
   summary?: string;
+  /** Runtime-learned callability markers recorded after the audit; conservative local evidence with a bounded lifetime. */
+  modelAvailability?: Record<string, ModelAvailabilityObservation>;
 }
 
 export interface ModelAssessmentStatus {
@@ -423,6 +440,14 @@ export interface CouncilStateSnapshot {
 
 export interface CouncilStatePersistence {
   save(snapshot: CouncilStateSnapshot, options?: { replaceModelAssessment?: boolean }): Promise<void>;
+  /**
+   * Durable read-modify-write against the latest shared model assessment. Unlike
+   * `save`, this re-reads the stored snapshot before mutating so concurrent
+   * Pi/Codex service instances never overwrite each other's newer assessment.
+   */
+  updateModelAssessment?(update: (
+    current: ModelAssessmentSnapshot | undefined,
+  ) => ModelAssessmentSnapshot | undefined): Promise<void>;
 }
 
 export interface CouncilStateOptions {

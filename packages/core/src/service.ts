@@ -7,8 +7,14 @@ import {
   parseModelAssessmentSnapshot,
 } from "./config.js";
 import { decideEscalation } from "./escalation.js";
-import { failureTypeForResult } from "./failures.js";
-import { evaluateModelAssessment } from "./model-assessment.js";
+import { failureTypeForResult, indicatesModelUnavailable } from "./failures.js";
+import {
+  activeModelAvailability,
+  evaluateModelAssessment,
+  modelAvailabilityWarnings,
+  preserveModelAvailability,
+  withModelAvailabilityMarker,
+} from "./model-assessment.js";
 import { listRoles } from "./roles.js";
 import { rankModels } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
@@ -91,6 +97,11 @@ function constraintsWithAssessment(
     ...(
       Object.keys(runtimeBilling).length || assessment?.billing || constraints?.billingOverrides
         ? { billingOverrides: { ...runtimeBilling, ...assessment?.billing, ...constraints?.billingOverrides } }
+        : {}
+    ),
+    ...(
+      Object.keys(activeModelAvailability(assessment)).length || constraints?.modelAvailability
+        ? { modelAvailability: { ...activeModelAvailability(assessment), ...constraints?.modelAvailability } }
         : {}
     ),
   };
@@ -225,6 +236,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       warnings: [
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
+        ...modelAvailabilityWarnings(this.modelAssessment, models),
         ...providers
           .filter((provider) => (billing[provider]?.billingType ?? "unknown") === "unknown")
           .map((provider) => `Provider ${provider} billing is unknown: ${billingSources[provider]?.reason ?? "no reliable evidence"}`),
@@ -239,7 +251,12 @@ export class ExpertCouncilService implements ExpertCouncil {
       this.runtime.getCapabilities(),
       this.runtime.listProviderBilling?.() ?? Promise.resolve<Record<string, RuntimeBillingDiscovery>>({}),
     ]);
-    if (request.modelAssessment) this.modelAssessment = parseModelAssessmentSnapshot(request.modelAssessment);
+    if (request.modelAssessment) {
+      const submitted = parseModelAssessmentSnapshot(request.modelAssessment);
+      this.modelAssessment = this.modelAssessment
+        ? preserveModelAvailability(this.modelAssessment, submitted)
+        : submitted;
+    }
     const runtimeBillingPolicies = Object.fromEntries(
       Object.entries(runtimeBilling).map(([provider, discovery]) => [provider, discovery.policy]),
     );
@@ -354,6 +371,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
 
     const failures: EscalationRequest["previousFailures"] = [];
+    const unavailableMarked: string[] = [];
     let current = ranked.candidates[0]!;
     let retriesForCurrent = 0;
     let escalations = 0;
@@ -429,6 +447,14 @@ export class ExpertCouncilService implements ExpertCouncil {
       if (lastResult.status === "success") break;
       const failure = failureTypeForResult(lastResult);
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
+      if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
+        try {
+          await this.markModelUnavailable(current.model, lastResult.summary);
+          unavailableMarked.push(current.model);
+        } catch {
+          // Marker persistence is best-effort; escalation and telemetry still record the failure.
+        }
+      }
       const decision = decideEscalation(
         { role: request.role, task: request.task, currentModel: current.model, previousFailures: failures },
         ranked.candidates,
@@ -464,6 +490,13 @@ export class ExpertCouncilService implements ExpertCouncil {
       ...(Object.keys(cumulativeUsage).length ? { usage: cumulativeUsage } : {}),
     };
     if (planWarnings.length) result.risks = [...planWarnings, ...(result.risks ?? [])].slice(0, 20);
+    if (unavailableMarked.length) {
+      result.executionMetadata = { ...result.executionMetadata, unavailableModels: [...unavailableMarked] };
+      const notes = unavailableMarked.map((model) =>
+        `Model ${model} failed as unavailable and was marked in the persisted model assessment; routing avoids it while the marker is active.`,
+      );
+      result.risks = [...notes, ...(result.risks ?? [])].slice(0, 20);
+    }
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);
     await this.telemetry.record({
@@ -484,6 +517,20 @@ export class ExpertCouncilService implements ExpertCouncil {
       ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
     });
     return result;
+  }
+
+  private async markModelUnavailable(modelKey: string, reason: string): Promise<void> {
+    const observedAt = new Date().toISOString();
+    if (this.modelAssessment) {
+      this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt);
+    }
+    const update = this.stateOptions.persistence?.updateModelAssessment;
+    if (update) {
+      // Targeted durable merge against the latest shared snapshot so concurrent
+      // Pi/Codex service instances never overwrite each other's newer assessment.
+      await update((current) => (current ? withModelAvailabilityMarker(current, modelKey, reason, observedAt) : undefined));
+    }
+    void this.persistState().catch(() => undefined);
   }
 
   async getResult(executionId: string): Promise<ExpertResultLookup> {

@@ -9,7 +9,7 @@ export class JsonModelAssessmentStore {
 
   constructor(private readonly filePath: string) {}
 
-  async load(): Promise<ModelAssessmentSnapshot | undefined> {
+  private async loadUnqueued(): Promise<ModelAssessmentSnapshot | undefined> {
     const filePath = await ensurePrivateStoragePath(this.filePath);
     try {
       return parseModelAssessmentSnapshot(JSON.parse(await readFile(filePath, "utf8")) as unknown);
@@ -19,19 +19,43 @@ export class JsonModelAssessmentStore {
     }
   }
 
+  async load(): Promise<ModelAssessmentSnapshot | undefined> {
+    return this.loadUnqueued();
+  }
+
+  private async saveUnqueued(snapshot: ModelAssessmentSnapshot): Promise<void> {
+    const filePath = await ensurePrivateStoragePath(this.filePath);
+    const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+    await writeFile(temporary, `${JSON.stringify(parseModelAssessmentSnapshot(snapshot))}\n`, {
+      encoding: "utf8",
+      mode: 0o600,
+      flag: "wx",
+    });
+    await rename(temporary, filePath);
+    await chmod(filePath, 0o600).catch((error: NodeJS.ErrnoException) => {
+      if (process.platform !== "win32") throw error;
+    });
+  }
+
   async save(snapshot: ModelAssessmentSnapshot): Promise<void> {
+    const task = this.writeQueue.catch(() => undefined).then(() => this.saveUnqueued(snapshot));
+    this.writeQueue = task;
+    return task;
+  }
+
+  /**
+   * Serialize a fresh read-modify-write against the stored snapshot. Unlike
+   * `save`, the mutator always sees the newest on-disk assessment, so a
+   * targeted runtime update never reverts a newer snapshot written by another
+   * Pi/Codex service instance between this instance's load and save.
+   */
+  async update(
+    mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+  ): Promise<void> {
     const task = this.writeQueue.catch(() => undefined).then(async () => {
-      const filePath = await ensurePrivateStoragePath(this.filePath);
-      const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
-      await writeFile(temporary, `${JSON.stringify(parseModelAssessmentSnapshot(snapshot))}\n`, {
-        encoding: "utf8",
-        mode: 0o600,
-        flag: "wx",
-      });
-      await rename(temporary, filePath);
-      await chmod(filePath, 0o600).catch((error: NodeJS.ErrnoException) => {
-        if (process.platform !== "win32") throw error;
-      });
+      const next = mutate(await this.loadUnqueued());
+      if (!next) return;
+      await this.saveUnqueued(next);
     });
     this.writeQueue = task;
     return task;

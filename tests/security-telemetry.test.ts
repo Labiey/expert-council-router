@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { parseCouncilConfig } from "../packages/core/src/index.js";
+import { parseCouncilConfig, withModelAvailabilityMarker } from "../packages/core/src/index.js";
 import {
   JsonCouncilStateStore,
   JsonlTelemetryStore,
@@ -104,6 +104,37 @@ describe("durable council state", () => {
       };
       await store.save(assessment);
       expect(await new JsonModelAssessmentStore(file).load()).toEqual(assessment);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("applies targeted availability updates against the latest stored snapshot", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "expert-council-assessment-update-"));
+    const file = path.join(directory, "model-assessment.json");
+    try {
+      const store = new JsonModelAssessmentStore(file);
+      // No stored snapshot yet: a targeted update is a no-op instead of manufacturing one.
+      await store.update((current) => (current
+        ? withModelAvailabilityMarker(current, "p/model", "model_not_found")
+        : undefined));
+      await expect(store.load()).resolves.toBeUndefined();
+
+      const assessment = {
+        asOf: "2026-09-03T00:00:00.000Z",
+        sources: ["https://livebench.ai/"],
+        models: { "p/model": { coding: 8, toolReliability: 7 } },
+      };
+      await store.save(assessment);
+      await store.update((current) => current
+        ? withModelAvailabilityMarker(current, "p/model", "provider returned model_not_found", "2026-09-03T01:00:00.000Z")
+        : undefined);
+      const loaded = await new JsonModelAssessmentStore(file).load();
+      expect(loaded?.modelAvailability?.["p/model"]).toMatchObject({
+        callable: false,
+        source: "runtime-failure",
+      });
+      expect(loaded?.models).toEqual(assessment.models);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

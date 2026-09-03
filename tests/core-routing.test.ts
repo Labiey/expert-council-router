@@ -1,17 +1,22 @@
 import { describe, expect, it } from "vitest";
 import {
+  activeModelAvailability,
   billingCostScore,
   buildCouncilPlan,
   classifyTask,
   ConfigValidationError,
   DEFAULT_CAPABILITY_PROFILE,
   getRole,
+  indicatesModelUnavailable,
   mergeModelProfiles,
   normalizePiModel,
   parseCouncilConfig,
+  parseModelAssessmentSnapshot,
+  preserveModelAvailability,
   publishedApiCostScore,
   rankModels,
   rolesForTask,
+  withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
 import { capabilities, model } from "./helpers.js";
 
@@ -300,5 +305,103 @@ describe("configuration", () => {
     } catch (error) {
       expect((error as Error).message).toContain("routing.maxExperts");
     }
+  });
+});
+
+describe("runtime availability markers", () => {
+  const now = new Date("2026-09-03T12:00:00.000Z");
+  const models = [model("p", "dead"), model("p", "alive")];
+  const marker = {
+    callable: false as const,
+    observedAt: "2026-09-03T10:00:00.000Z",
+    reason: "provider returned model_not_found",
+    source: "runtime-failure" as const,
+  };
+
+  it("classifies dead-model provider failures without misreading transient outages", () => {
+    expect(indicatesModelUnavailable("Selected model p/dead is not currently available.")).toBe(true);
+    expect(indicatesModelUnavailable("Provider API returned model_not_found for p/dead.")).toBe(true);
+    expect(indicatesModelUnavailable("Pi model registry no longer contains p/dead.")).toBe(true);
+    expect(indicatesModelUnavailable("Upstream reported the model has been discontinued.")).toBe(true);
+    expect(indicatesModelUnavailable("Provider rate limit reached")).toBe(false);
+    expect(indicatesModelUnavailable("Invalid API key supplied")).toBe(false);
+    expect(indicatesModelUnavailable("src/app.ts does not exist")).toBe(false);
+    expect(indicatesModelUnavailable(undefined)).toBe(false);
+  });
+
+  it("rejects marked models in role routing until explicitly overridden", () => {
+    const constraints = { modelAvailability: { "p/dead": marker } };
+    const ranked = rankModels({
+      models,
+      role: "implementation-worker",
+      config: parseCouncilConfig({}),
+      constraints,
+    });
+    expect(ranked.candidates.map((candidate) => candidate.model)).toEqual(["p/alive"]);
+    expect(ranked.rejected.find((candidate) => candidate.model === "p/dead")?.rejected?.join(" "))
+      .toContain("runtime marked model unavailable");
+
+    const overridden = rankModels({
+      models,
+      role: "implementation-worker",
+      config: parseCouncilConfig({}),
+      constraints: {
+        ...constraints,
+        modelOverrides: { "p/dead": { overrideUnavailableMarker: true } },
+      },
+    });
+    expect(overridden.candidates.map((candidate) => candidate.model)).toContain("p/dead");
+  });
+
+  it("expires markers after the conservative TTL and ignores future-dated entries", () => {
+    const assessment = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/dead": { coding: 7 }, "p/alive": { coding: 7 } },
+      modelAvailability: {
+        "p/dead": { ...marker },
+        "p/alive": { ...marker, observedAt: "2026-09-03T13:00:00.000Z" },
+      },
+    };
+    expect(Object.keys(activeModelAvailability(assessment, now))).toEqual(["p/dead"]);
+    expect(Object.keys(activeModelAvailability(assessment, new Date("2026-09-04T10:00:01.000Z")))).toEqual(["p/alive"]);
+    expect(Object.keys(activeModelAvailability(assessment, new Date("2026-09-04T13:00:01.000Z")))).toEqual([]);
+  });
+
+  it("merges markers and preserves them across a freshly submitted audit", () => {
+    const saved = {
+      asOf: "2026-09-03T09:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/dead": { coding: 9 }, "p/alive": { coding: 8 } },
+    };
+    const marked = withModelAvailabilityMarker(saved, "p/dead", "model_not_found", "2026-09-03T11:00:00.000Z");
+    expect(marked.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, source: "runtime-failure" });
+    expect(withModelAvailabilityMarker(marked, "p/dead", "older", "2026-09-03T10:00:00.000Z")).toBe(marked);
+
+    const submitted = {
+      asOf: "2026-09-03T12:00:00.000Z",
+      sources: ["https://livebench.ai/", "https://lmsys.org/"],
+      models: { "p/dead": { coding: 9 }, "p/alive": { coding: 9 } },
+    };
+    const preserved = preserveModelAvailability(marked, submitted);
+    expect(preserved.asOf).toBe(submitted.asOf);
+    expect(preserved.modelAvailability?.["p/dead"]?.callable).toBe(false);
+    expect(preserveModelAvailability(undefined, submitted)).toEqual(submitted);
+  });
+
+  it("validates modelAvailability through the shared snapshot schema", () => {
+    const valid = parseModelAssessmentSnapshot({
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/dead": { coding: 7 } },
+      modelAvailability: { "p/dead": marker },
+    });
+    expect(valid.modelAvailability?.["p/dead"]).toMatchObject({ callable: false });
+    expect(() => parseModelAssessmentSnapshot({
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/dead": { coding: 7 } },
+      modelAvailability: { "p/dead": { ...marker, callable: true } },
+    })).toThrow(ConfigValidationError);
   });
 });

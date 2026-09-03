@@ -46,4 +46,10 @@ export class SplitCouncilStateStore implements CouncilStatePersistence {
       ...(options.replaceModelAssessment && modelAssessment ? [this.assessment.save(modelAssessment)] : []),
     ]);
   }
+
+  async updateModelAssessment(
+    update: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+  ): Promise<void> {
+    return this.assessment.update(update);
+  }
 }

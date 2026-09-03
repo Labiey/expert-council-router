@@ -110,6 +110,8 @@ Zero configuration uses conservative capability defaults, classifies unknown bil
 
 The runtime first resolves a locally installed compatible Pi SDK, then an explicit `PI_CODING_AGENT_MODULE` directory, then a compatible global npm Pi installation. Failure returns an actionable diagnostic instead of silently falling back to a fake model list.
 
+Pi builds this inventory once per session and provider catalogs can keep stale model names, so `listAvailableModels()` can include a model the upstream can no longer serve. Routing treats such a model as callable until a real attempt fails, which is why failures with dead-model evidence mark the model unavailable in the persisted model assessment (see routing above); the marker expires after 24 hours so a restored model is retried automatically.
+
 ## Configuration
 
 Set `EXPERT_COUNCIL_CONFIG` or pass `--config PATH` to CLI commands. Start with [balanced.example.json](config/examples/balanced.example.json).
@@ -235,7 +237,9 @@ discover callable candidates
   -> return selection, alternatives, and reasons
 ```
 
-Hard constraints reject unavailable or disabled models, incompatible roles, insufficient tool reliability, insufficient context, mutation without runtime support, and `escalation-only` billing for routine routing.
+Hard constraints reject unavailable or disabled models, incompatible roles, insufficient tool reliability, insufficient context, mutation without runtime support, `escalation-only` billing for routine routing, and models carrying an active runtime availability marker.
+
+Pi caches its model inventory per session and provider catalogs can keep stale model names, so a council can otherwise be built around a model the upstream can no longer serve. When a delegated attempt fails as `provider_error` with dead-model evidence (for example `model_not_found`, an unknown or discontinued model, or the runtime's own pre-flight availability check), the service records a `modelAvailability` marker in the persisted shared model assessment (`EXPERT_COUNCIL_DATA_DIR`, e.g. `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json` on Windows) through an atomic read-modify-write that never reverts a newer snapshot from another running Pi/Codex instance. The affected `expert_result` names the model in `executionMetadata.unavailableModels` and its `risks`, `expert_inspect` warns about active markers, and routing hard-rejects marked models in later `expert_build`, delegation, and escalation. Markers are conservative local evidence: they expire after 24 hours, are preserved across fresh submitted audits, and an explicit `modelOverrides["provider/model"].overrideUnavailableMarker: true` re-enables a model. Transient provider failures such as rate limits or auth errors never create markers. When no saved assessment exists yet, the marker cannot be persisted, but the failure is still reported to the Main Agent and recorded in local telemetry.
 
 Reasoning effort is optional and model-specific. A configured role preference is used only when Pi exposes it for the selected model; otherwise Pi keeps or clamps its supported default.
 

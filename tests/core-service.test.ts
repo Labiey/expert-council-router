@@ -9,8 +9,9 @@ import {
   observedAdjustment,
   resolveModelAssessment,
   sanitizeOutcome,
+  withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
-import type { CouncilStateSnapshot } from "../packages/core/src/index.js";
+import type { CouncilStateSnapshot, ModelAssessmentSnapshot } from "../packages/core/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
 const profiles = {
@@ -466,5 +467,141 @@ describe("Skill trust policy", () => {
       security: { trustedSkills: ["planning"] },
     }).delegate({ role: "planner", task: "Plan a bounded change" });
     expect(allowlistedRuntime.requests[0]?.skills).toEqual(["planning"]);
+  });
+});
+
+describe("runtime availability marking", () => {
+  const assessment = {
+    asOf: "2026-09-03T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: {
+      "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+      "p/alive": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+    },
+  };
+  const models = [model("p", "dead"), model("p", "alive")];
+
+  function initialState(modelAssessment: ModelAssessmentSnapshot): CouncilStateSnapshot {
+    return { version: 1, plans: [], executions: [], results: [], modelAssessment };
+  }
+
+  it("marks a dead model in the persisted assessment and tells the Main Agent", async () => {
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "Provider API returned model_not_found for p/dead.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    let latest = assessment;
+    const updates: Array<string | undefined> = [];
+    const persistence = {
+      save: async () => {},
+      updateModelAssessment: async (mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined) => {
+        const next = mutate(latest);
+        updates.push(next?.modelAvailability && "p/dead" in next.modelAvailability ? "p/dead" : undefined);
+        if (next) latest = next;
+      },
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: initialState(assessment),
+      persistence,
+    });
+
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("p/alive");
+    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
+    expect(result.risks?.join(" ")).toContain("marked in the persisted model assessment");
+    expect(updates).toEqual(["p/dead"]);
+    expect(latest.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, source: "runtime-failure" });
+
+    const plan = await service.buildCouncil({ task: "Implement a small bounded feature" });
+    expect(plan.experts.map((expert) => expert.model)).not.toContain("p/dead");
+    const decision = await service.escalate({
+      role: "scout",
+      task: "Inspect a tiny file",
+      currentModel: "p/dead",
+      previousFailures: [{ model: "p/dead", type: "provider_error", summary: "model_not_found" }],
+    });
+    expect(decision.model).toBe("p/alive");
+  });
+
+  it("does not mark transient provider failures such as rate limits", async () => {
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "Provider returned 429 rate limit exceeded.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    let updateCalls = 0;
+    const persistence = {
+      save: async () => {},
+      updateModelAssessment: async () => {
+        updateCalls += 1;
+      },
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: initialState(assessment),
+      persistence,
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.executionMetadata?.unavailableModels).toBeUndefined();
+    expect(updateCalls).toBe(0);
+  });
+
+  it("warns about active markers during inspection and preserves them across a fresh audit", async () => {
+    const marked = withModelAvailabilityMarker(assessment, "p/dead", "model_not_found", "2026-09-03T06:00:00.000Z");
+    const runtime = new MockRuntime(models);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: initialState(marked) });
+
+    const inventory = await service.inspectResources();
+    expect(inventory.warnings.join(" ")).toContain("marked unavailable by a runtime failure");
+
+    await service.buildCouncil({
+      task: "Implement a small bounded feature",
+      modelAssessment: {
+        asOf: "2026-09-03T08:00:00.000Z",
+        sources: ["https://livebench.ai/"],
+        models: {
+          "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+          "p/alive": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+        },
+      },
+    });
+    expect((await service.inspectResources()).modelAssessment?.modelAvailability?.["p/dead"]).toMatchObject({
+      callable: false,
+    });
+  });
+
+  it("still reports unavailable models when no saved assessment exists to mark", async () => {
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "Provider API returned model_not_found for p/dead.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {
+      profiles: { models: {
+        "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+        "p/alive": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+      } },
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
+    expect((await service.inspectResources()).modelAssessment).toBeUndefined();
   });
 });
