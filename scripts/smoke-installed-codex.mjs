@@ -32,6 +32,8 @@ try {
   const sessionId = "installed_codex_smoke";
   const hookProcess = spawn(process.execPath, [path.join(temporaryPlugin, "hooks", "record-workspace.mjs")], {
     cwd: process.cwd(),
+    timeout: 15_000,
+    killSignal: "SIGKILL",
     env: {
       ...process.env,
       PLUGIN_ROOT: temporaryPlugin,

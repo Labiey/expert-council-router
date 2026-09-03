@@ -68,6 +68,19 @@ async function git(cwd: string, args: string[], timeout = 15_000): Promise<strin
   return result.stdout.trim();
 }
 
+/**
+ * Creation time embedded in the generated worktree directory name
+ * (`<safeName>-<epochMs>-<uuid>-<executionId>`). Directory mtime is not a
+ * reliable creation signal on Windows, so retention checks prefer this
+ * explicit epoch and fall back to mtime only for older directories.
+ */
+export function worktreeNameEpochMs(worktree: string): number | undefined {
+  const match = /-(\d{13})-[0-9a-f]{8}-/i.exec(path.basename(worktree));
+  if (!match) return undefined;
+  const epoch = Number(match[1]);
+  return Number.isSafeInteger(epoch) && epoch > 0 ? epoch : undefined;
+}
+
 export class WorkspaceBoundary {
   constructor(
     private readonly defaultWorkspace: string,
@@ -123,7 +136,8 @@ export class WorkspaceBoundary {
         if (worktree === base || !isWithin(base, worktree)) continue;
         const info = await stat(worktree);
         assertOwnedAndPrivate(info, `Worktree ${worktree}`);
-        if (Date.now() - info.mtimeMs < this.config.worktreeRetentionMs) continue;
+        const creationMs = worktreeNameEpochMs(worktree) ?? info.mtimeMs;
+        if (Date.now() - creationMs < this.config.worktreeRetentionMs) continue;
         await git(resolvedGitRoot, ["worktree", "remove", "--force", worktree], 30_000);
         removed.push(worktree);
       } catch (error) {

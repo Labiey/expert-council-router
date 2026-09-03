@@ -152,9 +152,47 @@ function sessionUsage(session: PiSessionLike): Record<string, number> | undefine
   return found ? total : undefined;
 }
 
+/**
+ * Extract the first syntactically valid JSON object from prose, scanning
+ * balanced braces instead of guessing boundaries from the first and last
+ * curly brace. String literals and escapes are respected so a `}` inside a
+ * string cannot terminate the scan early.
+ */
+function firstBalancedJsonObject(text: string): string | undefined {
+  for (let start = text.indexOf("{"); start !== -1; start = text.indexOf("{", start + 1)) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+        continue;
+      }
+      if (char === '"') inString = true;
+      else if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          const candidate = text.slice(start, index + 1);
+          try {
+            JSON.parse(candidate);
+            return candidate;
+          } catch {
+            break; // Not a valid JSON object; advance to the next opening brace.
+          }
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
 function extractJson(text: string): Record<string, unknown> | undefined {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
-  const candidates = [fenced, text, text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1)].filter(
+  const candidates = [fenced, firstBalancedJsonObject(text), text].filter(
     (value): value is string => Boolean(value?.trim()),
   );
   for (const candidate of candidates) {

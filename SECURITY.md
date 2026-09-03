@@ -12,7 +12,7 @@ Mutation roles retain shell access because they must edit and test; that shell r
 
 ## Trusted startup inputs
 
-Process environment and CLI path flags are administrative inputs, not model-controlled configuration. `PI_CODING_AGENT_MODULE` points to executable Pi SDK code. `EXPERT_COUNCIL_CONFIG`, `EXPERT_COUNCIL_WORKSPACE`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_STATE`, and their CLI equivalents select local files or directories. Do not populate them from repository content, delegated task text, or expert output. The Codex distribution passes its bundled role directory directly to the runtime rather than accepting a role-prompt directory environment override.
+Process environment and CLI path flags are administrative inputs, not model-controlled configuration. `PI_CODING_AGENT_MODULE` points to executable Pi SDK code. `EXPERT_COUNCIL_CONFIG`, `EXPERT_COUNCIL_WORKSPACE`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_STATE`, and their CLI equivalents select local files or directories. Do not populate them from repository content, delegated task text, or expert output. The Codex distribution passes its bundled role directory directly to the runtime rather than accepting a role-prompt directory environment override. Expert Council intentionally performs no signature or integrity verification of operator-supplied module paths: verifying that a locally built or globally installed Pi SDK is trustworthy is part of operator workstation hygiene, and adding an allowlist would break the documented local-development resolution order.
 
 ## Data handling
 

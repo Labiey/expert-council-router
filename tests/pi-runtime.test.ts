@@ -8,6 +8,7 @@ import {
   PiExpertRuntime,
   validatePiSdk,
   type PiSdkLike,
+  worktreeNameEpochMs,
 } from "../packages/pi-runtime/src/index.js";
 
 const roleDirectory = path.resolve("packages/core/src/roles/prompts");
@@ -229,6 +230,53 @@ describe("Pi runtime adapter", () => {
     expect((await runtime.getCapabilities()).limitations).toContain(
       "Pi Skill discovery failed: skill index unreadable",
     );
+  });
+
+  it("extracts the first balanced JSON object from prose instead of the greedy brace span", async () => {
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m" }],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      createAgentSession: async () => ({
+        session: {
+          prompt: async () => {},
+          waitForIdle: async () => {},
+          dispose: () => {},
+          state: {
+            messages: [{
+              role: "assistant",
+              content: [{
+                type: "text",
+                text: 'Plan {broken, not json} then result: {"status":"success","summary":"ok","findings":["brace } inside string"]} done.',
+              }],
+            }],
+          },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const result = await runtime.executeExpert({
+      role: "scout",
+      task: "Inspect files",
+      model: "p/m",
+      tools: ["read"],
+      skills: [],
+      readOnly: true,
+      timeoutMs: 1_000,
+      attempt: 1,
+    });
+    expect(result).toMatchObject({ status: "success", summary: "ok", findings: ["brace } inside string"] });
+  });
+
+  it("derives worktree age from the embedded name epoch, not directory mtime", async () => {
+    const epoch = 1_788_400_000_000;
+    const name = `repo-${epoch}-9a1b2c3d-exec_abc123_x9`;
+    expect(worktreeNameEpochMs(path.join("base", name))).toBe(epoch);
+    expect(worktreeNameEpochMs("legacy-worktree-without-epoch")).toBeUndefined();
+    expect(worktreeNameEpochMs(`repo-notanepoch-9a1b2c3d-exec`)).toBeUndefined();
   });
 
   it("classifies malformed structured output as a reasoning failure", async () => {
