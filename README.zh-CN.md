@@ -4,7 +4,7 @@
 
 Expert Council 是一个面向 Pi 与 Codex 等 MCP 宿主的本地、多模型、成本感知专家编排系统。它会发现 Pi 当前注册的 LLM API 与 Coding Plan 中连接的模型，将运行时元数据与用户定义的计费策略、能力画像和本地可靠性数据结合，动态组建一个精简的语义专家团队，并通过 Pi 执行有明确边界的任务，最后向主代理返回紧凑的结构化结果。
 
-> ⚠️ **Codex 插件暂未正式发布**：Codex 插件尚未完成功能测试，本版文档暂时移除其安装与使用说明，预计随下一版本正式发布。当前请通过原生 Pi Package、CLI 或通用 MCP Server 使用 Expert Council。
+> ⚠️ **Codex 插件暂未正式发布**：Codex 插件尚未完成功能测试，预计随下一版本正式发布。当前请通过原生 Pi Package、CLI 或通用 MCP Server 使用 Expert Council。
 
 主要优势：
 
@@ -15,11 +15,12 @@ Expert Council 是一个面向 Pi 与 Codex 等 MCP 宿主的本地、多模型�
 | 更安全 | 为不同专家分配不同的只读/可写权限，可写专家在 Git worktree 写入后经主代理审查后并入主分支 |
 | 上下文节省 | 主代理不再需要包含过多工具调用产生的冗长上下文，只接收专家返回的摘要化处理结果 |
 
+Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻画当前可用的模型能力画像； 
 在实践中发现，理论上最强的模型不一定是最合适的执行者。一个工具调用稳定、Shell 行为可靠、边际成本较低的模型，可能比更强但执行不稳定的模型拥有更高的实际任务价值。推荐配置执行能力强、成本较低的模型作为主代理，当遇到复杂问题时 Expert Council 可派遣强思考能力模型进行审查或 Plan。
 
 ## 当前状态
 
-V1 已包含：
+当前版本（0.4.0）已包含：
 
 - 与宿主无关的 Core：配置校验、模型归一化、计费策略、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
@@ -28,6 +29,9 @@ V1 已包含：
 - 支持 JSON 输出的 CLI。
 - 包含 9 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
+- 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
+- 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
+- 跨进程共享模型评估：多实例并行时，可用性标记无需重启即可互相可见。
 - 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件（尚未完成功能测试，暂未正式发布）。
 - 不会消耗模型额度的确定性自动化测试。
 
@@ -77,6 +81,17 @@ Core 不导入 Pi、Codex、MCP transport、文件系统、Shell 或进程 API�
 - npm 11 或兼容版本。
 - 已安装并配置至少一个可用模型的 Pi。
 - 当写入型专家需要 worktree 隔离时，Git 仓库必须至少有一个提交。
+
+### 安装 Pi Package（npm 发布后可用）
+
+<!-- 占位：@expert-council/pi-package 发布到 npm 后，在此补充完整的安装与升级说明。 -->
+
+```bash
+pi install npm:@expert-council/pi-package
+pi update npm:@expert-council/pi-package
+```
+
+当前版本尚未发布到 npm，请先从源码构建并本地安装（见下文“原生 Pi Package”）：
 
 ```bash
 npm install
@@ -313,7 +328,7 @@ missing_context permission_error unknown
 
 默认用户数据根目录为：Windows `%LOCALAPPDATA%\ExpertCouncil`，Linux `$XDG_STATE_HOME/expert-council` 或 `~/.local/state/expert-council`，macOS `~/Library/Application Support/ExpertCouncil`。共享的 `telemetry.jsonl` 保存不透明执行结果，使实际可靠性能够跨对话和工作区复用；同一 execution 的反馈会覆盖早期样本，不会重复计数。共享的 `model-assessment.json` 保存最新的显式能力与计费评分，以及运行时学习到的模型可用性标记。可用 `EXPERT_COUNCIL_DATA_DIR`、`EXPERT_COUNCIL_TELEMETRY`、`EXPERT_COUNCIL_MODEL_ASSESSMENT` 和 `EXPERT_COUNCIL_STATE` 覆盖位置。
 
-它不会记录 Prompt、源码内容、凭据、API Key、Secret 或思维过程。聚合指标包括按角色成功率、首轮成功率、工具错误率、重试率、验证通过率和平均尝试次数。V1 没有远程分析端点。
+它不会记录 Prompt、源码内容、凭据、API Key、Secret 或思维过程。聚合指标包括按角色成功率、首轮成功率、工具错误率、重试率、验证通过率和平均尝试次数。Expert Council 没有远程分析端点。
 
 计划、执行状态和已完成结构化结果仍按工作区隔离，保存在 `workspaces/<工作区哈希>/state.json`。进程重启后仍可查询；重启时仍在运行的任务会被关闭为明确的中断失败。旧版项目内 `.expert-council` 和 `%USERPROFILE%\.expert-council` 目录不会被自动删除。
 
@@ -411,16 +426,6 @@ pi --verbose
 
 `pi list` 应显示配置中的 source 及解析后的绝对 Package 目录。新启动的 verbose Pi 会话应显示 `dist/extension.js`、`expert-council` Skill，以及不含 `expert_wait` 的 8 个语义工具。已经运行的 Pi 进程不会热加载重新构建或已移除的 Package。
 
-### npm 安装（待发布）
-
-<!-- 占位：@expert-council/pi-package 发布到 npm 后，在此补充完整的 npm 安装与升级说明。 -->
-
-```bash
-# npm 发布后可用：
-pi install npm:@expert-council/pi-package
-pi update npm:@expert-council/pi-package
-```
-
 或仅在当前运行中临时加载：
 
 ```bash
@@ -486,15 +491,15 @@ npm run smoke:live:pi
 
 ## 已知限制
 
-- Pi API 变化较快。V1 已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
+- Pi API 变化较快。当前版本已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
 - Pi 没有统一的真实计费类型 API。运行时订阅信号和具名 Token Plan 优先；否则非零目录价格按按量计费处理，没有可靠证据的 Provider 保持 `unknown`，直到评估或显式用户配置确认。
-- V1 不会根据模型名称推断主观编码质量，也不会自动下载基准预设。
+- Expert Council 不会根据模型名称推断主观编码质量，也不会自动下载基准预设。
 - Detached worktree 从已提交的 `HEAD` 开始，不会复制主工作区未提交改动。这是刻意的隔离设计；运行时会检测脏源工作区，并在委派前通过运行时限制和 mutation 委员会警告提示该偏差。
 - Worktree 修改只返回给主代理审查，不会自动合并或应用；验收或拒绝后应调用 `expert_cleanup`，否则将在保留期结束后自动清理。
 - 非 Git 工作区的写入需要显式原地修改授权。
 - 正在进行的模型调用不会在 Server 重启后续跑；持久化状态会把它关闭为明确的中断失败，同时保留计划和已完成结果。
 - Codex 自身的沙箱不会自动包含外部 Pi Runtime，因此 Expert Council 使用单独的允许根目录和 worktree 边界。
-- V1 不包含任意第三方包自动安装、递归专家树、图形界面、远程控制平面或远程遥测。
+- Expert Council 不包含任意第三方包自动安装、递归专家树、图形界面、远程控制平面或远程遥测。
 
 ## 许可证
 

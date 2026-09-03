@@ -19,7 +19,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-V1 includes:
+The current release (0.4.0) includes:
 
 - A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -28,6 +28,9 @@ V1 includes:
 - A JSON-capable CLI.
 - An MCP Server with nine asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
+- Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
+- Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
+- Cross-process shared model assessment: with multiple instances running in parallel, availability markers become visible to each other without a restart.
 - A Codex plugin with the shared Skill and a bundled stdio MCP Server (functional testing incomplete; not yet officially released).
 - Deterministic automated tests that never consume model quota.
 
@@ -77,6 +80,17 @@ Requirements:
 - npm 11 or a compatible version.
 - Pi installed and configured with at least one usable model.
 - When writable experts need worktree isolation, the Git repository must have at least one commit.
+
+### Install the Pi Package (available after the npm release)
+
+<!-- Placeholder: complete install/upgrade instructions will be added once @expert-council/pi-package is published to npm. -->
+
+```bash
+pi install npm:@expert-council/pi-package
+pi update npm:@expert-council/pi-package
+```
+
+The current version is not yet published to npm; build from source and install locally for now (see "Native Pi Package" below):
 
 ```bash
 npm install
@@ -313,7 +327,7 @@ Read [`SECURITY.md`](SECURITY.md) before enabling.
 
 The default user data root is `%LOCALAPPDATA%\ExpertCouncil` on Windows, `$XDG_STATE_HOME/expert-council` or `~/.local/state/expert-council` on Linux, and `~/Library/Application Support/ExpertCouncil` on macOS. The shared `telemetry.jsonl` stores opaque execution outcomes so real reliability can be reused across conversations and workspaces; feedback for the same execution overwrites earlier samples and never double-counts. The shared `model-assessment.json` stores the latest explicit capability and billing scores plus runtime-learned model availability markers. `EXPERT_COUNCIL_DATA_DIR`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_MODEL_ASSESSMENT`, and `EXPERT_COUNCIL_STATE` override locations.
 
-It never records prompts, source content, credentials, API keys, secrets, or reasoning. Aggregate metrics include per-role success rate, first-pass rate, tool error rate, retry rate, verification pass rate, and average attempts. V1 has no remote analytics endpoint.
+It never records prompts, source content, credentials, API keys, secrets, or reasoning. Aggregate metrics include per-role success rate, first-pass rate, tool error rate, retry rate, verification pass rate, and average attempts. Expert Council has no remote analytics endpoint.
 
 Plans, execution state, and completed structured results remain workspace-scoped in `workspaces/<workspace hash>/state.json`. They survive process restarts; a task still running at restart is closed as an explicit interrupted failure. Legacy in-project `.expert-council` and `%USERPROFILE%\.expert-council` directories are not deleted automatically.
 
@@ -411,16 +425,6 @@ pi --verbose
 
 `pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the eight semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
 
-### npm installation (pending publish)
-
-<!-- Placeholder: complete npm install/upgrade instructions will be added once @expert-council/pi-package is published to npm. -->
-
-```bash
-# Available after the npm release:
-pi install npm:@expert-council/pi-package
-pi update npm:@expert-council/pi-package
-```
-
 Or load it for one run without persisting:
 
 ```bash
@@ -486,15 +490,15 @@ Run `npm run validate` first, inspect every `npm pack --dry-run` file list, then
 
 ## Known limitations
 
-- Pi's API moves quickly. V1 was verified against the local 0.84.4 SDK; the runtime checks required SDK, model-runtime, resource-loader, and session methods and lists any missing contract explicitly on incompatibility.
+- Pi's API moves quickly. The current release was verified against the local 0.84.4 SDK; the runtime checks required SDK, model-runtime, resource-loader, and session methods and lists any missing contract explicitly on incompatibility.
 - Pi has no unified real billing-type API. Runtime subscription signals and named Token Plans take priority; otherwise non-zero catalog prices are treated as metered, and providers without reliable evidence stay `unknown` until an audit or explicit user configuration confirms them.
-- V1 does not infer subjective coding quality from model names, nor does it download benchmark presets automatically.
+- Expert Council does not infer subjective coding quality from model names, nor does it download benchmark presets automatically.
 - Detached worktrees start from the committed `HEAD` and do not copy uncommitted changes from the main workspace. This is deliberate isolation; the runtime detects a dirty source workspace and surfaces the deviation through runtime limitations and mutation-council warnings before delegation.
 - Worktree changes are returned for Main Agent review and are never auto-merged or applied; call `expert_cleanup` after acceptance or rejection, or they will be cleaned up automatically after the retention window.
 - Writes to non-Git workspaces require explicit in-place mutation authorization.
 - In-flight model calls do not resume after a server restart; persisted state closes them as explicit interrupted failures while preserving plans and completed results.
 - Codex's own sandbox does not automatically contain the external Pi runtime, so Expert Council uses separate allowed roots and worktree boundaries.
-- V1 contains no arbitrary third-party package installation, recursive expert trees, graphical interface, remote control plane, or remote telemetry.
+- Expert Council contains no arbitrary third-party package installation, recursive expert trees, graphical interface, remote control plane, or remote telemetry.
 
 ## License
 
