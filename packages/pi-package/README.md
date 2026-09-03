@@ -2,55 +2,64 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Expert Council is a local, cost-aware multi-model orchestration layer for Pi and MCP-capable hosts such as Codex. It discovers models that Pi can actually call, combines runtime metadata with user billing and capability policy, assembles a small semantic expert team, executes bounded experts through Pi, and returns compact structured results.
+Expert Council is a local, multi-model, cost-aware expert orchestration system for Pi and MCP hosts such as Codex. It discovers the models connected through Pi's registered LLM APIs and coding plans, combines runtime metadata with user-defined billing policy, capability profiles, and local reliability data, dynamically assembles a small semantic expert team, executes bounded tasks through Pi, and returns compact structured results to the Main Agent.
 
-The strongest theoretical model is not automatically the best worker. A slightly weaker model with reliable tools, predictable shell behavior, and low marginal cost can have higher expected task value. Expert Council makes that tradeoff deterministic and configurable while leaving ambiguous judgment and final acceptance with the Main Agent.
+> ⚠️ **Codex plugin not yet released**: the Codex plugin has not completed functional testing. Its installation and usage documentation is temporarily withheld from this version and is expected to ship with the next official release. For now, use Expert Council through the native Pi Package, the CLI, or the generic MCP Server.
 
-## Status
+Key advantages:
+
+| Advantage | Description |
+|---|---|
+| Cost savings | Makes flexible use of subscribed plans and LLM APIs, automatically matching the most suitable model to each task's difficulty |
+| Speed | Runs multiple suitable models concurrently, accelerating repository exploration and context compression |
+| Safer | Assigns different read-only/writable permissions per expert; writable experts commit into an isolated Git worktree that the Main Agent reviews before integration |
+| Context savings | The Main Agent no longer carries long tool-call-heavy context; it receives summarized, structured results from experts |
+
+In practice, the theoretically strongest model is not automatically the best executor. A model with stable tool calls, reliable shell behavior, and low marginal cost can deliver more real task value than a stronger but less dependable one. We recommend configuring a cost-effective, execution-strong model as the Main Agent; when a complex problem appears, Expert Council can dispatch strong-reasoning models for review or planning.
+
+## Current status
 
 V1 includes:
 
-- Host-independent Core with configuration validation, model normalization, billing, profile layering, role scoring, task classification, council sizing, retry/escalation, and telemetry aggregation.
-- Pi runtime using Pi's current `ModelRuntime` and `createAgentSession` APIs.
-- Hard per-session tool allowlists and installed-Skill filtering.
-- Detached Git worktree isolation for mutation experts.
-- JSON CLI.
-- Nine-tool asynchronous semantic MCP server with event-driven completion waiting and explicit worktree cleanup.
-- Native Pi Package.
-- Valid Codex plugin with a shared host Skill and bundled stdio MCP server.
-- Deterministic tests that never spend model credits.
-
-The implementation was verified against local Pi `@earendil-works/pi-coding-agent` 0.84.4. The adapter capability-detects the upstream `@mariozechner/pi-coding-agent` package as well. See [Known limitations](#known-limitations) for explicit degradation behavior.
+- A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
+- An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
+- Hard tool allowlists and installed-Skill filtering for every expert session.
+- Isolated Git worktrees for writable experts.
+- A JSON-capable CLI.
+- An MCP Server with nine asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
+- A native Pi Package.
+- A Codex plugin with the shared Skill and a bundled stdio MCP Server (functional testing incomplete; not yet officially released).
+- Deterministic automated tests that never consume model quota.
 
 ## Architecture
 
 ```text
 Codex or Pi Main Agent
-          |
-          | semantic tools / shared Skill
-          v
-  Expert Council Core
-  - inventory normalization
-  - billing and profiles
-  - deterministic routing
-  - roles and council sizing
-  - retry/escalation
-  - telemetry aggregation
-          |
-          v
-      Pi Runtime
-  - callable model discovery
-  - hard tool allowlists
-  - installed Skill filtering
-  - bounded expert sessions
-  - workspace isolation
-       /      |      \
-     CLI   Pi Package  MCP server
-                         |
-                    Codex plugin
+        |
+        | semantic tools / shared Skill
+        v
+ Expert Council Core
+ - resource and model normalization
+ - billing and capability profiles
+ - deterministic routing
+ - roles and team sizing
+ - retry and escalation
+ - telemetry aggregation
+        |
+        v
+     Pi Runtime
+ - callable model discovery
+ - hard tool allowlists
+ - installed-Skill filtering
+ - bounded expert sessions
+ - workspace isolation
+     /     |      \
+   CLI  Pi Package  MCP Server
+                        |
+                   Codex plugin
 ```
 
-Dependency direction is enforced with TypeScript project references:
+TypeScript project references enforce that dependencies flow only in these directions:
 
 ```text
 core <- pi-runtime <- cli
@@ -58,16 +67,16 @@ core <- pi-runtime <- cli
                    <- pi-package
 ```
 
-Core imports no Pi, Codex, MCP transport, filesystem, shell, or process API. The CLI, MCP server, and host packages share the same service and routing code.
+Core does not import Pi, Codex, MCP transport, filesystem, shell, or process APIs. The CLI, MCP Server, and host distributions all use the same service and routing logic.
 
 ## Quick start
 
 Requirements:
 
-- Node.js 22.19 or newer.
-- npm 11 or compatible.
-- A working Pi installation with at least one authenticated model.
-- Git with at least one commit when mutation experts should use worktree isolation.
+- Node.js 22.19 or later.
+- npm 11 or a compatible version.
+- Pi installed and configured with at least one usable model.
+- When writable experts need worktree isolation, the Git repository must have at least one commit.
 
 ```bash
 npm install
@@ -75,60 +84,68 @@ npm run build
 npm test
 ```
 
-Inspect currently callable models without invoking one:
+Discover models without calling any of them:
 
 ```bash
 node packages/cli/dist/bin.js models --json
 node packages/cli/dist/bin.js inspect --json
 ```
 
-Build a council without executing experts:
+Assemble an expert team without executing any expert:
 
 ```bash
 node packages/cli/dist/bin.js build "fix the device hot-swap race condition" --max-experts 4 --json
 ```
 
-Delegate only when you intentionally want a Pi model call:
+Delegate only when you are sure actual Pi models should be called:
 
 ```bash
-node packages/cli/dist/bin.js delegate architecture-oracle "analyze the concurrency path" --workspace /path/to/repo --json
+node packages/cli/dist/bin.js delegate architecture-oracle "analyze the concurrent invocation path" --workspace /path/to/repo --json
 ```
 
-Zero configuration uses conservative capability defaults, classifies unknown billing as `unknown`, and refuses non-isolated mutation. It never guesses that an API is free or that a named model is objectively strong.
+Zero configuration uses conservative capability defaults, marks unverifiable billing types as `unknown`, and refuses non-isolated writes. It never guesses that an API is free and never infers model quality from a model name.
 
 ## Model discovery
 
-`PiExpertRuntime` calls Pi's `ModelRuntime.getAvailable()`, not a hardcoded catalog. A model present in a registry or user profile is not routed unless Pi reports it currently available. The adapter normalizes:
+`PiExpertRuntime` calls Pi's `ModelRuntime.getAvailable()` instead of using a hardcoded catalog. A model that merely exists in a registry or user profile is not routed to; only models Pi reports as currently callable are used.
+
+The runtime normalizes:
 
 - provider and model ID;
 - display name;
-- reasoning support and Pi's supported reasoning-level map;
-- context and output windows;
+- reasoning support and the reasoning-level map exposed by Pi;
+- context and maximum output windows;
 - input modalities;
-- published API cost fields;
+- published API price fields;
 - safe compatibility metadata.
 
-The runtime first resolves a locally installed compatible Pi SDK, then an explicit `PI_CODING_AGENT_MODULE` directory, then a compatible global npm Pi installation. Failure returns an actionable diagnostic instead of silently falling back to a fake model list.
+The runtime resolves a locally installed compatible Pi SDK first, then an explicit `PI_CODING_AGENT_MODULE` directory, then a compatible global npm Pi installation. If all fail, it returns an actionable diagnostic instead of fabricating a model list.
 
-Pi builds this inventory once per session and provider catalogs can keep stale model names, so `listAvailableModels()` can include a model the upstream can no longer serve. Routing treats such a model as callable until a real attempt fails, which is why failures with dead-model evidence mark the model unavailable in the persisted model assessment (see routing above); the marker expires after 24 hours so a restored model is retried automatically.
+Pi builds this inventory once per session, and provider catalogs can keep stale model names, so `listAvailableModels()` may include a model the upstream can no longer serve. Routing treats such a model as callable until a real attempt fails; this is why failures with dead-model evidence mark the model unavailable in the persisted model assessment (see the routing section below). Markers expire after 24 hours, and a recovered model is retried automatically.
 
 ## Configuration
 
-Set `EXPERT_COUNCIL_CONFIG` or pass `--config PATH` to CLI commands. Start with [balanced.example.json](config/examples/balanced.example.json).
+Specify a configuration file through the `EXPERT_COUNCIL_CONFIG` environment variable or the CLI's `--config PATH` flag. Start from [`config/examples/balanced.example.json`](config/examples/balanced.example.json).
 
-Profile precedence is:
+Profile precedence:
 
 ```text
-conservative built-in defaults
-  < optional/user configuration
-  < per-task runtime overrides
+built-in conservative defaults
+  < user configuration or optional presets
+  < current-task runtime overrides
 ```
 
-Objective runtime metadata is merged separately. Local outcome data adjusts a routing score only after three samples and is capped by `routing.localLearningMaxAdjustment`. Explicit user configuration remains authoritative.
+Objective runtime metadata is merged separately. Local outcome data influences routing only after at least three samples accumulate, and the adjustment is bounded by `routing.localLearningMaxAdjustment`. Explicit user configuration always wins.
 
 ### Billing policy
 
-Billing types are `subscription`, `metered`, `quota`, `free`, and `unknown`. Marginal cost and usage preference are separate because published token prices do not describe subscriptions, fixed quotas, local inference, or promotional access. The Pi runtime adapter classifies an explicit runtime subscription or named Token Plan catalog as `subscription`; otherwise, a provider with non-zero Pi catalog prices is `metered`, and a provider without reliable evidence remains `unknown`. Every inference includes its source in `expert_inspect`, and explicit user configuration remains authoritative. Per-model catalog prices still distinguish models inside a metered provider through `routing.apiPriceWeight` (default `0.35`); an all-zero price table is treated as unspecified, not proof that access is free.
+Supported billing types:
+
+```text
+subscription  metered  quota  free  unknown
+```
+
+Marginal cost and usage preference are two independent fields because published token prices cannot express subscription plans, fixed quotas, local inference, or promotional credits. The Pi Runtime adapter classifies runtime-reported subscription access or named Token Plan catalogs as `subscription`; otherwise a provider whose Pi model catalog exposes non-zero prices is `metered`, and providers without reliable evidence stay `unknown`. `expert_inspect` returns the inference source, and explicit user configuration always has the highest priority. Models within the same metered provider are still compared on specific prices through `routing.apiPriceWeight` (default `0.35`); an all-zero price table is treated as "not provided", never guessed to be free.
 
 ```json
 {
@@ -149,43 +166,43 @@ Billing types are `subscription`, `metered`, `quota`, `free`, and `unknown`. Mar
 }
 ```
 
-Examples are in `config/examples/`:
+`config/examples/` provides:
 
-- `balanced.example.json`: conservative zero-config-compatible policy.
-- `subscription-heavy.example.json`: consume subscriptions before scarce quota.
-- `metered-quality.example.json`: distinguish economy and premium metered APIs.
-- `qwen-glm.example.json`: explicitly hypothetical user scores, not benchmark claims.
+- `balanced.example.json`: conservative defaults for zero configuration.
+- `subscription-heavy.example.json`: prioritize subscription capacity, protect scarce quota.
+- `metered-quality.example.json`: separate economical from high-quality metered APIs.
+- `qwen-glm.example.json`: explicitly labeled as a hypothetical user preference, not an objective benchmark.
 
 ### Capability profiles
 
-Models may be scored from 0 to 10 on:
+Models can receive user scores from 0 to 10 on these dimensions:
 
 ```text
 reasoning planning architecture coding debugging review longContext
 toolReliability bashReliability autonomousExecution speed
 ```
 
-Use the exact normalized `provider/model` key returned by `models --json`. Missing or newly discovered models receive conservative defaults. A profile for a missing model produces a warning and never crashes routing.
+Model keys must use the exact `provider/model` returned by `models --json`. Newly discovered models without local profiles receive conservative defaults; stale configuration for unavailable models only produces warnings and never crashes routing.
 
-### Main Agent audits and first-council preference
+### Main Agent capability audit and first-council preference
 
-Users do not need to maintain a priority for every model. Once the Main Agent decides that a task warrants a council, the first council in a new conversation asks once—unless the user already stated a preference—whether to optimize for:
+Users do not need to maintain per-model usage priorities. After the Main Agent decides a task deserves a council, if this is the first council in a new conversation and the user has not expressed a preference, it should ask once:
 
 ```text
-economy  lowest effective marginal cost
-balanced cost, completion time, and success probability
-speed    fastest completion
+price first (economy)
+balance price, time, and success rate (balanced)
+speed first (speed)
 ```
 
-The Pi Package records the choice as hidden extension state in the current Pi Session. Later councils in that conversation reuse it unless the user explicitly changes it. `economy` increases cost weight, `speed` increases the audited speed dimension, and `balanced` keeps normal role weights. The legacy `quality` API value remains compatible but is not offered in the default question.
+The Pi Package records the choice in the current Pi session's hidden extension state; later councils in that conversation reuse it automatically unless the user changes it. `economy` boosts cost weights, `speed` boosts the audited speed dimension, and `balanced` uses normal role weights. The legacy `quality` API value remains compatible but is not offered as a default prompt option.
 
-The Main Agent assesses models instead of asking the user to rank them. `expert_inspect` reports a mandatory assessment gate. When no audit exists, it is older than 30 days, callable models change, or the user explicitly asks to re-audit capabilities, the Main Agent must use an already available network tool to research every callable model listed by the gate before `expert_build` can assemble a council. It submits one complete `modelAssessment` with an ISO timestamp read from the actual host clock, 1–12 consolidated source URLs, normalized 0–10 capability dimensions, and verified provider access/billing classifications. A future-dated timestamp is reported separately and can be corrected without repeating research. When inspection reports the saved assessment as current, the host omits `modelAssessment` from `expert_build`; an incomplete, stale, or future-dated replacement cannot displace a current saved snapshot. The assessment is stored once in the current user's data directory and reused across conversations and workspaces while the callable inventory remains compatible. Ordinary plan/execution state saves preserve that global assessment instead of rewriting it from a stale service instance; only an explicit successful assessment submission replaces it. Explicit user billing configuration remains authoritative; unverifiable access remains `unknown`.
+Model capabilities are audited by the Main Agent rather than hand-ranked by users. `expert_inspect` returns a mandatory assessment gate: if there is no audit yet, the audit is older than 30 days, the callable model set changed, or the user explicitly requests a re-audit, the Main Agent must research every callable model listed by the gate using the host's own web tools; `expert_build` will not assemble a council until then. The Main Agent submits a complete `modelAssessment` whose ISO timestamp must come from the host's real clock, whose sources are consolidated into 1–12 URLs, and which contains 0–10 capability dimensions plus verifiable provider access/billing evidence. Future-dated timestamps are reported separately and can be corrected without repeating the web research. If the gate reports the saved assessment is still `current`, the host should omit `modelAssessment` when calling `expert_build`; incomplete, stale, or future-dated replacement snapshots cannot displace a current one. The assessment is stored once per user data directory and reused across conversations and workspaces as long as the callable model set remains compatible; ordinary plan and execution state saves never overwrite the global assessment from a stale in-memory snapshot, and only an explicitly submitted assessment that passes the gate replaces the stored scores. Explicit user billing configuration always outranks the Main Agent's judgment; unverifiable billing stays `unknown`.
 
-Triangulate rather than trusting one leaderboard: [Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) provides coding, agentic, pricing, throughput, and latency data; [LiveBench](https://livebench.ai/) covers coding and agentic coding; [Arena](https://arena.ai/leaderboard/text) measures human preference; provider documentation confirms versions, context, tools, and access methods. [OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) primarily measure real usage and should be treated only as adoption evidence, not proof of quality. If the host lacks a network tool when the gate requires an audit, it must report that limitation instead of silently routing with unaudited defaults. Expert Council never installs a browser, Skill, plugin, or executable package automatically.
+Cross-check rather than trust a single leaderboard: the [Artificial Analysis Data API](https://artificialanalysis.ai/data-api/docs) provides coding, agentic, price, throughput, and latency data; [LiveBench](https://livebench.ai/) covers coding and agentic coding; [Arena](https://arena.ai/leaderboard/text) reflects human preference; provider documentation verifies versions, context, tools, and access method. [OpenRouter Rankings](https://openrouter.ai/rankings?category=programming) mostly reflect real-world usage and are only an adoption signal, not proof of model quality. When the gate demands an audit and the host has no web tools, the Main Agent must state the limitation and stop instead of silently using unaudited defaults; Expert Council never auto-installs plugins, Skills, or third-party executables.
 
 ### Role weights
 
-Each semantic role has normalized defaults. A Worker emphasizes tool reliability, coding, autonomy, and shell reliability. An Architecture Oracle emphasizes architecture, planning, long context, and review. Override only the fields that reflect your environment:
+Every semantic role has normalized default weights. Implementation Worker emphasizes tool reliability, coding, autonomous execution, and shell reliability; Architecture Oracle emphasizes architecture, planning, long context, and review.
 
 ```json
 {
@@ -201,88 +218,84 @@ Each semantic role has normalized defaults. A Worker emphasizes tool reliability
 }
 ```
 
-Weights are renormalized. `costPolicy: economy` increases the configured cost contribution; `speed` increases speed and reduces cost weight; legacy `quality` reduces cost weight. None removes hard security or compatibility constraints.
+Weights are re-normalized automatically. `costPolicy: economy` boosts the cost factor, `speed` boosts speed and reduces cost, and the legacy `quality` reduces cost; none of them bypass safety or compatibility hard constraints.
 
-## Roles and council sizing
+## Semantic roles and team sizing
 
-Roles are semantic and independent of model names:
+Roles are defined by task semantics and never bound to a model name:
 
-| Role | Default mode | Purpose |
+| Role | Default permissions | Purpose |
 |---|---|---|
-| Planner | read-only | decomposition, dependencies, risks |
-| Scout | read-only | repository exploration and context compression |
-| Architecture Oracle | read-only | difficult cross-file reasoning and second opinion |
-| Implementation Worker | mutation | bounded code changes and focused tests |
-| Debugger | mutation | reproduce, isolate, fix, verify |
-| Reviewer | read-only | prioritized regression and design review |
-| Verifier | read-only | inspect reported tests, diffs, and acceptance checks |
+| Planner | read-only | Task decomposition, dependencies, and risks |
+| Scout | read-only | Repository exploration and context compression |
+| Architecture Oracle | read-only | Hard cross-file reasoning and second opinions |
+| Implementation Worker | writable | Bounded code changes and focused testing |
+| Debugger | writable | Reproduce, isolate, fix, and verify |
+| Reviewer | read-only | Regressions, edge cases, and design review |
+| Verifier | read-only | Check reported tests, diffs, and acceptance criteria |
 
-Tiny tasks use one Worker. Normal tasks use a Worker and Verifier. Complex features use Planner, Worker, Reviewer, and Verifier. Complex debugging uses Scout, Debugger, Oracle, and Verifier. `maxExperts` caps the result, and the Main Agent is never duplicated as a `lead` expert.
+Tiny tasks use one Worker; normal tasks use Worker plus Verifier; complex features use Planner, Worker, Reviewer, and Verifier; complex debugging uses Scout, Debugger, Oracle, and Verifier. `maxExperts` caps team size, and the Main Agent is never duplicated as a redundant `lead` expert.
 
-Task classification and all arithmetic are deterministic. The host can inspect the selected model, alternatives, score, and concise reasons before delegation.
+Task classification and all scoring math are deterministic. Hosts can inspect the selected model, alternatives, scores, and concise reasons before delegating. Council assembly also applies configurable diversity penalties; Reviewers prefer a different provider and inferred model family from earlier members when economical, but role fit and hard constraints still dominate.
 
-Council construction also applies configurable diversity penalties. In particular, a Reviewer economically prefers a different provider and inferred model family from earlier council members, while role fitness and hard constraints remain decisive.
-
-## Routing
-
-The routing pipeline is:
+## Routing pipeline
 
 ```text
-discover callable candidates
+discover currently callable candidate models
   -> apply hard constraints
-  -> merge capability/profile layers
+  -> merge capability and profile layers
   -> score role fit and effective cost
-  -> apply conservative local outcome adjustment
+  -> conservatively apply local outcome adjustments
   -> rank with stable tie-breaking
   -> return selection, alternatives, and reasons
 ```
 
-Hard constraints reject unavailable or disabled models, incompatible roles, insufficient tool reliability, insufficient context, mutation without runtime support, `escalation-only` billing for routine routing, and models carrying an active runtime availability marker.
+Hard constraints reject unavailable or disabled models, incompatible roles, insufficient tool reliability, insufficient context, mutation without runtime support, `escalation-only` resources on routine tasks, and models carrying an active runtime availability marker.
 
-Pi caches its model inventory per session and provider catalogs can keep stale model names, so a council can otherwise be built around a model the upstream can no longer serve. When a delegated attempt fails as `provider_error` with dead-model evidence (for example `model_not_found`, an unknown or discontinued model, or the runtime's own pre-flight availability check), the service records a `modelAvailability` marker in the persisted shared model assessment (`EXPERT_COUNCIL_DATA_DIR`, e.g. `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json` on Windows) through an atomic read-modify-write that never reverts a newer snapshot from another running Pi/Codex instance. The affected `expert_result` names the model in `executionMetadata.unavailableModels` and its `risks`, `expert_inspect` warns about active markers, and routing hard-rejects marked models in later `expert_build`, delegation, and escalation. Markers are conservative local evidence: they expire after 24 hours, are preserved across fresh submitted audits, and an explicit `modelOverrides["provider/model"].overrideUnavailableMarker: true` re-enables a model. Transient provider failures such as rate limits or auth errors never create markers. When no saved assessment exists yet, the marker cannot be persisted, but the failure is still reported to the Main Agent and recorded in local telemetry.
+Pi caches its model inventory per session and provider catalogs can keep stale model names, so a council could otherwise be assembled around a model the upstream can no longer serve. When a delegated attempt fails as `provider_error` with dead-model evidence (for example `model_not_found`, unknown or discontinued models, or the runtime's own availability pre-check), the service records a `modelAvailability` marker into the persisted shared model assessment (`EXPERT_COUNCIL_DATA_DIR`, i.e. `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json` on Windows) through an atomic read-modify-write that never reverts a newer snapshot written by another running Pi/Codex instance. The affected `expert_result` names the model in `executionMetadata.unavailableModels` and `risks`, `expert_inspect` warns about active markers, and later `expert_build`, delegation, and escalation hard-reject marked models. Markers are conservative local evidence: they expire after 24 hours, survive freshly submitted audits, and an explicit `modelOverrides["provider/model"].overrideUnavailableMarker: true` re-enables a model. Transient provider failures such as rate limits or authentication errors never create markers. When no saved assessment exists yet, the marker cannot be persisted, but the failure is still reported to the Main Agent and recorded in local telemetry.
 
-Reasoning effort is optional and model-specific. A configured role preference is used only when Pi exposes it for the selected model; otherwise Pi keeps or clamps its supported default.
+Reasoning levels are optional and model-specific. A configured role preference applies only when Pi exposes it for the selected model; otherwise Pi keeps or clamps to the model's supported default.
 
 ## Skills and least privilege
 
-The canonical platform-neutral host guidance is [SKILL.md](shared/skills/expert-council/SKILL.md). Small host overlays under `shared/skills/expert-council/hosts/` are composed with that base during the build, producing separate Pi and Codex `SKILL.md` artifacts without duplicating the shared workflow. The Pi artifact teaches completion `steer`/`followUp` behavior and never exposes `expert_wait`; the Codex artifact teaches the bounded `expert_wait` workflow. Shared role prompts live under `packages/core/src/roles/prompts/` and are copied as package assets; they are not rewritten per host.
+The canonical platform-neutral host guidance is [`shared/skills/expert-council/SKILL.md`](shared/skills/expert-council/SKILL.md). The build composes it with the small host overlays under `shared/skills/expert-council/hosts/` into separate Pi and Codex `SKILL.md` artifacts without duplicating the shared workflow. The Pi artifact only describes completion `steer`/`followUp` behavior and never exposes `expert_wait`; only the Codex artifact describes the bounded `expert_wait` flow. Shared role prompts live in `packages/core/src/roles/prompts/` and are copied as package assets rather than rewritten per host.
 
-Read-only roles never receive `edit`, `write`, `bash`, or `powershell`, even if a caller tries to include them. Pi sessions use the actual `tools` allowlist, so this is stronger than prompt-only guidance. Shell-backed testing belongs to an isolated mutation role until a dedicated non-mutating command runner is available.
+Read-only roles never receive `edit`, `write`, `bash`, or `powershell`, even if a caller tries to include them. Pi sessions use a real `tools` allowlist, which is stronger than prompt-only guidance. Until a dedicated non-mutating command runner exists, tasks that need shell-driven testing belong to writable roles in isolated worktrees.
 
-Only already-installed, enabled Pi Skills requested by the role are activated. User-scope Skills are trusted; project/temporary Skills are excluded unless their exact name appears in `security.trustedSkills`. Every expert resource loader disables extensions, prompt templates, themes, and project context files, and the runtime refuses Pi SDK versions that cannot enforce these controls. Expert Council never downloads or installs a Skill or executable extension.
+Only installed, enabled Pi Skills required by the role are activated. User-scope Skills are trusted by default; project and temporary Skills are excluded unless their exact name is listed in `security.trustedSkills`. Every expert resource loader disables extensions, prompt templates, themes, and project context files, and Pi SDK versions that cannot enforce these policies are rejected. Expert Council never downloads or installs Skills or executable extensions.
 
-Every expert is instructed to inspect before editing, verify paths, prefer targeted changes, diagnose tool failures before retrying, use finite commands, inspect results, avoid recursive delegation, and return compact JSON rather than private reasoning.
+Expert prompts require: read before editing, verify paths, prefer targeted edits, diagnose failures before changing approach, use finite non-interactive commands, inspect results, never delegate recursively, and return compact JSON instead of private reasoning.
 
 ## Retry and escalation
 
-Failures are normalized as:
+Failure types are normalized to:
 
 ```text
 tool_call_error reasoning_failure test_failure timeout provider_error
 missing_context permission_error unknown
 ```
 
-A first correctable tool, context, or test failure receives at most one changed retry by default. Repeated relevant failures or provider errors move to the next eligible untried model. Attempts and escalations have independent limits. When no valid candidate or budget remains, the unresolved result returns to the Main Agent.
+By default, the first correctable tool, context, or test failure receives at most one retry with a changed approach. Repeated relevant failures or provider errors switch to the next eligible, untried model. Attempt and escalation budgets are separately capped; with no candidates or exhausted budget, an unresolved state returns to the Main Agent.
 
-There is no unbounded loop and no repeated retry of the same approach by policy.
+There are no infinite loops, and the same failed action is never repeated blindly by policy.
 
 ## Structured results and context efficiency
 
-Expert results contain status, role, model, summary, changed files, tests, findings, risks, next action, failure type, approximate Pi usage when exposed, and bounded execution metadata. Explicit structured failure types are preferred; failed tests and provider/tool/context messages are classified deterministically, while malformed non-JSON expert output becomes `reasoning_failure`. Raw source files and private chain-of-thought are neither requested nor stored. Text fields and arrays are bounded before being returned to the host.
+Expert results contain status, role, model, summary, changed files, tests, findings, risks, recommended next action, failure type, the approximate usage Pi exposes, and bounded execution metadata. The system prefers the expert's own structured failure type and deterministically classifies test, provider, tool, and context failures; unparseable non-JSON output is marked `reasoning_failure`. Private reasoning is never requested or stored, and whole source files are never copied back into the Main Agent's context.
 
-## Workspace security
+## Workspace safety
 
-Mutation is not assumed safe merely because Codex itself is sandboxed. The external Pi process has its own boundary:
+The system never assumes that Codex's own sandbox contains the external Pi process. The Pi Runtime uses an independent boundary:
 
-1. Canonicalize the requested workspace.
-2. Require it to be under an allowed root.
-3. Create a detached worktree from the repository's current `HEAD` under a current-user-specific private directory in the OS temporary directory.
-4. Run the Worker there with mutation tools.
+1. Canonicalize the requested workspace path.
+2. Require the path to fall under allowed roots.
+3. Create a detached worktree from the repository's current `HEAD` inside a current-user-private directory under the system temp directory.
+4. Give the Worker write tools inside that worktree.
 5. Return the worktree path and changed-file list.
-6. Leave integration and final acceptance to Codex or the Pi Main Agent.
-7. Call `expert_cleanup` after integrating or rejecting the result. One call removes every worktree created by retries or escalations for that execution ID and reports all removed paths. Unclaimed worktrees are removed after `security.worktreeRetentionMs` (24 hours by default), and Git metadata is pruned.
+6. The Codex or Pi Main Agent inspects, integrates, and finally accepts.
+7. After accepting or rejecting, call `expert_cleanup`. One call removes every worktree created for that execution ID through retries or escalations and returns all removed paths. Unclaimed worktrees are pruned automatically after `security.worktreeRetentionMs` (24 hours by default), and Git metadata is pruned alongside.
 
-For a non-Git workspace, mutation fails safely by default. To opt into bounded in-place changes:
+Non-Git workspaces refuse writes by default. If in-place mutation is truly required, it must be explicitly enabled:
 
 ```json
 {
@@ -294,19 +307,19 @@ For a non-Git workspace, mutation fails safely by default. To opt into bounded i
 }
 ```
 
-See [SECURITY.md](SECURITY.md) before enabling it.
+Read [`SECURITY.md`](SECURITY.md) before enabling.
 
 ## Telemetry and local learning
 
-The default user data root is `%LOCALAPPDATA%\ExpertCouncil` on Windows, `$XDG_STATE_HOME/expert-council` or `~/.local/state/expert-council` on Linux, and `~/Library/Application Support/ExpertCouncil` on macOS. Shared `telemetry.jsonl` records opaque outcomes and makes observed reliability reusable across conversations and workspaces. Call `expert_feedback` after Main Agent verification; updates for the same execution replace earlier samples rather than double-counting them. Shared `model-assessment.json` stores the latest explicit capability/billing scores. `EXPERT_COUNCIL_DATA_DIR`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_MODEL_ASSESSMENT`, and `EXPERT_COUNCIL_STATE` can override these locations.
+The default user data root is `%LOCALAPPDATA%\ExpertCouncil` on Windows, `$XDG_STATE_HOME/expert-council` or `~/.local/state/expert-council` on Linux, and `~/Library/Application Support/ExpertCouncil` on macOS. The shared `telemetry.jsonl` stores opaque execution outcomes so real reliability can be reused across conversations and workspaces; feedback for the same execution overwrites earlier samples and never double-counts. The shared `model-assessment.json` stores the latest explicit capability and billing scores plus runtime-learned model availability markers. `EXPERT_COUNCIL_DATA_DIR`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_MODEL_ASSESSMENT`, and `EXPERT_COUNCIL_STATE` override locations.
 
-It does not record prompts, source content, credentials, secrets, API keys, or chain-of-thought. Aggregates include role success rate, first-pass success, tool-error rate, retry rate, verification pass rate, and average attempts. There is no remote analytics endpoint.
+It never records prompts, source content, credentials, API keys, secrets, or reasoning. Aggregate metrics include per-role success rate, first-pass rate, tool error rate, retry rate, verification pass rate, and average attempts. V1 has no remote analytics endpoint.
 
-Plans, execution states, and completed structured results remain workspace-specific under `workspaces/<workspace-hash>/state.json`. After restart, plans and completed results remain queryable; an execution that was still running is closed as a failed interrupted result rather than being falsely reported as active. Older project-local `.expert-council` and `%USERPROFILE%\.expert-council` directories are not deleted automatically.
+Plans, execution state, and completed structured results remain workspace-scoped in `workspaces/<workspace hash>/state.json`. They survive process restarts; a task still running at restart is closed as an explicit interrupted failure. Legacy in-project `.expert-council` and `%USERPROFILE%\.expert-council` directories are not deleted automatically.
 
 ## CLI
 
-The CLI uses exactly the same Core and Pi runtime:
+The CLI uses exactly the same Core and Pi Runtime as MCP and the Pi Package:
 
 ```text
 expert-council models
@@ -318,11 +331,18 @@ expert-council cleanup <execution-id>
 expert-council status
 ```
 
-Use `--json` for scripting, `--cwd` for workspace, `--config` for policy, `--telemetry` for a non-default telemetry store, `--state` for durable council state, and `--timeout-ms` for delegation.
+Common flags:
 
-## MCP server
+- `--json`: machine-readable output.
+- `--cwd`: project workspace.
+- `--config`: user policy file.
+- `--telemetry`: custom local telemetry path.
+- `--state`: custom path for persisted plans, executions, and results.
+- `--timeout-ms`: expert execution timeout.
 
-The semantic surface is deliberately small:
+## MCP Server
+
+The MCP surface is deliberately limited to nine semantic tools:
 
 - `expert_inspect`
 - `expert_build`
@@ -334,22 +354,22 @@ The semantic surface is deliberately small:
 - `expert_escalate`
 - `expert_status`
 
-`expert_inspect` and `expert_build` return compact host-facing views by default. Pass `detail: "full"` only when exact model metadata, alternatives, scores, tools, or Skills are required.
+`expert_inspect` and `expert_build` return compact host-facing views by default. Pass `detail: "full"` only when exact model metadata, alternatives, scores, tools, or Skills are genuinely required.
 
-`expert_delegate` starts background work and immediately returns execution IDs. The original single-assignment shape remains supported. Set an explicit `timeoutMs` for each assignment based on expected difficulty rather than relying on the ten-minute runtime fallback. For two or more independent tasks, dispatch the whole batch before doing other Main Agent work:
+`expert_delegate` starts background work and immediately returns execution IDs; the original single-assignment parameters remain compatible. The Main Agent should set an explicit `timeoutMs` per assignment based on expected difficulty instead of relying on the runtime's ten-minute fallback. When two or more independent tasks exist, dispatch the entire batch before continuing other Main Agent work:
 
 ```json
 {
   "assignments": [
-    { "role": "scout", "task": "Map the relevant files", "taskDescription": "repository map", "timeoutMs": 300000 },
-    { "role": "reviewer", "task": "Review the proposed boundary", "taskDescription": "boundary review", "timeoutMs": 600000 }
+    { "role": "scout", "task": "locate relevant files", "taskDescription": "repo mapping", "timeoutMs": 300000 },
+    { "role": "reviewer", "task": "review boundary design", "taskDescription": "boundary review", "timeoutMs": 600000 }
   ]
 }
 ```
 
-`assignments` must be a real JSON array, not a string containing JSON text. The native Pi adapter includes a bounded compatibility repair for models that occasionally stringify the array, but normal calls should emit the array directly.
+`assignments` must be an actual JSON array, never a string containing JSON. The native Pi adapter offers bounded compatibility parsing for models that occasionally stringify the array, but normal callers should emit real arrays.
 
-Its optional `taskDescription` is a concise host-facing label, not part of the expert assignment. After dispatch, the Main Agent should continue any independent work. When no useful work remains, call `expert_wait` once with up to eight execution IDs, `mode: "all"` (or `"any"` when one early result is actionable), and a difficulty-based `timeoutMs`. The wait is event-driven rather than polling and intentionally blocks the current MCP tool call without consuming model tokens. It returns only completion state and IDs; use `expert_result` for feedback, then call `expert_feedback` with the Main Agent's verification outcome.
+The optional `taskDescription` is a short host-facing label for identifying the task; it is not part of the expert's actual task content. After dispatching, the Main Agent should continue all independently completable work; when nothing useful remains, call `expert_wait` once with up to eight execution IDs, usually `mode: "all"` (use `"any"` when any early result unblocks progress), and a `timeoutMs` sized to the estimated remaining difficulty. Waiting is driven by execution-promise completion events rather than polling; blocking the current MCP call is expected behavior, and no main-model tokens are consumed while waiting.
 
 ```json
 {
@@ -359,32 +379,28 @@ Its optional `taskDescription` is a concise host-facing label, not part of the e
 }
 ```
 
-`expert_wait.timeoutMs` limits only that wait and does not extend the per-assignment execution deadline. The Codex plugin sets its MCP transport safety ceiling to 3660 seconds so a justified one-hour wait can finish with margin; all blocking Expert Council and host shell/MCP calls should still carry a smaller explicit finite timeout chosen for the operation. Other synchronous Expert Council operations retain their separate 30-second server-side bound. `expert_status` includes a bounded per-attempt history with model, status, failure type, and short failure summary. The native Pi Package uses completion push instead of exposing `expert_wait`.
+`expert_wait` returns only completion state and task IDs; fetch the formal feedback with `expert_result` and call `expert_feedback` after the Main Agent's acceptance. `expert_wait.timeoutMs` bounds only that wait and never extends each expert's own execution deadline. Every potentially blocking Expert Council, Bash, PowerShell, or other MCP call must still carry an explicit finite timeout sized to the operation; remaining synchronous Expert Council operations are protected by an independent 30-second in-server cap. `expert_status` returns a bounded per-attempt history. The native Pi Package uses proactive completion notifications and therefore does not expose `expert_wait`.
 
-Run the stdio server directly:
+Start the stdio server directly:
 
 ```bash
 node packages/mcp-server/dist/bin.js
 ```
 
-Environment:
+Supported environment variables:
 
 - `EXPERT_COUNCIL_WORKSPACE`: default allowed workspace.
 - `EXPERT_COUNCIL_CONFIG`: user JSON configuration.
 - `EXPERT_COUNCIL_TELEMETRY`: local telemetry JSONL path.
-- `EXPERT_COUNCIL_STATE`: durable plan/execution/result state path.
-- `EXPERT_COUNCIL_MCP_TIMEOUT_MS`: finite timeout for synchronous MCP operations; defaults to 30000.
-- `PI_CODING_AGENT_MODULE`: explicit Pi package directory when automatic resolution is unavailable.
+- `EXPERT_COUNCIL_STATE`: persisted plans, executions, and results state path.
+- `EXPERT_COUNCIL_MCP_TIMEOUT_MS`: bounded timeout for synchronous MCP operations, 30000 ms by default.
+- `PI_CODING_AGENT_MODULE`: explicit Pi package directory when automatic resolution fails.
 
-Environment overrides and CLI path flags are trusted operator inputs. In particular, `PI_CODING_AGENT_MODULE` loads executable code, while config, workspace, telemetry, and state paths select local files. Do not accept these values from an untrusted repository, task text, or model output.
-
-The Codex plugin does not use its installation directory as the task workspace. Its `.mcp.json` working directory exists only to launch the bundled server. The server prefers the current local project's MCP `file:` roots. Current Codex Desktop builds that do not advertise MCP roots use the bundled synchronous `PreToolUse` hook instead: immediately before an `expert_*` call, the hook records the host-supplied session ID and `cwd` in the plugin's private `PLUGIN_DATA` directory, and the server accepts only the record matching its own Codex session ID. Review and trust this small hook after installation. Explicit `security.allowedWorkspaceRoots` remains authoritative and may narrow that boundary. If neither trusted channel is available, the plugin fails closed rather than granting access to arbitrary local paths. `EXPERT_COUNCIL_WORKSPACE` remains a trusted operator fallback.
-
-A generic Codex MCP configuration can launch that absolute script path. The native Codex plugin below already bundles and configures the server.
+Environment overrides and CLI path flags are trusted operator inputs. In particular, `PI_CODING_AGENT_MODULE` loads executable code, while config, workspace, telemetry, and state paths select local files; never accept them from an untrusted repository, task text, or model output.
 
 ## Native Pi Package
 
-Build and install the local candidate from the repository root. Use forward slashes even on Windows when a command may pass through Pi's Bash-compatible shell; an unquoted Windows path such as `.\packages\pi-package` can lose its backslashes before Pi receives it.
+Build and install the local candidate from the repository root. Even on Windows, use forward slashes whenever a command may pass through Pi's Bash-compatible shell; an unquoted `.\packages\pi-package` loses its backslashes before reaching Pi.
 
 ```bash
 npm run build
@@ -393,24 +409,34 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and eight semantic tools without `expert_wait`. Existing Pi processes do not hot-reload a rebuilt or removed package.
+`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the eight semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
 
-Or for one run without persisting it:
+### npm installation (pending publish)
+
+<!-- Placeholder: complete npm install/upgrade instructions will be added once @expert-council/pi-package is published to npm. -->
+
+```bash
+# Available after the npm release:
+pi install npm:@expert-council/pi-package
+pi update npm:@expert-council/pi-package
+```
+
+Or load it for one run without persisting:
 
 ```bash
 pi --verbose -e "./packages/pi-package"
 ```
 
-For a no-cost loading check, ask Pi to call `expert_inspect` only. For a live orchestration check, start a new conversation, build one read-only council, batch two independent read-only assignments, confirm that `expert_delegate` immediately returns execution IDs, then verify each completion with `expert_result` and `expert_feedback`. A mutation test should additionally confirm that one `expert_cleanup` call reports every retry worktree in `workspaces` and that `git worktree list` contains only the main checkout afterwards.
+A zero-cost load check simply asks Pi to call `expert_inspect`. A real orchestration check should, in a new conversation, build one read-only council, batch two independent read-only assignments at once, confirm that `expert_delegate` immediately returns execution IDs, then accept each completion with `expert_result` and `expert_feedback`. When testing a writable expert, also confirm that one `expert_cleanup` call reports every retry worktree for the execution in `workspaces` and that `git worktree list` afterwards contains only the main checkout.
 
-Exit every Pi process that loaded the package before removing the persisted entry:
+Before removing a persistent installation, exit every Pi process that loaded the package, then run from the same repository root:
 
 ```bash
 pi remove "./packages/pi-package"
 pi list
 ```
 
-Run removal from the same repository root used above. If the working directory has changed, pass the resolved absolute path instead. In PowerShell:
+If the working directory changed, pass the resolved absolute path instead. PowerShell example:
 
 ```powershell
 $ecPiPackage = (Resolve-Path "./packages/pi-package").Path
@@ -418,44 +444,11 @@ pi remove "$ecPiPackage"
 pi list
 ```
 
-If removal is launched through Pi's Bash-compatible shell, use the forward-slash absolute path printed by `pi list`, for example `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`. Do not copy the indented relative source shown by `pi list` unless the command is being resolved from the same settings-directory context.
+If removal runs through Pi's Bash-compatible shell, use the forward-slash absolute path printed by `pi list`, for example `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`. Do not copy the indented relative source shown by `pi list` unless the command is resolved from the same settings-directory context.
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package's current `pi.extensions` and `pi.skills` manifest. The extension registers eight semantic tools; it omits MCP's `expert_wait` because native Pi provides completion `steer`/`followUp` delivery. Pi package code depends on the shared Core and runtime; it does not duplicate routing.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the eight semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
 
-Pi delegation is non-blocking. A batch of up to eight independent assignments is started before the tool returns. When an expert finishes, the extension sends compact JSON containing its completed `executionId` and, only when supplied, `taskDescription`; it never includes feedback. If the Main Agent is working, the notification is delivered as `steer`; if it is idle, a `followUp` with `triggerTurn` wakes it immediately. The Main Agent then calls `expert_result` to fetch the structured feedback. The Main Agent should dispatch the entire ready batch before ending its turn, then avoid polling or silently waiting.
-
-For npm distribution, publish Core and Pi Runtime before Pi Package so its versioned workspace dependencies resolve.
-
-## Codex plugin
-
-The built plugin root is:
-
-```text
-packages/codex-integration/plugin/expert-council/
-  .codex-plugin/plugin.json
-  .mcp.json
-  hooks/hooks.json
-  hooks/record-workspace.mjs
-  skills/expert-council/SKILL.md
-  dist/server.mjs
-  dist/roles/*.md
-```
-
-It follows the current Codex plugin layout: the manifest points at `skills/`, a bundled `.mcp.json`, and a workspace-recording hook; the stdio server is bundled into the plugin and locates the user's installed Pi SDK without embedding credentials. The MCP launch `cwd` is the installed plugin root only for resolving `dist/server.mjs`; authorized repository paths come separately from MCP roots or the matching session record written by the trusted hook. The bundled MCP config raises the host tool-call ceiling to 3660 seconds for bounded `expert_wait` calls; the Skill requires the Main Agent to choose explicit operation-specific deadlines rather than treating that ceiling as a default budget.
-
-To test locally, expose the plugin through a personal or repo marketplace as documented by the current [OpenAI plugin packaging guide](https://developers.openai.com/plugins/build/plugins). No marketplace file is written automatically by this repository because that changes user or team Codex configuration. Validate the plugin itself with:
-
-```bash
-python C:/path/to/plugin-creator/scripts/validate_plugin.py packages/codex-integration/plugin/expert-council
-```
-
-For local development, reuse one stable personal or repository marketplace and update the plugin cachebuster before reinstalling. Remove obsolete test installations before changing marketplace identity; installing multiple copies that all declare the `expert_council` MCP server can make host diagnostics ambiguous. After every install or reinstall, fully quit Codex Desktop, wait for its backend process to exit, reopen the app, and start a new task. Merely opening a new task is not a reliable MCP reload boundary in every Desktop build.
-
-On first use after installation, review and trust the bundled hook when Codex prompts. It runs synchronously only before `mcp__expert_council__expert_*` calls, receives the host-provided session metadata, writes only the session ID, canonical `cwd`, and timestamp to `PLUGIN_DATA`, emits no model context, and has a five-second ceiling. Codex versions that already provide MCP roots do not depend on the record, but keeping the hook trusted preserves compatibility with Desktop 0.152.x.
-
-A correct load exposes both the `expert-council` Skill and all nine native `expert_*` MCP tools. If the Skill is present but those tools are absent, treat the installation as failed. The Main Agent must not launch `dist/server.mjs` from Bash or PowerShell, send hand-written JSON-RPC, or use the CLI to impersonate a missing MCP tool; restart or reinstall the plugin instead.
-
-The plugin's Main Agent guidance explicitly keeps final architecture and acceptance in Codex and avoids a redundant lead expert.
+Pi delegation is non-blocking; a single call can start up to eight independent background assignments before returning. When an expert finishes, the extension sends compact JSON containing the completed `executionId` and, only when supplied at dispatch, the `taskDescription`; it never carries feedback directly. Notifications use `steer` while the Main Agent is working and a `triggerTurn` `followUp` when it is idle. The Main Agent then calls `expert_result` for the structured feedback. Dispatch the entire ready batch before ending the turn, and avoid polling or silently waiting afterwards.
 
 ## Testing
 
@@ -467,9 +460,9 @@ npm run pack:check
 npm run validate
 ```
 
-`npm run validate` builds first so a fresh clone has workspace package entry points before tests run. The deterministic suite covers model normalization, published-price and real-policy billing, Worker reliability, Oracle scoring, reviewer diversity, hard constraints, unknown and missing models, council sizing, retry and per-attempt diagnostics, structured failure classification, escalation, retry limits, role permissions, compact host presentation, config validation, telemetry privacy/feedback/usage aggregation, Core host independence, mock Pi discovery/execution, CLI JSON, MCP schemas, real Pi 0.84.4 extension loading/wrapping with asynchronous batch notification delivery, and Pi extension registration.
+`npm run validate` builds first so a fresh clone has the workspace package entries generated before testing. Tests cover model normalization, published prices versus real policy billing, worker reliability, oracle scoring, reviewer diversity, hard constraints, unknown and missing models, team sizing, retries with per-attempt diagnostics, structured failure classification, escalation, retry limits, role permissions, compact host output, configuration validation, telemetry privacy/feedback/usage aggregation, Core host independence, mocked Pi discovery and execution, CLI JSON, MCP schemas, real Pi 0.84.4 extension loading/wrapping and async batch notifications, Pi extension registration, and real Git worktree isolation.
 
-Normal tests use mock runtimes and never call a paid model. A live read-only Pi execution is available only with both an explicit model and an exact cost acknowledgement:
+Ordinary tests only use the mock runtime and never call paid models. A real read-only Pi execution requires both an explicit model and an explicit cost acknowledgement:
 
 ```powershell
 $env:EXPERT_COUNCIL_LIVE_MODEL = "provider/model"
@@ -477,11 +470,11 @@ $env:EXPERT_COUNCIL_LIVE_CONFIRM = "YES"
 npm run smoke:live:pi
 ```
 
-The normal validation pipeline never invokes this script.
+Ordinary validation flows never execute that script.
 
 ## Publishing
 
-Run `npm run validate`, inspect every `npm pack --dry-run` file list, then publish in dependency order:
+Run `npm run validate` first, inspect every `npm pack --dry-run` file list, then publish in dependency order:
 
 ```text
 @expert-council/core
@@ -491,21 +484,18 @@ Run `npm run validate`, inspect every `npm pack --dry-run` file list, then publi
 @expert-council/pi-package
 ```
 
-The Codex integration is a plugin artifact rather than a clone of the Pi Package. Before a public plugin submission, add real repository, support, privacy, and publisher metadata required by the target catalog; do not invent those values in source.
-
 ## Known limitations
 
-- Pi APIs evolve quickly. V1 is verified against the installed 0.84.4 SDK. Required SDK, model-runtime, resource-loader, and session methods are capability-validated; incompatible versions fail with a specific missing-contract diagnostic.
-- Pi does not expose a universal real-world billing type. Runtime subscription signals and named Token Plan catalogs take precedence; otherwise non-zero catalog prices imply metered routing, while providers without reliable evidence remain `unknown` until assessment or explicit configuration confirms them.
-- V1 does not infer subjective coding quality from model names or fetch benchmark presets.
-- Detached worktrees start from committed `HEAD`; uncommitted Main Agent changes are not copied. This is intentional isolation. The runtime detects a dirty source workspace and reports the mismatch in runtime limitations and mutation council warnings before delegation.
-- Worktree changes are returned for review, not automatically merged or applied. They require `expert_cleanup` after acceptance/rejection and otherwise expire after the configured retention window.
-- Mutation in non-Git workspaces requires explicit in-place opt-in.
-- Active model calls are not resumed after server restart; durable state converts them to explicit interrupted failures while preserving plans and completed results.
-- Skill discovery, project trust resolution, extension suppression, and hard tool restriction are required from the verified Pi SDK. A Pi build missing any enforcement API is rejected instead of silently weakening isolation.
-- Codex's own sandbox does not contain an external Pi runtime. Expert Council therefore enforces its separate allowed-root and worktree boundary.
-- No arbitrary package installation, recursive expert trees, graphical UI, remote control plane, or remote analytics is included in V1.
+- Pi's API moves quickly. V1 was verified against the local 0.84.4 SDK; the runtime checks required SDK, model-runtime, resource-loader, and session methods and lists any missing contract explicitly on incompatibility.
+- Pi has no unified real billing-type API. Runtime subscription signals and named Token Plans take priority; otherwise non-zero catalog prices are treated as metered, and providers without reliable evidence stay `unknown` until an audit or explicit user configuration confirms them.
+- V1 does not infer subjective coding quality from model names, nor does it download benchmark presets automatically.
+- Detached worktrees start from the committed `HEAD` and do not copy uncommitted changes from the main workspace. This is deliberate isolation; the runtime detects a dirty source workspace and surfaces the deviation through runtime limitations and mutation-council warnings before delegation.
+- Worktree changes are returned for Main Agent review and are never auto-merged or applied; call `expert_cleanup` after acceptance or rejection, or they will be cleaned up automatically after the retention window.
+- Writes to non-Git workspaces require explicit in-place mutation authorization.
+- In-flight model calls do not resume after a server restart; persisted state closes them as explicit interrupted failures while preserving plans and completed results.
+- Codex's own sandbox does not automatically contain the external Pi runtime, so Expert Council uses separate allowed roots and worktree boundaries.
+- V1 contains no arbitrary third-party package installation, recursive expert trees, graphical interface, remote control plane, or remote telemetry.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT; see [`LICENSE`](LICENSE).

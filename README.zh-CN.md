@@ -2,9 +2,20 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Expert Council 是一个面向 Pi 与 Codex 等 MCP 宿主的本地、多模型、成本感知专家编排系统。它会发现 Pi 当前真正可调用的模型，将运行时元数据与用户定义的计费策略、能力画像和本地可靠性数据结合，动态组建一个精简的语义专家团队，并通过 Pi 执行有明确边界的任务，最后向主代理返回紧凑的结构化结果。
+Expert Council 是一个面向 Pi 与 Codex 等 MCP 宿主的本地、多模型、成本感知专家编排系统。它会发现 Pi 当前注册的 LLM API 与 Coding Plan 中连接的模型，将运行时元数据与用户定义的计费策略、能力画像和本地可靠性数据结合，动态组建一个精简的语义专家团队，并通过 Pi 执行有明确边界的任务，最后向主代理返回紧凑的结构化结果。
 
-理论上最强的模型不一定是最合适的执行者。一个工具调用稳定、Shell 行为可靠、边际成本较低的模型，可能比更强但执行不稳定的模型拥有更高的实际任务价值。Expert Council 通过可配置、确定性的代码完成这些权衡，同时把模糊判断、架构决策和最终验收保留给主代理。
+> ⚠️ **Codex 插件暂未正式发布**：Codex 插件尚未完成功能测试，本版文档暂时移除其安装与使用说明，预计随下一版本正式发布。当前请通过原生 Pi Package、CLI 或通用 MCP Server 使用 Expert Council。
+
+主要优势：
+
+| 优势 | 说明 |
+|---|---|
+| 省钱 | 灵活运用所订阅的 Plan 和 LLM API，根据任务难度自动调配最合适的模型 |
+| 快速 | 可同时并发多个最合适的模型进行工作，快速完成仓库探索与上下文压缩 |
+| 更安全 | 为不同专家分配不同的只读/可写权限，可写专家在 Git worktree 写入后经主代理审查后并入主分支 |
+| 上下文节省 | 主代理不再需要包含过多工具调用产生的冗长上下文，只接收专家返回的摘要化处理结果 |
+
+在实践中发现，理论上最强的模型不一定是最合适的执行者。一个工具调用稳定、Shell 行为可靠、边际成本较低的模型，可能比更强但执行不稳定的模型拥有更高的实际任务价值。推荐配置执行能力强、成本较低的模型作为主代理，当遇到复杂问题时 Expert Council 可派遣强思考能力模型进行审查或 Plan。
 
 ## 当前状态
 
@@ -17,10 +28,8 @@ V1 已包含：
 - 支持 JSON 输出的 CLI。
 - 包含 9 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
-- 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件。
+- 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件（尚未完成功能测试，暂未正式发布）。
 - 不会消耗模型额度的确定性自动化测试。
-
-当前实现已在本机 Pi `@earendil-works/pi-coding-agent` 0.84.4 上完成验证，同时会通过能力探测尝试兼容上游 `@mariozechner/pi-coding-agent`。明确的降级行为请参阅[已知限制](#已知限制)。
 
 ## 架构
 
@@ -112,7 +121,7 @@ node packages/cli/dist/bin.js delegate architecture-oracle "分析并发调用�
 
 运行时会依次尝试解析本地兼容 Pi SDK、`PI_CODING_AGENT_MODULE` 指定目录，以及全局 npm Pi 安装。若全部失败，会返回可操作的诊断信息，而不是伪造模型列表。
 
-Pi 在每个会话内只构建一次这份清单，且提供商目录可能保留失效的模型名称，因此 `listAvailableModels()` 可能包含一个上游已无法服务的模型。在真实调用失败之前，路由会把它视为可调用；这正是带失效模型证据的失败会在持久化模型评估中标记该模型不可用的原因（见上文路由一节）。标记会在 24 小时后过期，恢复的模型会自动重新被尝试。
+Pi 在每个会话内只构建一次这份清单，且提供商目录可能保留失效的模型名称，因此 `listAvailableModels()` 可能包含一个上游已无法服务的模型。在真实调用失败之前，路由会把它视为可调用；这正是带失效模型证据的失败会在持久化模型评估中标记该模型不可用的原因（见下文路由一节）。标记会在 24 小时后过期，恢复的模型会自动重新被尝试。
 
 ## 配置
 
@@ -302,7 +311,7 @@ missing_context permission_error unknown
 
 ## 遥测与本地学习
 
-默认用户数据根目录为：Windows `%LOCALAPPDATA%\ExpertCouncil`，Linux `$XDG_STATE_HOME/expert-council` 或 `~/.local/state/expert-council`，macOS `~/Library/Application Support/ExpertCouncil`。共享的 `telemetry.jsonl` 保存不透明执行结果，使实际可靠性能够跨对话和工作区复用；同一 execution 的反馈会覆盖早期样本，不会重复计数。共享的 `model-assessment.json` 保存最新的显式能力与计费评分。可用 `EXPERT_COUNCIL_DATA_DIR`、`EXPERT_COUNCIL_TELEMETRY`、`EXPERT_COUNCIL_MODEL_ASSESSMENT` 和 `EXPERT_COUNCIL_STATE` 覆盖位置。
+默认用户数据根目录为：Windows `%LOCALAPPDATA%\ExpertCouncil`，Linux `$XDG_STATE_HOME/expert-council` 或 `~/.local/state/expert-council`，macOS `~/Library/Application Support/ExpertCouncil`。共享的 `telemetry.jsonl` 保存不透明执行结果，使实际可靠性能够跨对话和工作区复用；同一 execution 的反馈会覆盖早期样本，不会重复计数。共享的 `model-assessment.json` 保存最新的显式能力与计费评分，以及运行时学习到的模型可用性标记。可用 `EXPERT_COUNCIL_DATA_DIR`、`EXPERT_COUNCIL_TELEMETRY`、`EXPERT_COUNCIL_MODEL_ASSESSMENT` 和 `EXPERT_COUNCIL_STATE` 覆盖位置。
 
 它不会记录 Prompt、源码内容、凭据、API Key、Secret 或思维过程。聚合指标包括按角色成功率、首轮成功率、工具错误率、重试率、验证通过率和平均尝试次数。V1 没有远程分析端点。
 
@@ -370,7 +379,7 @@ MCP 表面刻意保持为 9 个语义工具：
 }
 ```
 
-`expert_wait` 只返回完成状态和任务 ID，随后使用 `expert_result` 获取正式反馈，并在主代理验收后调用 `expert_feedback`。`expert_wait.timeoutMs` 只限制本次等待，不会延长各专家自己的执行期限。Codex 插件把 MCP 传输安全上限设为 3660 秒，以便最长一小时的合理等待留有结束余量；所有可能阻断的 Expert Council、Bash、PowerShell 或其他 MCP 调用仍必须按操作难度附带更小的显式有限超时。其余同步 Expert Council 操作继续受独立的 30 秒 Server 内部上限保护。`expert_status` 会返回有界的逐次尝试历史。原生 Pi Package 使用主动完成通知，因此不暴露 `expert_wait`。
+`expert_wait` 只返回完成状态和任务 ID，随后使用 `expert_result` 获取正式反馈，并在主代理验收后调用 `expert_feedback`。`expert_wait.timeoutMs` 只限制本次等待，不会延长各专家自己的执行期限。所有可能阻断的 Expert Council、Bash、PowerShell 或其他 MCP 调用仍必须按操作难度附带显式的有限超时；其余同步 Expert Council 操作受独立的 30 秒 Server 内部上限保护。`expert_status` 会返回有界的逐次尝试历史。原生 Pi Package 使用主动完成通知，因此不暴露 `expert_wait`。
 
 直接启动 stdio Server：
 
@@ -389,10 +398,6 @@ node packages/mcp-server/dist/bin.js
 
 环境变量覆盖和 CLI 路径参数属于“受信任的操作者输入”。其中 `PI_CODING_AGENT_MODULE` 会加载可执行代码，配置、工作区、遥测和状态路径会选择本地文件；不要从不受信任仓库、任务文本或模型输出中接受这些值。
 
-Codex 插件不会把自身安装目录当作任务工作区。`.mcp.json` 的工作目录只用于启动内置 Server。Server 优先使用当前本地项目的 MCP `file:` roots；对于尚未声明 MCP roots 的 Codex Desktop 版本，则使用随插件提供的同步 `PreToolUse` Hook：每次调用 `expert_*` 前，Hook 把宿主提供的会话 ID 和 `cwd` 写入插件私有的 `PLUGIN_DATA`，Server 只接受与自身 Codex 会话 ID 匹配的记录。安装后应检查并信任这个小型 Hook。显式配置的 `security.allowedWorkspaceRoots` 仍具有最高优先级，可进一步收窄边界。若两个受信任通道都不可用，插件会安全拒绝，而不会放宽到任意本地路径。`EXPERT_COUNCIL_WORKSPACE` 仍可作为受信任操作者回退。
-
-Codex 插件已经内置并配置该 MCP Server，不需要复制业务逻辑。
-
 ## 原生 Pi Package
 
 在仓库根目录构建并安装本地候选版。即使在 Windows 上，只要命令可能经过 Pi 的 Bash 兼容 Shell，也应使用正斜杠；未正确引用的 `.\packages\pi-package` 会在到达 Pi 前丢失反斜杠。
@@ -405,6 +410,16 @@ pi --verbose
 ```
 
 `pi list` 应显示配置中的 source 及解析后的绝对 Package 目录。新启动的 verbose Pi 会话应显示 `dist/extension.js`、`expert-council` Skill，以及不含 `expert_wait` 的 8 个语义工具。已经运行的 Pi 进程不会热加载重新构建或已移除的 Package。
+
+### npm 安装（待发布）
+
+<!-- 占位：@expert-council/pi-package 发布到 npm 后，在此补充完整的 npm 安装与升级说明。 -->
+
+```bash
+# npm 发布后可用：
+pi install npm:@expert-council/pi-package
+pi update npm:@expert-council/pi-package
+```
 
 或仅在当前运行中临时加载：
 
@@ -434,31 +449,6 @@ pi list
 Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册 8 个语义工具；由于原生 Pi 已提供完成 `steer`/`followUp`，因此省略 MCP 专用的 `expert_wait`。它不包含另一套路由实现。
 
 Pi 委派是非阻断式的；一个调用最多可在返回前启动 8 个相互独立的后台任务。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。主 Agent 应先发完当前已准备好的整个批次再结束回合，之后不要轮询或静默等待消耗 token。
-
-## Codex 插件
-
-构建后的插件位于：
-
-```text
-packages/codex-integration/plugin/expert-council/
-  .codex-plugin/plugin.json
-  .mcp.json
-  hooks/hooks.json
-  hooks/record-workspace.mjs
-  skills/expert-council/SKILL.md
-  dist/server.mjs
-  dist/roles/*.md
-```
-
-它遵循当前 Codex 插件布局，清单引用 `skills/`、内置 `.mcp.json` 和工作区记录 Hook，stdio MCP Server 被打包在插件内，并通过用户现有的 Pi SDK 使用凭据，而不会嵌入或复制凭据。MCP 启动 `cwd` 只是已安装插件根目录，用于解析 `dist/server.mjs`；仓库授权路径另行来自 MCP roots，或来自受信任 Hook 写入且与当前会话匹配的记录。内置 MCP 配置把宿主工具调用上限提高到 3660 秒以支持有限的 `expert_wait`；Skill 要求主代理仍按每次操作难度设置明确期限，不能把这个上限当作默认执行预算。
-
-本地安装应通过个人或仓库 marketplace 暴露该插件。项目不会自动修改用户或团队的 Codex marketplace 配置。
-
-本地开发应复用同一个稳定的个人或仓库 marketplace，并在重新安装前更新插件 cachebuster。更换 marketplace 标识前先移除废弃的测试安装，避免多个副本同时声明同名 `expert_council` MCP Server，导致宿主诊断含糊。每次安装或重新安装后，都必须完整退出 Codex Desktop、等待其后台进程结束，再重新打开应用并新建任务；仅新建任务在部分 Desktop 版本中并不是可靠的 MCP 重载边界。
-
-安装后的首次使用若 Codex 提示 Hook 信任，请先检查并信任内置 Hook。它仅在 `mcp__expert_council__expert_*` 调用前同步运行，只把宿主提供的会话 ID、规范化后的 `cwd` 和时间戳写入 `PLUGIN_DATA`，不向模型注入上下文，且最长运行 5 秒。已经支持 MCP roots 的 Codex 版本不依赖这份记录；保留该 Hook 是为了兼容 Desktop 0.152.x。
-
-正确加载时，`expert-council` Skill 和 9 个原生 `expert_*` MCP 工具必须同时可用。如果 Skill 已出现但工具缺失，应判定为插件加载失败。主代理不得通过 Bash 或 PowerShell 手工启动 `dist/server.mjs`、手写 JSON-RPC，或用 CLI 冒充缺失的 MCP 工具；应改为重启或重新安装插件。
 
 ## 测试
 
@@ -493,8 +483,6 @@ npm run smoke:live:pi
 @expert-council/mcp-server
 @expert-council/pi-package
 ```
-
-Codex Integration 是独立插件制品，不是 Pi Package 的复制品。提交到公共插件目录前，应补充真实的仓库、支持、隐私和发布者信息，而不是在源代码中虚构这些字段。
 
 ## 已知限制
 

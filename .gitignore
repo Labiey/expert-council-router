@@ -11,3 +11,4 @@ coverage/
 .pi/
 *.log
 TMP/
+README.pre.md
