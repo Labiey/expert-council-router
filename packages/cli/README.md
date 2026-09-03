@@ -81,16 +81,23 @@ Requirements:
 - Pi installed and configured with at least one usable model.
 - When writable experts need worktree isolation, the Git repository must have at least one commit.
 
-### Install the Pi Package (available after the npm release)
+### Install the Pi Package
 
-<!-- Placeholder: complete install/upgrade instructions will be added once @expert-council/pi-package is published to npm. -->
+Install from npm (recommended):
 
 ```bash
 pi install npm:@expert-council/pi-package
+pi list
+pi --verbose
+```
+
+`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the eight semantic tools. To upgrade later:
+
+```bash
 pi update npm:@expert-council/pi-package
 ```
 
-The current version is not yet published to npm; build from source and install locally for now (see "Native Pi Package" below):
+### Build from source (development)
 
 ```bash
 npm install
@@ -413,6 +420,8 @@ Supported environment variables:
 Environment overrides and CLI path flags are trusted operator inputs. In particular, `PI_CODING_AGENT_MODULE` loads executable code, while config, workspace, telemetry, and state paths select local files; never accept them from an untrusted repository, task text, or model output.
 
 ## Native Pi Package
+
+For daily use, install from npm (see [Quick start](#install-the-pi-package)); this section covers source development and local candidate validation.
 
 Build and install the local candidate from the repository root. Even on Windows, use forward slashes whenever a command may pass through Pi's Bash-compatible shell; an unquoted `.\packages\pi-package` loses its backslashes before reaching Pi.
 

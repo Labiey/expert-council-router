@@ -82,16 +82,23 @@ Core 不导入 Pi、Codex、MCP transport、文件系统、Shell 或进程 API�
 - 已安装并配置至少一个可用模型的 Pi。
 - 当写入型专家需要 worktree 隔离时，Git 仓库必须至少有一个提交。
 
-### 安装 Pi Package（npm 发布后可用）
+### 安装 Pi Package
 
-<!-- 占位：@expert-council/pi-package 发布到 npm 后，在此补充完整的安装与升级说明。 -->
+从 npm 安装（推荐）：
 
 ```bash
 pi install npm:@expert-council/pi-package
+pi list
+pi --verbose
+```
+
+`pi list` 应显示 `npm:@expert-council/pi-package` 及其解析后的目录；新启动的 verbose Pi 会话应加载 `dist/extension.js`、`expert-council` Skill 和 8 个语义工具。后续升级：
+
+```bash
 pi update npm:@expert-council/pi-package
 ```
 
-当前版本尚未发布到 npm，请先从源码构建并本地安装（见下文“原生 Pi Package”）：
+### 从源码构建（开发）
 
 ```bash
 npm install
@@ -414,6 +421,8 @@ node packages/mcp-server/dist/bin.js
 环境变量覆盖和 CLI 路径参数属于“受信任的操作者输入”。其中 `PI_CODING_AGENT_MODULE` 会加载可执行代码，配置、工作区、遥测和状态路径会选择本地文件；不要从不受信任仓库、任务文本或模型输出中接受这些值。
 
 ## 原生 Pi Package
+
+日常使用推荐通过 npm 安装（见[快速开始](#安装-pi-package)）；本节面向源码开发与本地候选版验证。
 
 在仓库根目录构建并安装本地候选版。即使在 Windows 上，只要命令可能经过 Pi 的 Bash 兼容 Shell，也应使用正斜杠；未正确引用的 `.\packages\pi-package` 会在到达 Pi 前丢失反斜杠。
 
