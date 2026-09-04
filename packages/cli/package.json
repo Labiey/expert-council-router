@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "bin": { "expert-council": "./dist/bin.js" },
+  "bin": { "expert-council": "dist/bin.js" },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
