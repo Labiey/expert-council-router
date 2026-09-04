@@ -1,5 +1,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { existsSync, realpathSync, statSync } from "node:fs";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 import {
   evaluateModelAssessment,
   modelAssessmentSnapshotSchema,
@@ -137,11 +140,15 @@ export async function withMcpTimeout<T>(operation: Promise<T>, timeoutMs = MCP_T
   return Promise.race([operation, timeout]);
 }
 
-type CouncilProvider = () => Promise<ExpertCouncil>;
-export type WorkspaceRootProvider = () => Promise<string[]>;
+export const CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
+
+type CouncilProvider = (requestContext?: unknown) => Promise<ExpertCouncil>;
 
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
-  const server = new McpServer({ name: "expert-council", version: "0.4.0" });
+  const server = new McpServer(
+    { name: "expert-council", version: "0.4.0" },
+    { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
+  );
 
   server.registerTool(
     "expert_inspect",
@@ -151,8 +158,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_inspect,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       return response(presentResourceInventory(
         await withMcpTimeout(council.inspectResources()),
         input.detail,
@@ -163,12 +170,12 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_build",
     {
       title: "Build Expert Council",
-      description: "Classify a task and deterministically assemble a small semantic expert team. A current, complete, dated Main Agent model assessment is mandatory.",
+      description: "Classify a task and deterministically assemble a small semantic expert team. A current, complete, dated Main Agent model assessment is mandatory. Before the first council in a conversation, establish exactly one cost policy with the user — economy (lowest effective cost), balanced (cost, time, and success probability), or speed (fastest completion) — and pass it as constraints.costPolicy; reuse the answer for later councils in this conversation. When costPolicy is omitted, the response includes a reminder to ask.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_build,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       const inventory = await withMcpTimeout(council.inspectResources());
       const assessment = resolveModelAssessment(
         inventory.models,
@@ -211,8 +218,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       if (input.assignments && (input.role || input.task)) {
         throw new Error("expert_delegate accepts either role/task or assignments, not both");
       }
@@ -266,8 +273,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_wait,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       return response(await council.waitForResults({
         executionIds: input.executionIds,
         ...(input.mode ? { mode: input.mode } : {}),
@@ -283,8 +290,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_result,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       return response(await withMcpTimeout(council.getResult(input.executionId)));
     },
   );
@@ -296,8 +303,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_feedback,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       return response(await withMcpTimeout(council.recordFeedback(input)));
     },
   );
@@ -309,8 +316,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_cleanup,
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       return response(await withMcpTimeout(council.cleanup(input.executionId)));
     },
   );
@@ -322,8 +329,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: MCP_INPUT_SCHEMAS.expert_escalate,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (input) => {
-      const council = await councilProvider();
+    async (input, extra) => {
+      const council = await councilProvider(extra);
       return response(await withMcpTimeout(council.escalate({
         role: input.role as ExpertRole,
         task: input.task,
@@ -344,8 +351,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       inputSchema: {},
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async () => {
-      const council = await councilProvider();
+    async (_input, extra) => {
+      const council = await councilProvider(extra);
       return response(await withMcpTimeout(council.getStatus()));
     },
   );
@@ -358,6 +365,69 @@ export function createMcpServer(council: ExpertCouncil): McpServer {
 
 export async function createDefaultMcpServer(options: CreateCouncilOptions = {}): Promise<McpServer> {
   return createMcpServer(await createExpertCouncil(options));
+}
+
+function record(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function nearestMarkerDirectory(start: string, markers: readonly string[]): string | undefined {
+  let current = start;
+  while (true) {
+    if (markers.some((marker) => existsSync(path.join(current, marker)))) return current;
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+function projectRootFromCwd(cwd: string): string {
+  const canonical = realpathSync(cwd);
+  if (!statSync(canonical).isDirectory()) {
+    throw new Error("Codex sandbox metadata did not identify a local directory.");
+  }
+  return nearestMarkerDirectory(canonical, [".git", ".jj", ".hg"])
+    ?? nearestMarkerDirectory(canonical, ["package.json", "pyproject.toml", "Cargo.toml", "go.mod"])
+    ?? canonical;
+}
+
+/**
+ * Resolve the current Codex task workspace from host-owned MCP request metadata.
+ * The value is deliberately read from the request context, never tool arguments.
+ */
+export function workspaceRootFromCodexSandbox(requestContext: unknown): string | undefined {
+  const request = record(requestContext);
+  const direct = record(request?._meta)?.[CODEX_SANDBOX_STATE_META_CAPABILITY];
+  const requestInfo = record(request?.requestInfo);
+  const forwarded = record(requestInfo?._meta)?.[CODEX_SANDBOX_STATE_META_CAPABILITY];
+
+  if (direct !== undefined && forwarded !== undefined && !isDeepStrictEqual(direct, forwarded)) {
+    throw new Error("Codex supplied conflicting sandbox metadata.");
+  }
+  if (direct === undefined && forwarded === undefined) return undefined;
+
+  const state = record(direct ?? forwarded);
+  if (!state || !record(state.permissionProfile)) {
+    throw new Error("Codex supplied incomplete sandbox metadata.");
+  }
+  if (typeof state.sandboxCwd !== "string" || !state.sandboxCwd.trim() || state.sandboxCwd.includes("\0")) {
+    throw new Error("Codex supplied an invalid sandbox working directory.");
+  }
+
+  let cwd: string;
+  try {
+    cwd = state.sandboxCwd.startsWith("file:")
+      ? fileURLToPath(state.sandboxCwd)
+      : state.sandboxCwd;
+  } catch {
+    throw new Error("Codex supplied an invalid sandbox working-directory URI.");
+  }
+  if (!path.isAbsolute(cwd)) {
+    throw new Error("Codex sandbox working directory must be absolute.");
+  }
+  return projectRootFromCwd(cwd);
 }
 
 function fileWorkspaceRoots(roots: Array<{ uri: string }>): string[] {
@@ -379,30 +449,29 @@ function fileWorkspaceRoots(roots: Array<{ uri: string }>): string[] {
 export function createClientRootMcpServer(
   options: CreateCouncilOptions = {},
   councilFactory: (options: CreateCouncilOptions) => Promise<ExpertCouncil> = createExpertCouncil,
-  fallbackWorkspaceRoots?: WorkspaceRootProvider,
 ): McpServer {
   const configuredWorkspace = options.cwd;
   const councilCache = new Map<string, Promise<ExpertCouncil>>();
   let server: McpServer;
 
-  const councilProvider: CouncilProvider = async () => {
+  const councilProvider: CouncilProvider = async (requestContext) => {
     let workspaceRoots: string[];
-    if (configuredWorkspace) {
-      workspaceRoots = [configuredWorkspace];
+    if (server.server.getClientCapabilities()?.roots) {
+      workspaceRoots = fileWorkspaceRoots((await withMcpTimeout(server.server.listRoots(), 10_000)).roots);
     } else {
-      if (server.server.getClientCapabilities()?.roots) {
-        workspaceRoots = fileWorkspaceRoots((await withMcpTimeout(server.server.listRoots(), 10_000)).roots);
-      } else {
-        workspaceRoots = [];
-      }
-      if (!workspaceRoots.length && fallbackWorkspaceRoots) {
-        workspaceRoots = await withMcpTimeout(fallbackWorkspaceRoots(), 10_000);
-      }
-      if (!workspaceRoots.length) {
-        throw new Error(
-          "No trusted local workspace was supplied by MCP roots or the Codex workspace hook. Trust the bundled hook and retry in a local project, or configure EXPERT_COUNCIL_WORKSPACE explicitly. Expert Council will not use its plugin installation directory.",
-        );
-      }
+      workspaceRoots = [];
+    }
+    if (!workspaceRoots.length) {
+      const codexWorkspace = workspaceRootFromCodexSandbox(requestContext);
+      if (codexWorkspace) workspaceRoots = [codexWorkspace];
+    }
+    if (!workspaceRoots.length && configuredWorkspace) {
+      workspaceRoots = [configuredWorkspace];
+    }
+    if (!workspaceRoots.length) {
+      throw new Error(
+        "No trusted local workspace was supplied by MCP roots, Codex sandbox metadata, or EXPERT_COUNCIL_WORKSPACE. Expert Council will not use its plugin installation directory.",
+      );
     }
 
     const cacheKey = JSON.stringify(workspaceRoots);

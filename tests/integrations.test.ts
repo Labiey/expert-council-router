@@ -1,6 +1,5 @@
-import { readFileSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -15,15 +14,26 @@ import {
 import { runCli } from "../packages/cli/src/index.js";
 import {
   createClientRootMcpServer,
+  CODEX_SANDBOX_STATE_META_CAPABILITY,
   MCP_INPUT_SCHEMAS,
   MCP_TOOL_NAMES,
+  workspaceRootFromCodexSandbox,
   withMcpTimeout,
 } from "../packages/mcp-server/src/index.js";
 import piExtension from "../packages/pi-package/src/extension.js";
-import {
-  readCodexWorkspaceRoots,
-  recordCodexWorkspace,
-} from "../packages/codex-integration/workspace-record.js";
+
+function codexSandboxMeta(workspace: string) {
+  return {
+    [CODEX_SANDBOX_STATE_META_CAPABILITY]: {
+      sandboxCwd: pathToFileURL(workspace).href,
+      permissionProfile: {
+        type: "managed",
+        network: "restricted",
+        file_system: { type: "restricted", entries: [] },
+      },
+    },
+  };
+}
 
 function mockCouncil(): ExpertCouncil {
   const completed = { status: "success" as const, role: "reviewer" as const, model: "p/m", summary: "ok" };
@@ -202,37 +212,24 @@ describe("Codex plugin packaging", () => {
       command: "node",
       args: ["dist/server.mjs"],
       cwd: ".",
-      env_vars: ["CODEX_SESSION_ID", "CODEX_THREAD_ID"],
     });
+    expect(server.env_vars).toBeUndefined();
     expect(JSON.stringify(server)).not.toContain("${PLUGIN_ROOT}");
     expect(mcpFile.mcpServers).not.toHaveProperty("expert-council");
-    expect(readFileSync("packages/codex-integration/plugin/expert-council/hooks/hooks.json", "utf8"))
-      .toContain("^mcp__expert_council__expert_");
+    expect(existsSync("packages/codex-integration/plugin/expert-council/hooks/hooks.json")).toBe(false);
+    expect(existsSync("packages/codex-integration/plugin/expert-council/hooks/record-workspace.mjs")).toBe(false);
   });
 
-  it("records and resolves the Codex session workspace without trusting model arguments", async () => {
-    const dataRoot = await mkdtemp(path.join(tmpdir(), "expert-council-plugin-data-"));
+  it("derives the project root from trusted Codex sandbox metadata", async () => {
     const workspace = await realpath(process.cwd());
-    const session = "session_workspace_test";
-    const environment = {
-      PLUGIN_DATA: dataRoot,
-      CODEX_SESSION_ID: session,
-    };
-    try {
-      await expect(recordCodexWorkspace({
-        hook_event_name: "PreToolUse",
-        tool_name: "mcp__expert_council__expert_inspect",
-        session_id: session,
-        cwd: workspace,
-      }, environment)).resolves.toBe(true);
-      await expect(readCodexWorkspaceRoots(environment)).resolves.toEqual([workspace]);
-      await expect(readCodexWorkspaceRoots({
-        ...environment,
-        CODEX_SESSION_ID: "another_session",
-      })).resolves.toEqual([]);
-    } finally {
-      await rm(dataRoot, { recursive: true, force: true });
-    }
+    const nestedWorkspace = path.join(workspace, "packages", "mcp-server");
+    expect(workspaceRootFromCodexSandbox({ _meta: codexSandboxMeta(nestedWorkspace) }))
+      .toBe(workspace);
+    expect(workspaceRootFromCodexSandbox({})).toBeUndefined();
+    expect(() => workspaceRootFromCodexSandbox({
+      _meta: codexSandboxMeta(workspace),
+      requestInfo: { _meta: codexSandboxMeta(path.dirname(workspace)) },
+    })).toThrow("conflicting sandbox metadata");
   });
 
   it("uses MCP client roots as trusted workspace boundaries", async () => {
@@ -287,19 +284,25 @@ describe("Codex plugin packaging", () => {
     }
   });
 
-  it("uses a trusted host fallback when the MCP client does not implement roots", async () => {
-    const workspace = process.cwd();
+  it("uses Codex sandbox metadata when the MCP client does not implement roots", async () => {
+    const workspace = await realpath(process.cwd());
     let receivedOptions: { cwd?: string; trustedWorkspaceRoots?: string[] } | undefined;
     const server = createClientRootMcpServer({}, async (options) => {
       receivedOptions = options;
       return mockCouncil();
-    }, async () => [workspace]);
-    const client = new Client({ name: "host-workspace-test", version: "0.1.0" });
+    });
+    const client = new Client({ name: "codex-sandbox-test", version: "0.1.0" });
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const result = await client.callTool({ name: "expert_inspect", arguments: {} });
+      expect(client.getServerCapabilities()?.experimental)
+        .toHaveProperty(CODEX_SANDBOX_STATE_META_CAPABILITY);
+      const result = await client.callTool({
+        name: "expert_inspect",
+        arguments: {},
+        _meta: codexSandboxMeta(workspace),
+      });
       expect(result.isError).not.toBe(true);
       expect(receivedOptions).toMatchObject({
         cwd: workspace,

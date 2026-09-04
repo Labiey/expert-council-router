@@ -568,7 +568,7 @@ describe("runtime availability marking", () => {
   });
 
   it("warns about active markers during inspection and preserves them across a fresh audit", async () => {
-    const marked = withModelAvailabilityMarker(assessment, "p/dead", "model_not_found", "2026-09-03T06:00:00.000Z");
+    const marked = withModelAvailabilityMarker(assessment, "p/dead", "model_not_found", new Date().toISOString());
     const runtime = new MockRuntime(models);
     const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: initialState(marked) });
 
@@ -615,6 +615,26 @@ describe("runtime availability marking", () => {
   });
 });
 
+describe("council cost policy guidance", () => {
+  it("reminds the host to establish one cost policy with the user when costPolicy is omitted", async () => {
+    const runtime = new MockRuntime([model("p", "one")]);
+    const service = new ExpertCouncilService(runtime, {});
+    const plan = await service.buildCouncil({ task: "Implement a small bounded feature" });
+    expect(plan.warnings.join(" ")).toContain("ask the user once whether to optimize for economy, balanced, or speed");
+
+    const reminded = await service.buildCouncil({ task: "Implement another small bounded feature", constraints: { costPolicy: "balanced" } });
+    expect(reminded.warnings.join(" ")).not.toContain("costPolicy");
+  });
+
+  it("evaluates mutation capability for the requested workspace, not the startup folder", async () => {
+    const runtime = new MockRuntime([model("p", "one")]);
+    const service = new ExpertCouncilService(runtime, {});
+    await service.delegate({ role: "scout", task: "Inspect a tiny file", workspace: "C:/project/repo", timeoutMs: 60_000 });
+    expect(runtime.capabilityRequests.at(-1)).toBe("C:/project/repo");
+    await service.getStatus();
+  });
+});
+
 describe("shared assessment freshness", () => {
   it("observes availability markers written by another service instance without a restart", async () => {
     const assessment = {
@@ -633,7 +653,12 @@ describe("shared assessment freshness", () => {
       async readModelAssessment(): Promise<ModelAssessmentSnapshot | undefined> {
         // Simulates another running Pi/Codex instance persisting a marker
         // after this service instance was constructed.
-        this.#stored = withModelAvailabilityMarker(this.#stored!, "p/dead", "403: access to model denied", "2026-09-03T02:00:00.000Z");
+        this.#stored = withModelAvailabilityMarker(
+          this.#stored!,
+          "p/dead",
+          "403: access to model denied",
+          new Date().toISOString(),
+        );
         return this.#stored;
       }
     }

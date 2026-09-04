@@ -5,11 +5,11 @@ This private workspace package builds the Codex plugin found in
 server bundle backed by the shared Expert Council Core and Pi Runtime.
 
 The plugin launch directory resolves the bundled server only. At runtime the server
-uses the current Codex project's MCP file roots when available. On Codex versions
-without MCP roots, a reviewed and trusted bundled `PreToolUse` hook records the
-session `cwd` in `PLUGIN_DATA` immediately before the call. The server accepts only
-the matching session record and never treats the installed plugin cache as the
-repository.
+uses the current Codex project's MCP file roots when available, then Codex's
+host-owned `codex/sandbox-state-meta` request metadata. The latter supplies the
+current sandbox working directory and permission profile without requiring a hook
+or manual workspace configuration. The server never treats the installed plugin
+cache as the repository.
 
 From the repository root:
 

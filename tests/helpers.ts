@@ -33,6 +33,7 @@ export function model(provider: string, id: string, overrides: Partial<Available
 
 export class MockRuntime implements ExpertRuntime {
   readonly requests: ExpertExecutionRequest[] = [];
+  readonly capabilityRequests: Array<string | undefined> = [];
 
   constructor(
     readonly models: AvailableModel[],
@@ -65,7 +66,8 @@ export class MockRuntime implements ExpertRuntime {
     return this.skills;
   }
 
-  async getCapabilities() {
+  async getCapabilities(cwd?: string) {
+    this.capabilityRequests.push(cwd);
     return this.runtimeCapabilities;
   }
 }

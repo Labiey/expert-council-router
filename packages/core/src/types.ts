@@ -133,7 +133,13 @@ export interface ExpertRuntime {
   listProviderBilling?(): Promise<Record<string, RuntimeBillingDiscovery>>;
   executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult>;
   listSkills(): Promise<SkillInfo[]>;
-  getCapabilities(): Promise<RuntimeCapabilities>;
+  /**
+   * Runtime capability report. When `cwd` is supplied, mutation capability is
+   * evaluated for that workspace instead of the startup directory, so a
+   * writable delegation into a Git repository subfolder is not rejected
+   * because the conversation's startup folder is not a repository.
+   */
+  getCapabilities(cwd?: string): Promise<RuntimeCapabilities>;
   cleanupExecution?(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">>;
 }
 

@@ -112,9 +112,9 @@ export class WorkspaceBoundary {
     return resolved;
   }
 
-  private async defaultGitRoot(): Promise<string> {
-    const cwd = await this.assertAllowed(this.defaultWorkspace);
-    return canonical(await git(cwd, ["rev-parse", "--show-toplevel"]));
+  private async defaultGitRoot(cwd: string): Promise<string> {
+    const allowed = await this.assertAllowed(cwd);
+    return canonical(await git(allowed, ["rev-parse", "--show-toplevel"]));
   }
 
   private async listedWorktrees(gitRoot: string): Promise<string[]> {
@@ -148,7 +148,7 @@ export class WorkspaceBoundary {
     return removed;
   }
 
-  async mutationCapability(): Promise<WorkspaceMutationCapability> {
+  async mutationCapability(cwd: string = this.defaultWorkspace): Promise<WorkspaceMutationCapability> {
     if (this.config.workspaceStrategy === "read-only") {
       return { mutation: false, workspaceIsolation: "none", limitations: ["Mutation is disabled by workspaceStrategy=read-only."] };
     }
@@ -162,7 +162,7 @@ export class WorkspaceBoundary {
           };
     }
     try {
-      const gitRoot = await this.defaultGitRoot();
+      const gitRoot = await this.defaultGitRoot(cwd);
       await git(gitRoot, ["rev-parse", "--verify", "HEAD"]);
       let sourceWorkspaceDirty: boolean | undefined;
       const limitations: string[] = [];
@@ -194,7 +194,7 @@ export class WorkspaceBoundary {
         mutation: false,
         workspaceIsolation: "none",
         limitations: [
-          `Mutation requires a Git repository with a committed HEAD. To opt into in-place mutation, set security.workspaceStrategy=bounded-in-place and security.allowInPlaceMutations=true. ${error instanceof Error ? error.message : String(error)}`,
+          `Mutation requires a Git repository with a committed HEAD inside the allowed roots. Retry the writable delegation with workspace set to the target project's Git repository root, or explicitly opt into in-place mutation with security.workspaceStrategy=bounded-in-place and security.allowInPlaceMutations=true. ${error instanceof Error ? error.message : String(error)}`,
         ],
       };
     }
@@ -277,7 +277,7 @@ export class WorkspaceBoundary {
       }
       if (strategy === "git-worktree" || !this.config.allowInPlaceMutations) {
         throw new Error(
-          `Unable to create an isolated Git worktree; in-place mutation is disabled. ${error instanceof Error ? error.message : String(error)}`,
+          `Unable to create an isolated Git worktree; in-place mutation is disabled. Retry with workspace set to the target project's Git repository root inside the allowed roots, or enable security.workspaceStrategy=bounded-in-place with security.allowInPlaceMutations=true explicitly. ${error instanceof Error ? error.message : String(error)}`,
         );
       }
       return { cwd, root: cwd, isolated: false, strategy: "bounded-in-place" };
@@ -305,7 +305,7 @@ export class WorkspaceBoundary {
       return { status: "not-required", message: "This workspace strategy creates no detached worktree." };
     }
     try {
-      const gitRoot = await this.defaultGitRoot();
+      const gitRoot = await this.defaultGitRoot(this.defaultWorkspace);
       const base = await this.secureWorktreeBase();
       const suffix = `-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
       const worktrees: string[] = [];

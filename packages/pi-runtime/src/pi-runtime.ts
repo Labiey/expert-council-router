@@ -400,8 +400,8 @@ export class PiExpertRuntime implements ExpertRuntime {
     }
   }
 
-  async getCapabilities(): Promise<RuntimeCapabilities> {
-    const workspace = await this.boundary.mutationCapability();
+  async getCapabilities(cwd: string = this.options.cwd): Promise<RuntimeCapabilities> {
+    const workspace = await this.boundary.mutationCapability(cwd);
     return {
       hostType: `pi:${this.packageName}`,
       modelDiscovery: true,

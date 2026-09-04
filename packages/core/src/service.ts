@@ -269,6 +269,12 @@ export class ExpertCouncilService implements ExpertCouncil {
       runtimeBillingPolicies,
     );
     const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates);
+    if (!request.constraints?.costPolicy) {
+      plan.warnings = [
+        "No costPolicy was supplied. Before the first council in a conversation, ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy and reuse the answer for later councils in this conversation.",
+        ...plan.warnings,
+      ];
+    }
     this.plans.set(plan.id, plan);
     await this.persistState(Boolean(request.modelAssessment));
     return plan;
@@ -332,7 +338,9 @@ export class ExpertCouncilService implements ExpertCouncil {
   ): Promise<ExpertResult> {
     const id = state.id;
     await this.refreshSharedAssessment();
-    const runtimeCapabilities = await this.runtime.getCapabilities();
+    // Evaluate mutation capability for the requested workspace: the startup
+    // folder may not be a Git repository even when the target project is.
+    const runtimeCapabilities = await this.runtime.getCapabilities(request.workspace);
     const [models, aggregates, availableSkills] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
