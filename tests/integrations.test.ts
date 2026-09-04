@@ -236,6 +236,18 @@ describe("Codex plugin packaging", () => {
     }
   });
 
+  it("advertises the prebuilt remote install in both quick-start sections", () => {
+    const english = readFileSync("README.md", "utf8")
+      .match(/### Install the Codex plugin \(optional\)([\s\S]*?)### Build from source/)?.[1];
+    const chinese = readFileSync("README.zh-CN.md", "utf8")
+      .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
+
+    for (const section of [english, chinese]) {
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json");
+      expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
+    }
+  });
+
   it("uses a plugin-relative cwd without relying on MCP argument interpolation", () => {
     const mcpFile = JSON.parse(
       readFileSync("packages/codex-integration/plugin/expert-council/.mcp.json", "utf8"),

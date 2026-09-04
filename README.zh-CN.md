@@ -98,7 +98,14 @@ pi update npm:@expert-council/pi-package
 
 ### 安装 Codex 插件（可选）
 
-若要由 Codex 担任主代理，请从仓库构建并通过 Codex 插件市场安装内置插件——完整步骤见 [Codex 插件](#codex-插件)。
+若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
+
+```bash
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin add expert-council@expert-council-router --json
+```
+
+安装后请完全重启 Codex Desktop。Windows CLI 定位、验证、升级和卸载步骤见 [Codex 插件](#codex-插件)。
 
 ### 从源码构建（开发）
 

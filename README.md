@@ -97,7 +97,14 @@ pi update npm:@expert-council/pi-package
 
 ### Install the Codex plugin (optional)
 
-To run Codex as the Main Agent, build the repository and install the bundled plugin through a Codex plugin marketplace — see [Codex plugin](#codex-plugin) for the full walkthrough.
+To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
+
+```bash
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin add expert-council@expert-council-router --json
+```
+
+Fully restart Codex Desktop after installation. See [Codex plugin](#codex-plugin) for Windows CLI discovery, verification, upgrade, and removal instructions.
 
 ### Build from source (development)
 
