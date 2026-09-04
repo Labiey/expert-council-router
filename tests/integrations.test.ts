@@ -315,6 +315,39 @@ describe("Codex plugin packaging", () => {
   });
 });
 
+describe("cost policy reminders", () => {
+  it("reminds the host to establish a cost policy until one is supplied", async () => {
+    const server = createClientRootMcpServer({ cwd: process.cwd() }, async () => mockCouncil());
+    const client = new Client({ name: "cost-policy-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const first = await client.callTool({
+        name: "expert_delegate",
+        arguments: { role: "scout", task: "Inspect a tiny file", timeoutMs: 60000 },
+      });
+      expect(JSON.stringify(first.content)).toContain("Ask the user once whether to optimize for economy, balanced, or speed");
+
+      const build = await client.callTool({
+        name: "expert_build",
+        arguments: { task: "Implement a small bounded feature", constraints: { costPolicy: "balanced" } },
+      });
+      expect(build.isError).not.toBe(true);
+      expect(JSON.stringify(build.content)).not.toContain("Ask the user once whether to optimize");
+
+      const second = await client.callTool({
+        name: "expert_delegate",
+        arguments: { role: "scout", task: "Inspect another tiny file", timeoutMs: 60000 },
+      });
+      expect(JSON.stringify(second.content)).not.toContain("Ask the user once whether to optimize");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
 describe("Pi adapter registration", () => {
   it("documents shell-safe local Pi installation and removal commands", () => {
     const readme = readFileSync("README.md", "utf8");

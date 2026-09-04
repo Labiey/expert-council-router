@@ -149,6 +149,11 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     { name: "expert-council", version: "0.4.0" },
     { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
   );
+  // A stdio server process serves exactly one host conversation, so this
+  // session-scoped flag is the reliable in-band channel for the cost-policy
+  // establishment requirement even when the host skips expert_build.
+  const session = { costPolicyEstablished: false };
+  const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
 
   server.registerTool(
     "expert_inspect",
@@ -199,6 +204,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           ? { modelAssessment: assessment.assessment }
           : {}),
       }));
+      if (input.constraints?.costPolicy) session.costPolicyEstablished = true;
       return response(presentCouncilPlan({
         ...plan,
         warnings: [
@@ -214,7 +220,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_delegate",
     {
       title: "Delegate Expert Task",
-      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Set each timeoutMs explicitly from task difficulty.",
+      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. Before the first delegation or council in a conversation, establish one cost policy with the user — economy, balanced, or speed — via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. Set each timeoutMs explicitly from task difficulty.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -260,9 +266,10 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           status: "running" as const,
         };
       });
+      const reminders = session.costPolicyEstablished ? [] : [COST_POLICY_REMINDER];
       return response(input.assignments
-        ? { status: "running", executions: receipts }
-        : { executionId: receipts[0]!.executionId, status: "running" });
+        ? { status: "running", executions: receipts, ...(reminders.length ? { reminders } : {}) }
+        : { executionId: receipts[0]!.executionId, status: "running", ...(reminders.length ? { reminders } : {}) });
     },
   );
   server.registerTool(
