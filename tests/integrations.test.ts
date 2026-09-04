@@ -200,6 +200,42 @@ describe("MCP semantic surface", () => {
 });
 
 describe("Codex plugin packaging", () => {
+  it("ships a repo marketplace entry for CLI-managed installation", () => {
+    const marketplace = JSON.parse(readFileSync(".agents/plugins/marketplace.json", "utf8"));
+    expect(marketplace).toMatchObject({
+      name: "expert-council-router",
+      interface: { displayName: "Expert Council" },
+      plugins: [{
+        name: "expert-council",
+        source: {
+          source: "local",
+          path: "./packages/codex-integration/plugin/expert-council",
+        },
+        policy: {
+          installation: "AVAILABLE",
+          authentication: "ON_INSTALL",
+        },
+        category: "Developer Tools",
+      }],
+    });
+    expect(existsSync("packages/codex-integration/plugin/expert-council/dist/server.mjs")).toBe(true);
+  });
+
+  it("documents CLI-managed install, verification, upgrade, and removal", () => {
+    for (const document of [
+      readFileSync("README.md", "utf8"),
+      readFileSync("README.zh-CN.md", "utf8"),
+    ]) {
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json");
+      expect(document).toContain("codex plugin marketplace list --json");
+      expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
+      expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
+      expect(document).toContain("codex plugin remove expert-council@expert-council-router --json");
+      expect(document).toContain("codex plugin marketplace remove expert-council-router --json");
+      expect(document).toContain("expert_inspect");
+    }
+  });
+
   it("uses a plugin-relative cwd without relying on MCP argument interpolation", () => {
     const mcpFile = JSON.parse(
       readFileSync("packages/codex-integration/plugin/expert-council/.mcp.json", "utf8"),

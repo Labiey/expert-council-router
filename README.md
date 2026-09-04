@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current release (0.5.0) includes:
+The current release (0.5.1) includes:
 
 - A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -482,12 +482,68 @@ packages/codex-integration/plugin/expert-council/
 
 ### Installation
 
-1. Build from a repository checkout: `npm install && npm run build`.
-2. Expose the plugin directory through a personal or repository plugin marketplace as documented by the current [OpenAI plugin packaging guide](https://developers.openai.com/plugins/build/plugins). This repository does not write marketplace files automatically, because that would change user or team Codex configuration.
-3. Install the plugin from your marketplace in Codex. After every install or reinstall, fully quit Codex Desktop, wait for its backend process to exit, and reopen the app — merely opening a new task is not a reliable MCP reload boundary in every Desktop build.
-4. When upgrading, bump the marketplace cachebuster and remove obsolete test installations first; installing multiple copies that all declare the `expert_council` MCP server makes host diagnostics ambiguous.
+Release `v0.5.1` includes the prebuilt MCP server, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and a working Pi installation are required at runtime; cloning and building this repository is not required.
+
+```bash
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin marketplace list --json
+codex plugin list --marketplace expert-council-router --available --json
+codex plugin add expert-council@expert-council-router --json
+codex plugin list --json
+```
+
+`marketplace add` is needed only once for this release. If the marketplace name is already registered from an older or local source, remove that source first or follow the upgrade procedure below. `plugin list --json` should show `expert-council` as installed from `expert-council-router`.
+
+Codex Desktop on Windows includes the CLI, but it may not be on `PATH`. In PowerShell, resolve the running Desktop binary and use it for the same remote installation:
+
+```powershell
+$ecCodex = (Get-Command codex.exe -ErrorAction SilentlyContinue).Source
+if (-not $ecCodex) {
+    $ecCodex = Get-Process codex -ErrorAction SilentlyContinue |
+        Where-Object Path |
+        Select-Object -First 1 -ExpandProperty Path
+}
+if (-not $ecCodex) {
+    $ecCodex = Get-ChildItem (Join-Path $env:LOCALAPPDATA "OpenAI/Codex/bin") `
+        -Filter codex.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
+
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+& $ecCodex plugin marketplace list --json
+& $ecCodex plugin list --marketplace expert-council-router --available --json
+& $ecCodex plugin add "expert-council@expert-council-router" --json
+& $ecCodex plugin list --json
+```
+
+Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and start a new task. Merely opening another task is not a reliable MCP reload boundary in every Desktop build.
+
+For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
 A correct load exposes the `expert-council` Skill and all nine `expert_*` MCP tools. If the Skill is present but the tools are absent, treat the installation as failed: restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+
+To verify the installed workflow, use a new Codex task and ask:
+
+```text
+Use Expert Council to inspect the currently available Pi models, providers, billing classification, and model-assessment status. Return only a compact summary; do not build a council or delegate experts.
+```
+
+The task should invoke `expert_inspect`. It should not ask for hook trust, manually launch the MCP server, or treat the plugin cache as the project workspace.
+
+### Upgrade
+
+A marketplace pinned with `--ref` intentionally stays on that release. To upgrade, remove the installed plugin and old marketplace registration, then add the new tag and reinstall:
+
+```bash
+codex plugin remove expert-council@expert-council-router --json
+codex plugin marketplace remove expert-council-router --json
+codex plugin marketplace add Labiey/expert-council-router --ref vX.Y.Z --json
+codex plugin add expert-council@expert-council-router --json
+```
+
+Replace `vX.Y.Z` with the intended release. Users who deliberately track the default branch can omit `--ref` and later run `codex plugin marketplace upgrade expert-council-router --json`, but pinned tags are safer for normal use. After reinstalling, fully restart Codex Desktop and test in a new task. Avoid installing multiple copies that all declare the `expert_council` MCP server.
 
 ### Behavior highlights
 
@@ -497,7 +553,16 @@ A correct load exposes the `expert-council` Skill and all nine `expert_*` MCP to
 
 ### Removal
 
-Remove the plugin from Codex's plugin settings, then fully quit Codex Desktop before starting new tasks.
+Remove the plugin and its marketplace registration:
+
+```bash
+codex plugin remove expert-council@expert-council-router --json
+codex plugin marketplace remove expert-council-router --json
+codex plugin list --json
+codex plugin marketplace list --json
+```
+
+On Windows, replace `codex` with `& $ecCodex` when using the PowerShell variable above. Fully quit Codex Desktop before starting new tasks.
 
 ## Testing
 

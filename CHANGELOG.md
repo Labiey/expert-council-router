@@ -2,6 +2,13 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.5.1 - 2026-09-05
+
+### Fixed
+
+- Git tags now include the prebuilt Codex plugin server and shared role prompts, so a pinned remote Git marketplace can install the plugin without cloning the repository or running a local build.
+- Added the repository marketplace catalog and complete Codex CLI installation, verification, upgrade, and removal instructions.
+
 ## 0.5.0 - 2026-09-04
 
 ### Added

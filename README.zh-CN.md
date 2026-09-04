@@ -18,7 +18,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.5.0）已包含：
+当前版本（0.5.1）已包含：
 
 - 与宿主无关的 Core：配置校验、模型归一化、计费策略、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
@@ -483,12 +483,68 @@ packages/codex-integration/plugin/expert-council/
 
 ### 安装
 
-1. 从仓库检出版本构建：`npm install && npm run build`。
-2. 按当前 [OpenAI 插件打包指南](https://developers.openai.com/plugins/build/plugins) 通过个人或仓库插件市场暴露插件目录。本仓库不会自动写市场文件，因为那会改动用户或团队的 Codex 配置。
-3. 在 Codex 中从你的市场安装插件。每次安装或重装后，完全退出 Codex Desktop、等待其后端进程结束再重新打开——仅新开任务在部分 Desktop 版本中并不可靠地触发 MCP 重载。
-4. 升级时先更新市场 cachebuster 并移除过期的测试安装；同时安装多个都声明 `expert_council` MCP 服务器的副本会让宿主诊断变得混乱。
+`v0.5.1` 已包含预构建 MCP Server，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装，无需克隆或在本机编译。运行时需要 Node.js 22.19 或更高版本，以及可正常运行的 Pi。
+
+```bash
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin marketplace list --json
+codex plugin list --marketplace expert-council-router --available --json
+codex plugin add expert-council@expert-council-router --json
+codex plugin list --json
+```
+
+每个发布版本只需执行一次 `marketplace add`。如果已经用旧版本或本地路径注册了同名 Marketplace，请先移除旧来源，或按下方升级流程操作。`plugin list --json` 应显示 `expert-council` 已从 `expert-council-router` 安装。
+
+Windows 版 Codex Desktop 内置 CLI，但它可能不在 `PATH` 中。可以在 PowerShell 定位正在运行的 Desktop CLI，再执行同样的远程安装命令：
+
+```powershell
+$ecCodex = (Get-Command codex.exe -ErrorAction SilentlyContinue).Source
+if (-not $ecCodex) {
+    $ecCodex = Get-Process codex -ErrorAction SilentlyContinue |
+        Where-Object Path |
+        Select-Object -First 1 -ExpandProperty Path
+}
+if (-not $ecCodex) {
+    $ecCodex = Get-ChildItem (Join-Path $env:LOCALAPPDATA "OpenAI/Codex/bin") `
+        -Filter codex.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
+
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+& $ecCodex plugin marketplace list --json
+& $ecCodex plugin list --marketplace expert-council-router --available --json
+& $ecCodex plugin add "expert-council@expert-council-router" --json
+& $ecCodex plugin list --json
+```
+
+完全退出 Codex Desktop，等待其后端进程结束，再重新打开并新建任务。部分 Desktop 版本仅新建任务并不能可靠触发 MCP 重载。
+
+若要开发插件，可克隆仓库、执行 `npm ci && npm run build`，再把仓库根目录的绝对路径传给 `codex plugin marketplace add`。普通使用建议安装固定版本的远程 Release。
 
 加载成功时会同时出现 `expert-council` Skill 和全部 9 个 `expert_*` MCP 工具。如果只有 Skill 而没有工具，视为安装失败：请重启或重装插件，不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
+
+在新的 Codex 任务中输入以下提示以验证安装：
+
+```text
+使用 Expert Council 检查当前可用的 Pi 模型、Provider、计费分类和模型评估状态。只返回紧凑摘要，不组建委员会，也不派遣专家。
+```
+
+任务应调用 `expert_inspect`，不应要求信任 hook、手工启动 MCP Server，也不应把插件缓存目录当作项目工作区。
+
+### 升级
+
+使用 `--ref` 固定的 Marketplace 会有意停留在该发布版本。升级时请移除已安装插件与旧 Marketplace，然后添加新标签并重新安装：
+
+```bash
+codex plugin remove expert-council@expert-council-router --json
+codex plugin marketplace remove expert-council-router --json
+codex plugin marketplace add Labiey/expert-council-router --ref vX.Y.Z --json
+codex plugin add expert-council@expert-council-router --json
+```
+
+请把 `vX.Y.Z` 替换为目标版本。如果明确希望跟随默认分支，可以在首次添加时省略 `--ref`，以后执行 `codex plugin marketplace upgrade expert-council-router --json`；普通使用仍建议固定标签。重装后请完全重启 Codex Desktop，并在新任务中测试。不要同时安装多个都声明 `expert_council` MCP Server 的副本。
 
 ### 行为要点
 
@@ -498,7 +554,16 @@ packages/codex-integration/plugin/expert-council/
 
 ### 卸载
 
-在 Codex 插件设置中移除插件，然后完全退出 Codex Desktop 再开始新任务。
+移除插件及其 Marketplace 注册：
+
+```bash
+codex plugin remove expert-council@expert-council-router --json
+codex plugin marketplace remove expert-council-router --json
+codex plugin list --json
+codex plugin marketplace list --json
+```
+
+Windows 使用前述 PowerShell 变量时，请把 `codex` 替换为 `& $ecCodex`。之后请完全退出 Codex Desktop，再开始新任务。
 
 ## 测试
 
