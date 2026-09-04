@@ -4,8 +4,6 @@
 
 Expert Council is a local, multi-model, cost-aware expert orchestration system for Pi and MCP hosts such as Codex. It discovers the models connected through Pi's registered LLM APIs and coding plans, combines runtime metadata with user-defined billing policy, capability profiles, and local reliability data, dynamically assembles a small semantic expert team, executes bounded tasks through Pi, and returns compact structured results to the Main Agent.
 
-> ⚠️ **Codex plugin not yet released**: the Codex plugin has not completed functional testing. Its installation and usage documentation is temporarily withheld from this version and is expected to ship with the next official release. For now, use Expert Council through the native Pi Package, the CLI, or the generic MCP Server.
-
 Key advantages:
 
 | Advantage | Description |
@@ -31,7 +29,7 @@ The current release (0.5.0) includes:
 - Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
 - Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
 - Cross-process shared model assessment: with multiple instances running in parallel, availability markers become visible to each other without a restart.
-- A Codex plugin with the shared Skill and a bundled stdio MCP Server (functional testing incomplete; not yet officially released).
+- A Codex plugin with the shared Skill and a bundled stdio MCP Server, using Codex's host-owned `codex/sandbox-state-meta` capability for workspace discovery (no hooks).
 - Deterministic automated tests that never consume model quota.
 
 ## Architecture
@@ -96,6 +94,10 @@ pi --verbose
 ```bash
 pi update npm:@expert-council/pi-package
 ```
+
+### Install the Codex plugin (optional)
+
+To run Codex as the Main Agent, build the repository and install the bundled plugin through a Codex plugin marketplace — see [Codex plugin](#codex-plugin) for the full walkthrough.
 
 ### Build from source (development)
 
@@ -462,6 +464,40 @@ If removal runs through Pi's Bash-compatible shell, use the forward-slash absolu
 Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the eight semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
 
 Pi delegation is non-blocking; a single call can start up to eight independent background assignments before returning. When an expert finishes, the extension sends compact JSON containing the completed `executionId` and, only when supplied at dispatch, the `taskDescription`; it never carries feedback directly. Notifications use `steer` while the Main Agent is working and a `triggerTurn` `followUp` when it is idle. The Main Agent then calls `expert_result` for the structured feedback. Dispatch the entire ready batch before ending the turn, and avoid polling or silently waiting afterwards.
+
+## Codex plugin
+
+The Codex plugin turns Codex into the Main Agent: it bundles the shared `expert-council` Skill and a stdio MCP Server, while experts execute through Pi. It ships no hooks — the server uses MCP client roots when available, otherwise derives the task workspace from Codex's host-owned `codex/sandbox-state-meta` capability, then falls back to the `EXPERT_COUNCIL_WORKSPACE` override, and refuses to use the plugin installation directory as a workspace.
+
+The built plugin root is:
+
+```text
+packages/codex-integration/plugin/expert-council/
+  .codex-plugin/plugin.json
+  .mcp.json
+  skills/expert-council/SKILL.md
+  dist/server.mjs
+  dist/roles/*.md
+```
+
+### Installation
+
+1. Build from a repository checkout: `npm install && npm run build`.
+2. Expose the plugin directory through a personal or repository plugin marketplace as documented by the current [OpenAI plugin packaging guide](https://developers.openai.com/plugins/build/plugins). This repository does not write marketplace files automatically, because that would change user or team Codex configuration.
+3. Install the plugin from your marketplace in Codex. After every install or reinstall, fully quit Codex Desktop, wait for its backend process to exit, and reopen the app — merely opening a new task is not a reliable MCP reload boundary in every Desktop build.
+4. When upgrading, bump the marketplace cachebuster and remove obsolete test installations first; installing multiple copies that all declare the `expert_council` MCP server makes host diagnostics ambiguous.
+
+A correct load exposes the `expert-council` Skill and all nine `expert_*` MCP tools. If the Skill is present but the tools are absent, treat the installation as failed: restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+
+### Behavior highlights
+
+- The bundled `.mcp.json` raises the host tool-call ceiling to 3660 seconds so a single bounded `expert_wait` can block until completion; the Skill still requires explicit per-operation deadlines rather than treating that ceiling as a default budget.
+- On the first council of a conversation the Main Agent establishes exactly one cost policy with you (economy, balanced, or speed); until then `expert_build` and `expert_delegate` responses carry reminders to ask.
+- Writable experts mutate inside a detached Git worktree under the trusted workspace; changes come back for Main Agent review and are never auto-merged.
+
+### Removal
+
+Remove the plugin from Codex's plugin settings, then fully quit Codex Desktop before starting new tasks.
 
 ## Testing
 

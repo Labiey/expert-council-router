@@ -4,8 +4,6 @@
 
 Expert Council 是一个面向 Pi 与 Codex 等 MCP 宿主的本地、多模型、成本感知专家编排系统。它会发现 Pi 当前注册的 LLM API 与 Coding Plan 中连接的模型，将运行时元数据与用户定义的计费策略、能力画像和本地可靠性数据结合，动态组建一个精简的语义专家团队，并通过 Pi 执行有明确边界的任务，最后向主代理返回紧凑的结构化结果。
 
-> ⚠️ **Codex 插件暂未正式发布**：Codex 插件尚未完成功能测试，预计随下一版本正式发布。当前请通过原生 Pi Package、CLI 或通用 MCP Server 使用 Expert Council。
-
 主要优势：
 
 | 优势 | 说明 |
@@ -32,7 +30,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
 - 跨进程共享模型评估：多实例并行时，可用性标记无需重启即可互相可见。
-- 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件（尚未完成功能测试，暂未正式发布）。
+- 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件，通过 Codex 宿主自有的 `codex/sandbox-state-meta` 能力发现工作区（无需 hook）。
 - 不会消耗模型额度的确定性自动化测试。
 
 ## 架构
@@ -97,6 +95,10 @@ pi --verbose
 ```bash
 pi update npm:@expert-council/pi-package
 ```
+
+### 安装 Codex 插件（可选）
+
+若要由 Codex 担任主代理，请从仓库构建并通过 Codex 插件市场安装内置插件——完整步骤见 [Codex 插件](#codex-插件)。
 
 ### 从源码构建（开发）
 
@@ -463,6 +465,40 @@ pi list
 Pi 会通过当前包清单中的 `pi.extensions` 与 `pi.skills` 加载 `dist/extension.js` 和同步后的 `expert-council` Skill。扩展注册 8 个语义工具；由于原生 Pi 已提供完成 `steer`/`followUp`，因此省略 MCP 专用的 `expert_wait`。它不包含另一套路由实现。
 
 Pi 委派是非阻断式的；一个调用最多可在返回前启动 8 个相互独立的后台任务。专家完成后，扩展发送精简 JSON：必含已完成的 `executionId`，仅在调用时提供过 `taskDescription` 才包含该描述，绝不直接携带 feedback。主 Agent 工作中时通知使用 `steer`；主 Agent 空闲时使用带 `triggerTurn` 的 `followUp` 立即唤醒。随后由主 Agent 调用 `expert_result` 获取结构化反馈。主 Agent 应先发完当前已准备好的整个批次再结束回合，之后不要轮询或静默等待消耗 token。
+
+## Codex 插件
+
+Codex 插件让 Codex 成为主代理：它内置共享的 `expert-council` Skill 与 stdio MCP Server，专家通过 Pi 执行。插件不包含任何 hook——服务器优先使用 MCP roots，其次从 Codex 宿主自有的 `codex/sandbox-state-meta` 能力解析当前任务工作区，最后回退到 `EXPERT_COUNCIL_WORKSPACE` 覆盖项，并且拒绝把插件安装目录当作工作区。
+
+构建产物根目录：
+
+```text
+packages/codex-integration/plugin/expert-council/
+  .codex-plugin/plugin.json
+  .mcp.json
+  skills/expert-council/SKILL.md
+  dist/server.mjs
+  dist/roles/*.md
+```
+
+### 安装
+
+1. 从仓库检出版本构建：`npm install && npm run build`。
+2. 按当前 [OpenAI 插件打包指南](https://developers.openai.com/plugins/build/plugins) 通过个人或仓库插件市场暴露插件目录。本仓库不会自动写市场文件，因为那会改动用户或团队的 Codex 配置。
+3. 在 Codex 中从你的市场安装插件。每次安装或重装后，完全退出 Codex Desktop、等待其后端进程结束再重新打开——仅新开任务在部分 Desktop 版本中并不可靠地触发 MCP 重载。
+4. 升级时先更新市场 cachebuster 并移除过期的测试安装；同时安装多个都声明 `expert_council` MCP 服务器的副本会让宿主诊断变得混乱。
+
+加载成功时会同时出现 `expert-council` Skill 和全部 9 个 `expert_*` MCP 工具。如果只有 Skill 而没有工具，视为安装失败：请重启或重装插件，不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
+
+### 行为要点
+
+- 内置 `.mcp.json` 将宿主工具调用上限提升到 3660 秒，让单次有边界的 `expert_wait` 可以阻塞到完成；Skill 仍要求为每个操作设定明确时限，而不是把该上限当作默认预算。
+- 对话中第一次组建委员会时，主代理会与你确定唯一的成本策略（economy、balanced 或 speed）；在此之前 `expert_build` 与 `expert_delegate` 的响应都会携带询问提醒。
+- 可写专家在受信任工作区下的独立 Git worktree 内修改；变更返回给主代理审查，永不自动合并。
+
+### 卸载
+
+在 Codex 插件设置中移除插件，然后完全退出 Codex Desktop 再开始新任务。
 
 ## 测试
 
