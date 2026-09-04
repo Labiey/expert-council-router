@@ -19,7 +19,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current release (0.4.0) includes:
+The current release (0.5.0) includes:
 
 - A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
