@@ -105,6 +105,20 @@ async function loadFromPackageDirectory(packageDirectory: string): Promise<unkno
   return dynamicImport(pathToFileURL(entry).href);
 }
 
+export function describeSdkLoadFailure(errors: string[]): string {
+  const joined = errors.join("\n");
+  if (joined.includes("@earendil-works/pi-server")) {
+    return [
+      "No compatible Pi SDK is installed. Pi 0.85 or later moved its orchestration server into the separate @earendil-works/pi-server package, which the Pi SDK entry imports but does not declare as a dependency.",
+      "Install the version matching your Pi release globally, then retry:",
+      "  npm install -g @earendil-works/pi-server",
+      "",
+      ...errors,
+    ].join("\n");
+  }
+  return `No compatible Pi SDK is installed. Install a supported Pi coding-agent package.\n${errors.join("\n")}`;
+}
+
 export async function loadPiSdk(): Promise<{ sdk: PiSdkLike; packageName: string }> {
   const errors: string[] = [];
   for (const packageName of SUPPORTED_PI_PACKAGES) {
@@ -147,7 +161,5 @@ export async function loadPiSdk(): Promise<{ sdk: PiSdkLike; packageName: string
       }
     }
   }
-  throw new Error(
-    `No compatible Pi SDK is installed. Install a supported Pi coding-agent package.\n${errors.join("\n")}`,
-  );
+  throw new Error(describeSdkLoadFailure(errors));
 }

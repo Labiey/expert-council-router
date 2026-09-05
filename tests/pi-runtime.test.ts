@@ -26,6 +26,24 @@ const safeResourceApis = {
   getAgentDir: () => path.resolve(".pi-test-agent"),
 } satisfies Partial<PiSdkLike>;
 
+describe("Pi SDK load failure diagnostics", () => {
+  it("turns the Pi 0.85 pi-server split into an actionable install instruction", async () => {
+    const { describeSdkLoadFailure } = await import("../packages/pi-runtime/src/pi-sdk.js");
+    const message = describeSdkLoadFailure([
+      "@earendil-works/pi-coding-agent: Cannot find package '@earendil-works/pi-server' imported from .../pi-coding-agent/dist/experimental/server.js",
+    ]);
+    expect(message).toContain("npm install -g @earendil-works/pi-server");
+    expect(message).toContain("Pi 0.85 or later");
+  });
+
+  it("keeps the generic guidance for unrelated SDK failures", async () => {
+    const { describeSdkLoadFailure } = await import("../packages/pi-runtime/src/pi-sdk.js");
+    const message = describeSdkLoadFailure(["@mariozechner/pi-coding-agent: ENOENT"]);
+    expect(message).not.toContain("pi-server");
+    expect(message).toContain("Install a supported Pi coding-agent package");
+  });
+});
+
 describe("Pi runtime adapter", () => {
   it("recognizes named Pi plan catalogs without treating authentication alone as billing evidence", () => {
     expect(inferPiProviderBilling("qwen-token-plan-cn")).toMatchObject({
