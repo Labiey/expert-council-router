@@ -1,7 +1,7 @@
 {
   "name": "@expert-council/pi-package",
-  "version": "0.5.3",
-  "description": "Native Pi package exposing Expert Council tools and host guidance",
+  "version": "0.5.4",
+  "description": "Expert Council: cost-aware multi-model expert orchestration for Pi — assemble a council of scout, oracle, implementation-worker, and reviewer experts and delegate bounded tasks",
   "type": "module",
   "main": "./dist/extension.js",
   "types": "./dist/extension.d.ts",
@@ -23,8 +23,14 @@
   },
   "keywords": [
     "pi-package",
+    "pi-extension",
+    "expert-council",
+    "council",
+    "multi-agent",
+    "agent-orchestration",
     "multi-model",
-    "orchestration"
+    "codex",
+    "mcp"
   ],
   "publishConfig": {
     "access": "public"
@@ -38,8 +44,8 @@
     ]
   },
   "dependencies": {
-    "@expert-council/core": "0.5.3",
-    "@expert-council/pi-runtime": "0.5.3"
+    "@expert-council/core": "0.5.4",
+    "@expert-council/pi-runtime": "0.5.4"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84.0 <1",

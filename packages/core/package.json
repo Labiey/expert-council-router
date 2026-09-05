@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/core",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Host-independent routing, policy, roles, escalation, and telemetry for Expert Council",
   "type": "module",
   "main": "./dist/index.js",

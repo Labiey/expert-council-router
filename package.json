@@ -1,6 +1,6 @@
 {
   "name": "expert-council-monorepo",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "private": true,
   "description": "Dynamic, cost-aware multi-model expert orchestration for Pi and Codex",
   "license": "MIT",
@@ -33,7 +33,7 @@
     "node": ">=22.19.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "0.84.4",
+    "@earendil-works/pi-coding-agent": "0.85.1",
     "@types/node": "^24.5.2",
     "esbuild": "^0.28.2",
     "tsx": "^4.23.13",
