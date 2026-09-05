@@ -105,7 +105,7 @@ codex plugin marketplace add Labiey/expert-council-router --ref v0.5.3 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
-安装后请完全重启 Codex Desktop。Windows CLI 定位、验证、升级和卸载步骤见 [Codex 插件](#codex-插件)。
+安装后请完全重启 Codex Desktop。插件自带经过测试的 Pi SDK 运行时，运行时不依赖全局安装的 `pi` 包；但仍需至少安装并配置过一次 Pi（或手动把提供商凭据放入 `~/.pi`），账号与模型目录才可用。Windows CLI 定位、验证、升级和卸载步骤见 [Codex 插件](#codex-插件)。
 
 ### 从源码构建（开发）
 
@@ -571,7 +571,64 @@ codex plugin list --json
 codex plugin marketplace list --json
 ```
 
-Windows 使用前述 PowerShell 变量时，请把 `codex` 替换为 `& $ecCodex`。之后请完全退出 Codex Desktop，再开始新任务。
+如果 PowerShell 找不到 `codex`，先定位 Codex Desktop 自带的 CLI（Codex Desktop 运行时可从进程取路径，否则回退到安装目录）：
+
+```powershell
+$ecCodex = Get-Process codex -ErrorAction SilentlyContinue |
+    Where-Object Path |
+    Select-Object -First 1 -ExpandProperty Path
+
+if (-not $ecCodex) {
+    $ecCodex = Get-ChildItem (Join-Path $env:LOCALAPPDATA "OpenAI\Codex") `
+        -Filter codex.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+
+if (-not $ecCodex) {
+    throw "未找到 Codex Desktop 自带的 codex.exe"
+}
+```
+
+然后通过定位到的 CLI 卸载：
+
+```powershell
+& $ecCodex plugin remove "expert-council@expert-council-router" --json
+& $ecCodex plugin marketplace remove "expert-council-router" --json
+
+& $ecCodex plugin list --json
+& $ecCodex plugin marketplace list --json
+```
+
+如果重新打开后仍显示，可在 Codex 关闭状态下安全清理旧 Expert Council 缓存（仅删除 `%USERPROFILE%\.codex\plugins\cache\expert-council-*`）：
+
+```powershell
+$ecCacheRoot = [IO.Path]::GetFullPath(
+    (Join-Path $env:USERPROFILE ".codex\plugins\cache")
+)
+$ecCachePrefix = $ecCacheRoot.TrimEnd("\") + "\"
+
+$ecTargets = Get-ChildItem -LiteralPath $ecCacheRoot `
+    -Directory -ErrorAction SilentlyContinue |
+    Where-Object Name -Like "expert-council-*"
+
+foreach ($ecTarget in $ecTargets) {
+    $ecResolved = [IO.Path]::GetFullPath($ecTarget.FullName)
+
+    if (
+        $ecResolved.StartsWith(
+            $ecCachePrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -and
+        (Split-Path $ecResolved -Leaf) -like "expert-council-*"
+    ) {
+        Write-Host "删除缓存: $ecResolved"
+        Remove-Item -LiteralPath $ecResolved -Recurse -Force
+    }
+}
+```
+
+之后请完全退出 Codex Desktop，再开始新任务。
 
 ## 测试
 

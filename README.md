@@ -104,7 +104,7 @@ codex plugin marketplace add Labiey/expert-council-router --ref v0.5.3 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
-Fully restart Codex Desktop after installation. See [Codex plugin](#codex-plugin) for Windows CLI discovery, verification, upgrade, and removal instructions.
+Fully restart Codex Desktop after installation. The plugin ships its own tested Pi SDK runtime, so the globally installed `pi` package is not used at runtime; Pi still must have been installed and configured once — or provider credentials placed manually under `~/.pi` — so the account and model catalog are available. See [Codex plugin](#codex-plugin) for Windows CLI discovery, verification, upgrade, and removal instructions.
 
 ### Build from source (development)
 
@@ -570,7 +570,64 @@ codex plugin list --json
 codex plugin marketplace list --json
 ```
 
-On Windows, replace `codex` with `& $ecCodex` when using the PowerShell variable above. Fully quit Codex Desktop before starting new tasks.
+If PowerShell cannot find `codex`, locate the Codex Desktop CLI first (while Codex Desktop is running its path can be taken from the process; otherwise fall back to the install directory):
+
+```powershell
+$ecCodex = Get-Process codex -ErrorAction SilentlyContinue |
+    Where-Object Path |
+    Select-Object -First 1 -ExpandProperty Path
+
+if (-not $ecCodex) {
+    $ecCodex = Get-ChildItem (Join-Path $env:LOCALAPPDATA "OpenAI\Codex") `
+        -Filter codex.exe -File -Recurse -ErrorAction SilentlyContinue |
+        Sort-Object LastWriteTime -Descending |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+
+if (-not $ecCodex) {
+    throw "Codex Desktop's codex.exe was not found."
+}
+```
+
+Then uninstall through the located CLI:
+
+```powershell
+& $ecCodex plugin remove "expert-council@expert-council-router" --json
+& $ecCodex plugin marketplace remove "expert-council-router" --json
+
+& $ecCodex plugin list --json
+& $ecCodex plugin marketplace list --json
+```
+
+If the plugin still shows after reopening Codex Desktop, close Codex and safely remove the stale Expert Council caches (only `%USERPROFILE%\.codex\plugins\cache\expert-council-*` is touched):
+
+```powershell
+$ecCacheRoot = [IO.Path]::GetFullPath(
+    (Join-Path $env:USERPROFILE ".codex\plugins\cache")
+)
+$ecCachePrefix = $ecCacheRoot.TrimEnd("\") + "\"
+
+$ecTargets = Get-ChildItem -LiteralPath $ecCacheRoot `
+    -Directory -ErrorAction SilentlyContinue |
+    Where-Object Name -Like "expert-council-*"
+
+foreach ($ecTarget in $ecTargets) {
+    $ecResolved = [IO.Path]::GetFullPath($ecTarget.FullName)
+
+    if (
+        $ecResolved.StartsWith(
+            $ecCachePrefix,
+            [StringComparison]::OrdinalIgnoreCase
+        ) -and
+        (Split-Path $ecResolved -Leaf) -like "expert-council-*"
+    ) {
+        Write-Host "Removing cache: $ecResolved"
+        Remove-Item -LiteralPath $ecResolved -Recurse -Force
+    }
+}
+```
+
+Fully quit Codex Desktop before starting new tasks.
 
 ## Testing
 
