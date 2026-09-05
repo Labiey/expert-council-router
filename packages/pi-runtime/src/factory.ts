@@ -9,6 +9,7 @@ import { JsonModelAssessmentStore } from "./file-assessment.js";
 import { JsonCouncilStateStore } from "./file-state.js";
 import { SplitCouncilStateStore } from "./persistent-state.js";
 import { PiExpertRuntime } from "./pi-runtime.js";
+import type { PiSdkLike } from "./pi-sdk.js";
 
 export interface CreateCouncilOptions {
   cwd?: string;
@@ -18,6 +19,9 @@ export interface CreateCouncilOptions {
   statePath?: string;
   modelAssessmentPath?: string;
   roleDirectory?: string;
+  /** Host-provided SDK used by self-contained distributions such as the Codex plugin. */
+  sdk?: PiSdkLike;
+  sdkPackageName?: string;
 }
 
 function resolveOperatorPath(cwd: string, value: string, label: string): string {
@@ -82,7 +86,13 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
   const roleDirectory = options.roleDirectory
     ? resolveOperatorPath(cwd, options.roleDirectory, "Role directory")
     : undefined;
-  const runtime = await PiExpertRuntime.create({ cwd, config, ...(roleDirectory ? { roleDirectory } : {}) });
+  const runtime = await PiExpertRuntime.create({
+    cwd,
+    config,
+    ...(roleDirectory ? { roleDirectory } : {}),
+    ...(options.sdk ? { sdk: options.sdk } : {}),
+    ...(options.sdkPackageName ? { packageName: options.sdkPackageName } : {}),
+  });
   const defaults = defaultCouncilStoragePaths(cwd);
   const telemetryPath = resolveOperatorPath(
     cwd,

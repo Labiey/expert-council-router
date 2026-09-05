@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/pi-runtime",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Pi-backed model discovery and least-privilege expert execution for Expert Council",
   "type": "module",
   "main": "./dist/index.js",
@@ -12,21 +12,37 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/pi-runtime" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Labiey/expert-council-router.git",
+    "directory": "packages/pi-runtime"
+  },
   "homepage": "https://github.com/Labiey/expert-council-router#readme",
-  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
-  "publishConfig": { "access": "public" },
+  "bugs": {
+    "url": "https://github.com/Labiey/expert-council-router/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
-    "@expert-council/core": "0.5.1"
+    "@expert-council/core": "0.5.2"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84.0",
     "@mariozechner/pi-coding-agent": ">=0.73.0"
   },
   "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": { "optional": true },
-    "@mariozechner/pi-coding-agent": { "optional": true }
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    }
   }
 }

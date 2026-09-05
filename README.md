@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current release (0.5.1) includes:
+The current release (0.5.2) includes:
 
 - A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -29,7 +29,7 @@ The current release (0.5.1) includes:
 - Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
 - Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
 - Cross-process shared model assessment: with multiple instances running in parallel, availability markers become visible to each other without a restart.
-- A Codex plugin with the shared Skill and a bundled stdio MCP Server, using Codex's host-owned `codex/sandbox-state-meta` capability for workspace discovery (no hooks).
+- A self-contained Codex plugin with the shared Skill, stdio MCP Server, and tested Pi SDK runtime, using Codex's host-owned `codex/sandbox-state-meta` capability for workspace discovery (no hooks or global SDK lookup).
 - Deterministic automated tests that never consume model quota.
 
 ## Architecture
@@ -100,7 +100,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -485,14 +485,15 @@ packages/codex-integration/plugin/expert-council/
   skills/expert-council/SKILL.md
   dist/server.mjs
   dist/roles/*.md
+  THIRD_PARTY_NOTICES.md
 ```
 
 ### Installation
 
-Release `v0.5.1` includes the prebuilt MCP server, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and a working Pi installation are required at runtime; cloning and building this repository is not required.
+Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -518,7 +519,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -529,7 +530,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all nine `expert_*` MCP tools. If the Skill is present but the tools are absent, treat the installation as failed: restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all nine `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.5.2` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 

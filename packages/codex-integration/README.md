@@ -2,7 +2,9 @@
 
 This private workspace package builds the Codex plugin found in
 `plugin/expert-council`. The plugin contains the Codex-specific Skill and an MCP
-server bundle backed by the shared Expert Council Core and Pi Runtime.
+server bundle backed by the shared Expert Council Core and Pi Runtime. The
+release artifact also bundles the tested Pi SDK runtime, so a Git Marketplace
+install does not resolve SDK modules from the user's global npm directory.
 
 The plugin launch directory resolves the bundled server only. At runtime the server
 uses the current Codex project's MCP file roots when available, then Codex's

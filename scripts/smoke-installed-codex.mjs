@@ -1,4 +1,4 @@
-import { cp, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,6 +9,8 @@ const temporaryPlugin = await mkdtemp(path.join(tmpdir(), "expert-council-instal
 try {
   const source = path.resolve("packages/codex-integration/plugin/expert-council");
   await cp(source, temporaryPlugin, { recursive: true });
+  const isolatedAppData = path.join(temporaryPlugin, "empty-appdata");
+  await mkdir(isolatedAppData);
 
   const mcpFile = JSON.parse(await readFile(path.join(temporaryPlugin, ".mcp.json"), "utf8"));
   const servers = mcpFile.mcp_servers ?? mcpFile.mcpServers ?? mcpFile;
@@ -28,7 +30,15 @@ try {
     command: server.command,
     args: server.args,
     cwd,
-    env: { ...process.env, ...server.env },
+    env: {
+      ...process.env,
+      ...server.env,
+      // A Git marketplace install must not accidentally pass because the
+      // developer has a compatible SDK in their global npm directory.
+      APPDATA: isolatedAppData,
+      NODE_PATH: "",
+      PI_CODING_AGENT_MODULE: "",
+    },
   });
   const client = new Client({ name: "expert-council-installed-smoke", version: "0.1.0" });
   try {
@@ -51,6 +61,22 @@ try {
         },
       },
     });
+    const inspectText = inspect.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("");
+    let inventory;
+    try {
+      inventory = JSON.parse(inspectText);
+    } catch {
+      throw new Error(`expert_inspect did not return structured JSON: ${inspectText.slice(0, 500)}`);
+    }
+    if (!inventory || typeof inventory.summary?.modelCount !== "number" || !inventory.runtimeCapabilities) {
+      throw new Error(`expert_inspect returned an error or invalid inventory: ${inspectText.slice(0, 500)}`);
+    }
+    if (!/^pi:@earendil-works\/pi-coding-agent:bundled-\d+\.\d+\.\d+$/.test(inventory.runtimeCapabilities.hostType)) {
+      throw new Error(`Installed plugin did not use its bundled Pi SDK: ${inventory.runtimeCapabilities.hostType}`);
+    }
     console.log(JSON.stringify({
       isolatedPluginDirectory: true,
       configuredCommand: server.command,
@@ -61,6 +87,8 @@ try {
       noMcpRootsFallback: true,
       tools: tools.tools.map((tool) => tool.name),
       inspectContentBlocks: inspect.content.length,
+      bundledPiSdk: true,
+      availableModels: inventory.summary.modelCount,
     }));
   } finally {
     await client.close();

@@ -18,7 +18,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.5.1）已包含：
+当前版本（0.5.2）已包含：
 
 - 与宿主无关的 Core：配置校验、模型归一化、计费策略、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
@@ -30,7 +30,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
 - 跨进程共享模型评估：多实例并行时，可用性标记无需重启即可互相可见。
-- 带共享 Skill 和内置 stdio MCP Server 的 Codex 插件，通过 Codex 宿主自有的 `codex/sandbox-state-meta` 能力发现工作区（无需 hook）。
+- 自包含的 Codex 插件，内置共享 Skill、stdio MCP Server 与经过验证的 Pi SDK 运行时，通过 Codex 宿主自有的 `codex/sandbox-state-meta` 能力发现工作区（无需 hook 或全局 SDK 解析）。
 - 不会消耗模型额度的确定性自动化测试。
 
 ## 架构
@@ -101,7 +101,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -486,14 +486,15 @@ packages/codex-integration/plugin/expert-council/
   skills/expert-council/SKILL.md
   dist/server.mjs
   dist/roles/*.md
+  THIRD_PARTY_NOTICES.md
 ```
 
 ### 安装
 
-`v0.5.1` 已包含预构建 MCP Server，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装，无需克隆或在本机编译。运行时需要 Node.js 22.19 或更高版本，以及可正常运行的 Pi。
+`v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -519,7 +520,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.1 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -530,7 +531,7 @@ if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
 若要开发插件，可克隆仓库、执行 `npm ci && npm run build`，再把仓库根目录的绝对路径传给 `codex plugin marketplace add`。普通使用建议安装固定版本的远程 Release。
 
-加载成功时会同时出现 `expert-council` Skill 和全部 9 个 `expert_*` MCP 工具。如果只有 Skill 而没有工具，视为安装失败：请重启或重装插件，不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
+加载成功时会同时出现 `expert-council` Skill 和全部 9 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.5.2` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
 
 在新的 Codex 任务中输入以下提示以验证安装：
 

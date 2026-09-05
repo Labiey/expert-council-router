@@ -1,11 +1,20 @@
 {
   "name": "@expert-council/codex-integration",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "private": true,
   "description": "Codex plugin distribution for Expert Council",
-  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/codex-integration" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Labiey/expert-council-router.git",
+    "directory": "packages/codex-integration"
+  },
   "homepage": "https://github.com/Labiey/expert-council-router#readme",
-  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
+  "bugs": {
+    "url": "https://github.com/Labiey/expert-council-router/issues"
+  },
   "type": "module",
-  "files": ["plugin/expert-council", "README.md"]
+  "files": [
+    "plugin/expert-council",
+    "README.md"
+  ]
 }

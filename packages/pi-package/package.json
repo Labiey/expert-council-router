@@ -1,24 +1,45 @@
 {
   "name": "@expert-council/pi-package",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Native Pi package exposing Expert Council tools and host guidance",
   "type": "module",
   "main": "./dist/extension.js",
   "types": "./dist/extension.d.ts",
-  "files": ["dist", "skills", "README.md", "LICENSE"],
+  "files": [
+    "dist",
+    "skills",
+    "README.md",
+    "LICENSE"
+  ],
   "license": "MIT",
-  "repository": { "type": "git", "url": "git+https://github.com/Labiey/expert-council-router.git", "directory": "packages/pi-package" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Labiey/expert-council-router.git",
+    "directory": "packages/pi-package"
+  },
   "homepage": "https://github.com/Labiey/expert-council-router#readme",
-  "bugs": { "url": "https://github.com/Labiey/expert-council-router/issues" },
-  "keywords": ["pi-package", "multi-model", "orchestration"],
-  "publishConfig": { "access": "public" },
+  "bugs": {
+    "url": "https://github.com/Labiey/expert-council-router/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "multi-model",
+    "orchestration"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "pi": {
-    "extensions": ["./dist/extension.js"],
-    "skills": ["./skills"]
+    "extensions": [
+      "./dist/extension.js"
+    ],
+    "skills": [
+      "./skills"
+    ]
   },
   "dependencies": {
-    "@expert-council/core": "0.5.1",
-    "@expert-council/pi-runtime": "0.5.1"
+    "@expert-council/core": "0.5.2",
+    "@expert-council/pi-runtime": "0.5.2"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84.0 <1",
