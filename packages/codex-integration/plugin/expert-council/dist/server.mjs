@@ -294370,6 +294370,20 @@ async function loadFromPackageDirectory(packageDirectory) {
   await access4(entry);
   return dynamicImport2(pathToFileURL4(entry).href);
 }
+function describeSdkLoadFailure(errors) {
+  const joined = errors.join("\n");
+  if (joined.includes("@earendil-works/pi-server")) {
+    return [
+      "No compatible Pi SDK is installed. Pi 0.85 or later moved its orchestration server into the separate @earendil-works/pi-server package, which the Pi SDK entry imports but does not declare as a dependency.",
+      "Install the version matching your Pi release globally, then retry:",
+      "  npm install -g @earendil-works/pi-server",
+      "",
+      ...errors
+    ].join("\n");
+  }
+  return `No compatible Pi SDK is installed. Install a supported Pi coding-agent package.
+${errors.join("\n")}`;
+}
 async function loadPiSdk() {
   const errors = [];
   for (const packageName of SUPPORTED_PI_PACKAGES) {
@@ -294414,8 +294428,7 @@ async function loadPiSdk() {
       }
     }
   }
-  throw new Error(`No compatible Pi SDK is installed. Install a supported Pi coding-agent package.
-${errors.join("\n")}`);
+  throw new Error(describeSdkLoadFailure(errors));
 }
 
 // packages/pi-runtime/dist/workspace.js
@@ -295345,7 +295358,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.5.2" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.5.3" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

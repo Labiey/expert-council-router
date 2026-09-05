@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/cli",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "description": "CLI for inspecting, planning, and delegating with Expert Council",
   "type": "module",
   "main": "./dist/index.js",
@@ -33,7 +33,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@expert-council/core": "0.5.2",
-    "@expert-council/pi-runtime": "0.5.2"
+    "@expert-council/core": "0.5.3",
+    "@expert-council/pi-runtime": "0.5.3"
   }
 }

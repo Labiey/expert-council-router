@@ -227,7 +227,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.3 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -244,7 +244,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.2 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.3 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });
