@@ -18,7 +18,7 @@ import {
   withModelStatus,
 } from "./model-assessment.js";
 import { listRoles } from "./roles.js";
-import { rankModels } from "./routing.js";
+import { rankModels, routePolicyExcludes } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
 import type {
   BuildCouncilRequest,
@@ -50,6 +50,9 @@ import type {
   AbortExecutionRequest,
   AbortExecutionResult,
   ExecutionProgress,
+  RoutePolicy,
+  SetRoutePolicyResult,
+  AvailableModel,
 } from "./types.js";
 
 type ExecutionState = ExecutionStateSnapshot;
@@ -118,6 +121,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   private readonly executions = new Map<string, ExecutionState>();
   private readonly results = new Map<string, ExpertResult>();
   private readonly executionPromises = new Map<string, Promise<ExpertResult>>();
+  private routePolicy: RoutePolicy | undefined;
   private modelAssessment?: ModelAssessmentSnapshot;
   private persistenceQueue: Promise<void> = Promise.resolve();
 
@@ -252,12 +256,16 @@ export class ExpertCouncilService implements ExpertCouncil {
 
   async buildCouncil(request: BuildCouncilRequest): Promise<CouncilPlan> {
     await this.refreshSharedAssessment();
-    const [models, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
+    const [fetchedModels, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
       this.runtime.getCapabilities(),
       this.runtime.listProviderBilling?.() ?? Promise.resolve<Record<string, RuntimeBillingDiscovery>>({}),
     ]);
+    const models = this.filterByRoutePolicy(fetchedModels);
+    if (this.routePolicy && models.length === 0) {
+      throw new Error("The session route policy excludes every available model; adjust expert_policy (allow/deny) before building a council.");
+    }
     if (request.modelAssessment) {
       const submitted = parseModelAssessmentSnapshot(request.modelAssessment);
       this.modelAssessment = this.modelAssessment
@@ -346,11 +354,15 @@ export class ExpertCouncilService implements ExpertCouncil {
     // Evaluate mutation capability for the requested workspace: the startup
     // folder may not be a Git repository even when the target project is.
     const runtimeCapabilities = await this.runtime.getCapabilities(request.workspace);
-    const [models, aggregates, availableSkills] = await Promise.all([
+    const [unfilteredModels, aggregates, availableSkills] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
       this.runtime.listSkills(),
     ]);
+    const models = this.filterByRoutePolicy(unfilteredModels);
+    if (this.routePolicy && models.length === 0) {
+      throw new Error("The session route policy excludes every available model; adjust expert_policy (allow/deny) before delegating.");
+    }
     const plan = request.councilId ? this.plans.get(request.councilId) : undefined;
     const planWarnings: string[] = [];
     if (request.councilId && !plan) {
@@ -476,8 +488,17 @@ export class ExpertCouncilService implements ExpertCouncil {
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
       if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
         try {
-          await this.markModelAvailability(current.model, lastResult.summary);
-          unavailableMarked.push(current.model);
+          const provider = parseModelKey(current.model).provider;
+          const siblings = models
+            .filter((model) => model.provider === provider && `${model.provider}/${model.id}` !== current.model)
+            .map((model) => `${model.provider}/${model.id}`);
+          const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings);
+          unavailableMarked.push(...marked.markedKeys.filter((key) => !unavailableMarked.includes(key)));
+          if (marked.kind === "quota-exhausted") {
+            // The whole provider's plan or balance is out: stop considering its
+            // remaining candidates in this delegation immediately.
+            ranked.candidates = ranked.candidates.filter((candidate) => parseModelKey(candidate.model).provider !== provider);
+          }
         } catch {
           // Marker persistence is best-effort; escalation and telemetry still record the failure.
         }
@@ -575,6 +596,45 @@ export class ExpertCouncilService implements ExpertCouncil {
    * view and concurrent Pi/Codex instances observe each other's markers
    * without a host restart.
    */
+  private filterByRoutePolicy(models: AvailableModel[]): AvailableModel[] {
+    if (!this.routePolicy) return models;
+    return models.filter((model) => !routePolicyExcludes(this.routePolicy, `${model.provider}/${model.id}`));
+  }
+
+  /** Mark provider-wide quota evidence: quota exhaustion applies to every model of the provider. */
+  private async markModelAvailability(modelKey: string, reason: string, providerSiblings: string[] = []): Promise<{ kind: "unavailable" | "quota-exhausted"; markedKeys: string[] }> {
+    const observedAt = new Date().toISOString();
+    const kind = classifyAvailabilityEvidence(reason) ?? "unavailable";
+    const markedKeys: string[] = [];
+    const markOne = (key: string) => {
+      if (this.modelAssessment) {
+        this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, key, reason, observedAt, kind);
+        this.modelAssessment = withModelStatus(this.modelAssessment, key, kind, observedAt, reason);
+      }
+      markedKeys.push(key);
+    };
+    markOne(modelKey);
+    if (kind === "quota-exhausted") {
+      // Quota and balance are provider-account facts: one model running out
+      // means every sibling model of the same provider is out too. Mark them
+      // so routing stops burning attempts on the same depleted plan.
+      for (const sibling of providerSiblings) markOne(sibling);
+    }
+    if (this.stateOptions.persistence?.updateModelAssessment) {
+      await this.stateOptions.persistence.updateModelAssessment((current) => {
+        if (!current) return undefined;
+        let next = current;
+        for (const key of markedKeys) {
+          next = withModelAvailabilityMarker(next, key, reason, observedAt, kind);
+          next = withModelStatus(next, key, kind, observedAt, reason);
+        }
+        return next;
+      });
+    }
+    void this.persistState().catch(() => undefined);
+    return { kind, markedKeys };
+  }
+
   private async refreshSharedAssessment(): Promise<void> {
     if (!this.stateOptions.persistence?.readModelAssessment) return;
     try {
@@ -585,24 +645,6 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
   }
 
-  private async markModelAvailability(modelKey: string, reason: string): Promise<void> {
-    const observedAt = new Date().toISOString();
-    const kind = classifyAvailabilityEvidence(reason) ?? "unavailable";
-    if (this.modelAssessment) {
-      this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt, kind);
-      this.modelAssessment = withModelStatus(this.modelAssessment, modelKey, kind, observedAt, reason);
-    }
-    if (this.stateOptions.persistence?.updateModelAssessment) {
-      // Call through the persistence object: extracting the method would lose
-      // `this` and silently break the durable update.
-      await this.stateOptions.persistence.updateModelAssessment((current) => {
-        if (!current) return undefined;
-        let next = withModelAvailabilityMarker(current, modelKey, reason, observedAt, kind);
-        return withModelStatus(next, modelKey, kind, observedAt, reason);
-      });
-    }
-    void this.persistState().catch(() => undefined);
-  }
 
   /**
    * Deliberately stop a running expert execution. The attempt result becomes
@@ -787,8 +829,40 @@ export class ExpertCouncilService implements ExpertCouncil {
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
   }
 
+  /**
+   * Set the session-scoped model route policy. Entries are `provider/id` or a
+   * bare `provider`; with an allow list only listed models are eligible (minus
+   * deny), with only a deny list everything else is eligible. The policy is
+   * in-memory for this session and respected by later builds and delegations.
+   */
+  async setRoutePolicy(policy: RoutePolicy): Promise<SetRoutePolicyResult> {
+    const sanitize = (value: string): string | undefined => {
+      const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+      return /^[^/]+(\/[^/]+)?$/.test(cleaned) ? cleaned : undefined;
+    };
+    const allow = policy.allow?.map(sanitize).filter((value): value is string => Boolean(value)).slice(0, 32);
+    const deny = policy.deny?.map(sanitize).filter((value): value is string => Boolean(value)).slice(0, 32);
+    this.routePolicy = {
+      ...(allow?.length ? { allow } : {}),
+      ...(deny?.length ? { deny } : {}),
+    };
+    const all = await this.runtime.listAvailableModels();
+    const kept = this.filterByRoutePolicy(all);
+    const keptKeys = new Set(kept.map((model) => `${model.provider}/${model.id}`));
+    const excludedModels = all
+      .map((model) => `${model.provider}/${model.id}`)
+      .filter((key) => !keptKeys.has(key))
+      .slice(0, 50);
+    return {
+      ...(this.routePolicy.allow ? { allow: this.routePolicy.allow } : {}),
+      ...(this.routePolicy.deny ? { deny: this.routePolicy.deny } : {}),
+      excludedModels,
+    };
+  }
+
   async getStatus(): Promise<CouncilStatus> {
     return {
+      ...(this.routePolicy ? { routePolicy: this.routePolicy } : {}),
       plans: [...this.plans.values()].map((plan) => ({
         id: plan.id,
         taskClass: plan.taskClass,

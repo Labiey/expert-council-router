@@ -24,6 +24,7 @@ export const MCP_TOOL_NAMES = [
   "expert_wait",
   "expert_result",
   "expert_abort",
+  "expert_policy",
   "expert_feedback",
   "expert_cleanup",
   "expert_escalate",
@@ -107,6 +108,12 @@ export const MCP_INPUT_SCHEMAS = {
   expert_abort: {
     executionId: executionIdentifier,
     reason: z.string().min(1).max(1_000).optional(),
+  },
+  expert_policy: {
+    allow: z.array(boundedText(200)).max(32).optional()
+      .describe("Only these models (or whole providers, as a bare `provider`) may be routed for the rest of this session; deny is subtracted from allow"),
+    deny: z.array(boundedText(200)).max(32).optional()
+      .describe("Never route to these models or whole providers for the rest of this session"),
   },
   expert_cleanup: {
     executionId: executionIdentifier,
@@ -326,6 +333,29 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       return response(await withMcpTimeout(council.abortExecution({
         executionId: input.executionId,
         ...(input.reason ? { reason: input.reason } : {}),
+      })));
+    },
+  );
+  server.registerTool(
+    "expert_policy",
+    {
+      title: "Set Session Route Policy",
+      description: "Set or inspect the session-scoped model route policy. Entries are `provider/id` or a bare `provider` for the whole provider. With an allow list only listed models are eligible (minus deny); with only a deny list every other model is eligible. Later expert_build and expert_delegate calls respect it. Call with no arguments to read the current policy. The policy lives for this session only.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_policy,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input, extra) => {
+      const council = await councilProvider(extra);
+      if (!input.allow?.length && !input.deny?.length) {
+        const status = await withMcpTimeout(council.getStatus());
+        return response({
+          routePolicy: status.routePolicy ?? {},
+          note: "Session route policy is currently empty: every discoverable model is eligible.",
+        });
+      }
+      return response(await withMcpTimeout(council.setRoutePolicy({
+        ...(input.allow?.length ? { allow: input.allow } : {}),
+        ...(input.deny?.length ? { deny: input.deny } : {}),
       })));
     },
   );

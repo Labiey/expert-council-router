@@ -723,6 +723,9 @@ describe("Main-Agent abort", () => {
 
 describe("quota-exhausted model status", () => {
   it("marks quota failures with the distinct kind and records current status", async () => {
+    // abortModels are both provider "p": quota exhaustion is a provider-account
+    // fact, so the sibling model is marked alongside the failing one and the
+    // delegation has no candidates left instead of burning another attempt.
     const runtime = new MockRuntime(abortModels, [
       {
         status: "failed",
@@ -748,12 +751,130 @@ describe("quota-exhausted model status", () => {
       persistence,
     });
     const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
-    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
+    expect(result.status).toBe("failed");
+    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead", "p/alive"]);
+    expect(runtime.requests).toHaveLength(1);
     expect(saved.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
+    expect(saved.modelAvailability?.["p/alive"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
     expect(saved.modelStatus?.["p/dead"]).toMatchObject({ state: "quota-exhausted" });
-    expect(saved.modelStatus?.["p/alive"]).toMatchObject({ state: "available" });
+    expect(saved.modelStatus?.["p/alive"]).toMatchObject({ state: "quota-exhausted" });
     const inventory = await service.inspectResources();
     expect(inventory.warnings.join(" ")).toContain("quota or balance ran out");
+  });
+
+  it("marks the whole provider on quota failure and escalates across providers", async () => {
+    const assessment = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: {
+        "q/one": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+        "q/two": { coding: 8.5, toolReliability: 8.5, autonomousExecution: 8.5, bashReliability: 8.5 },
+        "r/one": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+      },
+    };
+    const models = [model("q", "one"), model("q", "two"), model("r", "one")];
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "q/one",
+        summary: "Insufficient balance: the token plan for this provider is depleted.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "r/one", summary: "ok" },
+    ]);
+    const saved: ModelAssessmentSnapshot = JSON.parse(JSON.stringify(assessment));
+    const persistence = {
+      save: async () => {},
+      updateModelAssessment: async (
+        mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+      ) => {
+        const next = mutate(saved);
+        if (next) Object.assign(saved, next);
+      },
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: abortInitialState(assessment),
+      persistence,
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("r/one");
+    // The sibling q/two must never be attempted: quota marks prune the whole provider.
+    expect(runtime.requests.map((request) => request.model)).toEqual(["q/one", "r/one"]);
+    expect(result.executionMetadata?.unavailableModels).toEqual(["q/one", "q/two"]);
+    expect(saved.modelAvailability?.["q/two"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
+    expect(saved.modelStatus?.["q/two"]).toMatchObject({ state: "quota-exhausted" });
+    expect(saved.modelStatus?.["r/one"]).toMatchObject({ state: "available" });
+  });
+});
+
+describe("session route policy", () => {
+  const assessment = {
+    asOf: "2026-09-03T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: {
+      "q/one": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+      "r/one": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+      "r/two": { coding: 7, toolReliability: 7, autonomousExecution: 7, bashReliability: 7 },
+    },
+  };
+  const models = [model("q", "one"), model("r", "one"), model("r", "two")];
+
+  function policyService(runtime: MockRuntime, saved: ModelAssessmentSnapshot) {
+    return new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: abortInitialState(saved),
+      persistence: {
+        save: async () => {},
+        updateModelAssessment: async () => {},
+      },
+    });
+  }
+
+  it("denies a whole provider from builds and delegations", async () => {
+    const runtime = new MockRuntime(models, [
+      { status: "success", role: "scout", model: "r/one", summary: "ok" },
+    ]);
+    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
+    const applied = await service.setRoutePolicy({ deny: ["q"] });
+    expect(applied.deny).toEqual(["q"]);
+    expect(applied.excludedModels).toEqual(["q/one"]);
+
+    const plan = await service.buildCouncil({ task: "Implement a small bounded feature", constraints: { costPolicy: "balanced" } });
+    for (const expert of plan.experts) expect(expert.model).not.toContain("q/");
+
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("r/one");
+    expect((await service.getStatus()).routePolicy).toEqual({ deny: ["q"] });
+  });
+
+  it("subtracts deny from allow and rejects every model only when nothing remains", async () => {
+    const runtime = new MockRuntime(models);
+    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
+    const applied = await service.setRoutePolicy({ allow: ["q/one", "r/one"], deny: ["q/one"] });
+    expect(applied.excludedModels).toEqual(["q/one", "r/two"]);
+
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("r/one");
+
+    await service.setRoutePolicy({ deny: ["q", "r"] });
+    // Delegation surfaces a structured failure instead of throwing, so MCP hosts can read it.
+    const blocked = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(blocked.status).toBe("failed");
+    expect(blocked.summary).toContain("route policy excludes every available model");
+    expect(blocked.executionMetadata?.attempts).toBe(0);
+    await expect(service.buildCouncil({ task: "Implement a small bounded feature" })).rejects.toThrow(/route policy/i);
+  });
+
+  it("is session-scoped: a fresh service instance starts without a policy", async () => {
+    const runtime = new MockRuntime(models);
+    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
+    expect(await service.getStatus()).not.toHaveProperty("routePolicy");
+    await service.setRoutePolicy({ allow: ["q/one"] });
+    const fresh = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
+    expect(await fresh.getStatus()).not.toHaveProperty("routePolicy");
   });
 });
 

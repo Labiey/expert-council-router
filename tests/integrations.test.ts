@@ -67,6 +67,11 @@ function mockCouncil(): ExpertCouncil {
     startDelegation: () => ({ executionId: "exec_mock", result: Promise.resolve(completed) }),
     inspectExecution: async () => undefined,
     abortExecution: async (request) => ({ executionId: request.executionId, status: "already-finished" }),
+    setRoutePolicy: async (policy) => ({
+      ...(policy.allow?.length ? { allow: policy.allow } : {}),
+      ...(policy.deny?.length ? { deny: policy.deny } : {}),
+      excludedModels: [],
+    }),
     getResult: async (executionId) => ({ executionId, status: "completed", result: completed }),
     waitForResults: async ({ executionIds, mode = "all" }) => ({
       status: "completed",
@@ -152,6 +157,7 @@ describe("MCP semantic surface", () => {
       "expert_wait",
       "expert_result",
       "expert_abort",
+      "expert_policy",
       "expert_feedback",
       "expert_cleanup",
       "expert_escalate",
@@ -360,6 +366,34 @@ describe("Codex plugin packaging", () => {
         cwd: workspace,
         trustedWorkspaceRoots: [workspace],
       });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe("expert_policy tool", () => {
+  it("validates its schema and applies the session route policy through the shared council", async () => {
+    expect(MCP_INPUT_SCHEMAS.expert_policy.allow?.safeParse(["q/one", "q"]).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_policy.deny?.safeParse(["r/one"]).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_policy.allow?.safeParse(Array.from({ length: 33 }, () => "x/y")).success).toBe(false);
+
+    const server = createClientRootMcpServer({ cwd: process.cwd() }, async () => mockCouncil());
+    const client = new Client({ name: "policy-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const set = await client.callTool({
+        name: "expert_policy",
+        arguments: { deny: ["bailian", "deepseek/deepseek-v4-pro-0813"] },
+      });
+      expect(set.isError).not.toBe(true);
+      expect(JSON.stringify(set.content)).toContain("excludedModels");
+      const read = await client.callTool({ name: "expert_policy", arguments: {} });
+      expect(read.isError).not.toBe(true);
+      expect(JSON.stringify(read.content)).toContain("routePolicy");
     } finally {
       await client.close();
       await server.close();

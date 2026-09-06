@@ -15,6 +15,7 @@ import {
   preserveModelAvailability,
   publishedApiCostScore,
   rankModels,
+  routePolicyExcludes,
   rolesForTask,
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
@@ -435,5 +436,19 @@ describe("runtime availability markers", () => {
       models: { "p/dead": { coding: 7 } },
       modelAvailability: { "p/dead": { ...marker, callable: true } },
     })).toThrow(ConfigValidationError);
+  });
+});
+
+describe("route policy exclusion", () => {
+  it("supports exact models and whole providers, with deny winning over allow", () => {
+    const policy = { allow: ["q/one", "r"], deny: ["r/two"] };
+    expect(routePolicyExcludes(policy, "q/one")).toBe(false);
+    expect(routePolicyExcludes(policy, "q/other")).toBe(true);
+    expect(routePolicyExcludes(policy, "r/one")).toBe(false);
+    expect(routePolicyExcludes(policy, "r/two")).toBe(true);
+    expect(routePolicyExcludes({ deny: ["q"] }, "q/anything")).toBe(true);
+    expect(routePolicyExcludes({ deny: ["q"] }, "r/one")).toBe(false);
+    expect(routePolicyExcludes(undefined, "q/one")).toBe(false);
+    expect(routePolicyExcludes({}, "q/one")).toBe(false);
   });
 });

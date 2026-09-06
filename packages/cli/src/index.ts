@@ -56,7 +56,9 @@ function positional(args: string[]): string[] {
 }
 
 function help(): string {
-  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n`;
+  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
+  expert-council abort <execution-id> [--reason TEXT] [--json]
+  expert-council policy [--allow MODEL]... [--deny MODEL] [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -154,6 +156,30 @@ export async function runCli(
           executionId,
           ...(reason ? { reason: bounded(reason, "reason", 1_000) } : {}),
         });
+        break;
+      }
+      case "policy": {
+        const collect = (name: string): string[] | undefined => {
+          const list: string[] = [];
+          for (let i = 0; i < args.length; i += 1) {
+            if (args[i] === name && args[i + 1]) list.push(bounded(args[i + 1]!, name, 200));
+          }
+          return list.length ? list : undefined;
+        };
+        const allow = collect("--allow");
+        const deny = collect("--deny");
+        if (allow || deny) {
+          result = await service.setRoutePolicy({
+            ...(allow ? { allow } : {}),
+            ...(deny ? { deny } : {}),
+          });
+        } else {
+          const status = await service.getStatus();
+          result = {
+            routePolicy: status.routePolicy ?? {},
+            note: "Session route policy is currently empty: every discoverable model is eligible.",
+          };
+        }
         break;
       }
       default:

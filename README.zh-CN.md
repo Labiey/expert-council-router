@@ -25,7 +25,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 包含 10 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
+- 包含 11 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
@@ -90,7 +90,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` 应显示 `npm:@expert-council/pi-package` 及其解析后的目录；新启动的 verbose Pi 会话应加载 `dist/extension.js`、`expert-council` Skill 和 8 个语义工具。后续升级：
+`pi list` 应显示 `npm:@expert-council/pi-package` 及其解析后的目录；新启动的 verbose Pi 会话应加载 `dist/extension.js`、`expert-council` Skill 和 11 个语义工具。后续升级：
 
 ```bash
 pi update npm:@expert-council/pi-package
@@ -373,7 +373,7 @@ expert-council status
 
 ## MCP Server
 
-MCP 表面刻意保持为 9 个语义工具：
+MCP 表面刻意保持为 11 个语义工具：
 
 - `expert_inspect`
 - `expert_build`
@@ -381,6 +381,7 @@ MCP 表面刻意保持为 9 个语义工具：
 - `expert_wait`
 - `expert_result`
 - `expert_abort`
+- `expert_policy`
 - `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`

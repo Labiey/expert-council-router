@@ -363,6 +363,31 @@ export default function expertCouncilExtension(
   });
 
   pi.registerTool({
+    name: "expert_policy",
+    label: "Expert Route Policy",
+    description: "Set or inspect the session-scoped model route policy. Entries are `provider/id` or a bare `provider` for the whole provider. With an allow list only listed models are eligible (minus deny); with only a deny list every other model is eligible. Later expert_build and expert_delegate calls respect it. Call with no arguments to read the current policy. The policy lives for this session only.",
+    parameters: Type.Object({
+      allow: Type.Optional(Type.Array(Type.String(), { maxItems: 32 })),
+      deny: Type.Optional(Type.Array(Type.String(), { maxItems: 32 })),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      const council = await getCouncil(ctx.cwd);
+      if (!params.allow?.length && !params.deny?.length) {
+        const status = await council.getStatus();
+        return output({
+          routePolicy: status.routePolicy ?? {},
+          note: "Session route policy is currently empty: every discoverable model is eligible.",
+        });
+      }
+      return output(await council.setRoutePolicy({
+        ...(params.allow?.length ? { allow: params.allow } : {}),
+        ...(params.deny?.length ? { deny: params.deny } : {}),
+      }));
+    },
+  });
+
+  pi.registerTool({
     name: "expert_feedback",
     label: "Expert Feedback",
     description: "Record whether Main Agent verification accepted a completed expert result for local routing telemetry.",

@@ -462,11 +462,30 @@ export interface ResourceInventory {
   warnings: string[];
 }
 
+/**
+ * Session-scoped model route policy. Entries are `provider/id` for exact
+ * models or a bare `provider` for every model of that provider. With an
+ * allow list, only listed models are eligible (minus deny); with only a
+ * deny list, every model except the denied ones is eligible.
+ */
+export interface RoutePolicy {
+  allow?: string[];
+  deny?: string[];
+}
+
+export interface SetRoutePolicyResult {
+  allow?: string[];
+  deny?: string[];
+  /** Inventory models the current policy excludes, bounded to 50 entries. */
+  excludedModels?: string[];
+}
+
 export interface CouncilStatus {
   plans: Array<{ id: string; taskClass: TaskClass; expertCount: number; createdAt: string }>;
   executions: ExecutionStateSnapshot[];
   telemetry: TelemetryAggregate[];
   modelAssessment?: ModelAssessmentSnapshot;
+  routePolicy?: RoutePolicy;
 }
 
 export interface ExecutionStateSnapshot {
@@ -534,6 +553,8 @@ export interface ExpertCouncil {
   getResult(executionId: string): Promise<ExpertResultLookup>;
   /** Bounded progress snapshot of a running expert execution; the material for verification or handoff. */
   inspectExecution(executionId: string): Promise<ExecutionProgress | undefined>;
+  /** Set the session-scoped model route policy (allow/deny); later builds and delegations respect it. */
+  setRoutePolicy(policy: RoutePolicy): Promise<SetRoutePolicyResult>;
   /** Deliberately stop a running expert execution while preserving its progress; never retried or escalated. */
   abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
   waitForResults(request: ExpertWaitRequest): Promise<ExpertWaitResult>;

@@ -18,6 +18,7 @@ import type {
   RankedCandidate,
   RoutingConstraints,
   TelemetryAggregate,
+  RoutePolicy,
 } from "./types.js";
 
 const COST_CLASS_SCORE = { "very-low": 10, low: 8, normal: 6, high: 3, scarce: 1 } as const;
@@ -83,6 +84,20 @@ function effectiveProfile(
     ...DEFAULT_CAPABILITY_PROFILE,
     ...mergeModelProfiles(DEFAULT_CAPABILITY_PROFILE, inferObjectiveCapabilities(model), configured, taskOverride),
   };
+}
+
+/**
+ * Session route-policy check. A model is excluded when it is denied, or when
+ * an allow list exists and the model (or its whole provider) is not listed.
+ * Entries are `provider/id` or a bare `provider`.
+ */
+export function routePolicyExcludes(policy: RoutePolicy | undefined, modelKey: string): boolean {
+  if (!policy) return false;
+  const provider = modelKey.split("/")[0] ?? modelKey;
+  const matches = (entry: string) => entry === modelKey || entry === provider;
+  if (policy.deny?.some(matches)) return true;
+  if (policy.allow?.length && !policy.allow.some(matches)) return true;
+  return false;
 }
 
 function hardConstraintFailures(

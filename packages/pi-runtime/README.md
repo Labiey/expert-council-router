@@ -24,7 +24,7 @@ The current release (0.5.5) includes:
 - Hard tool allowlists and installed-Skill filtering for every expert session.
 - Isolated Git worktrees for writable experts.
 - A JSON-capable CLI.
-- An MCP Server with ten asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
+- An MCP Server with eleven asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
 - Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
 - Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
@@ -89,7 +89,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the eight semantic tools. To upgrade later:
+`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the eleven semantic tools. To upgrade later:
 
 ```bash
 pi update npm:@expert-council/pi-package
@@ -372,7 +372,7 @@ Common flags:
 
 ## MCP Server
 
-The MCP surface is deliberately limited to ten semantic tools:
+The MCP surface is deliberately limited to eleven semantic tools:
 
 - `expert_inspect`
 - `expert_build`
@@ -380,6 +380,7 @@ The MCP surface is deliberately limited to ten semantic tools:
 - `expert_wait`
 - `expert_result`
 - `expert_abort`
+- `expert_policy`
 - `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
@@ -442,7 +443,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the eight semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
+`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the eleven semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
 
 Or load it for one run without persisting:
 
@@ -469,7 +470,7 @@ pi list
 
 If removal runs through Pi's Bash-compatible shell, use the forward-slash absolute path printed by `pi list`, for example `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`. Do not copy the indented relative source shown by `pi list` unless the command is resolved from the same settings-directory context.
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the eight semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the eleven semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
 
 Pi delegation is non-blocking; a single call can start up to eight independent background assignments before returning. When an expert finishes, the extension sends compact JSON containing the completed `executionId` and, only when supplied at dispatch, the `taskDescription`; it never carries feedback directly. Notifications use `steer` while the Main Agent is working and a `triggerTurn` `followUp` when it is idle. The Main Agent then calls `expert_result` for the structured feedback. Dispatch the entire ready batch before ending the turn, and avoid polling or silently waiting afterwards.
 
