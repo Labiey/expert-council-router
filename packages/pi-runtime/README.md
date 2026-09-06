@@ -24,7 +24,7 @@ The current release (0.5.5) includes:
 - Hard tool allowlists and installed-Skill filtering for every expert session.
 - Isolated Git worktrees for writable experts.
 - A JSON-capable CLI.
-- An MCP Server with eleven asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
+- An MCP Server with ten asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
 - Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
 - Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
@@ -89,7 +89,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the eleven semantic tools. To upgrade later:
+`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the ten semantic tools. To upgrade later:
 
 ```bash
 pi update npm:@expert-council/pi-package
@@ -372,7 +372,7 @@ Common flags:
 
 ## MCP Server
 
-The MCP surface is deliberately limited to eleven semantic tools:
+The MCP surface is deliberately limited to ten semantic tools:
 
 - `expert_inspect`
 - `expert_build`
@@ -380,13 +380,26 @@ The MCP surface is deliberately limited to eleven semantic tools:
 - `expert_wait`
 - `expert_result`
 - `expert_abort`
-- `expert_policy`
 - `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
 
 `expert_inspect` and `expert_build` return compact host-facing views by default. Pass `detail: "full"` only when exact model metadata, alternatives, scores, tools, or Skills are genuinely required.
+
+### Route policy file
+
+Model allow/deny lists live in `route-policy.json` next to `model-assessment.json` in the shared state directory — no dedicated tool. The file holds a `system` entry that every session obeys and per-session entries under `sessions` keyed by the host conversation (Pi session IDs survive resume; MCP stdio conversations use a stable `"default"` key). Sessions may only narrow the system policy: deny lists union, allow lists intersect, and deny always wins. Entries are `provider/id` or a bare `provider` for a whole provider. `expert_inspect` returns this conversation's `sessionKey`, the `effective` policy, and the file's `sourcePath` so the host (or you) can edit it directly; changes apply on the next expert call, stale session entries are pruned after 30 days, and a corrupt file is ignored with a warning.
+
+```json
+{
+  "version": 1,
+  "system": { "deny": ["bailian"] },
+  "sessions": {
+    "4f0c…": { "allow": ["qwen-token-plan-cn/qwen3.8-max"], "updatedAt": "2026-09-07T02:00:00+08:00" }
+  }
+}
+```
 
 `expert_delegate` starts background work and immediately returns execution IDs; the original single-assignment parameters remain compatible. The Main Agent should set an explicit `timeoutMs` per assignment based on expected difficulty instead of relying on the runtime's ten-minute fallback. When two or more independent tasks exist, dispatch the entire batch before continuing other Main Agent work:
 
@@ -443,7 +456,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the eleven semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
+`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the ten semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
 
 Or load it for one run without persisting:
 
@@ -470,7 +483,7 @@ pi list
 
 If removal runs through Pi's Bash-compatible shell, use the forward-slash absolute path printed by `pi list`, for example `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`. Do not copy the indented relative source shown by `pi list` unless the command is resolved from the same settings-directory context.
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the eleven semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the ten semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
 
 Pi delegation is non-blocking; a single call can start up to eight independent background assignments before returning. When an expert finishes, the extension sends compact JSON containing the completed `executionId` and, only when supplied at dispatch, the `taskDescription`; it never carries feedback directly. Notifications use `steer` while the Main Agent is working and a `triggerTurn` `followUp` when it is idle. The Main Agent then calls `expert_result` for the structured feedback. Dispatch the entire ready batch before ending the turn, and avoid polling or silently waiting afterwards.
 

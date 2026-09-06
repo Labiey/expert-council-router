@@ -6,6 +6,7 @@ import { ExpertCouncilService, type ExpertCouncil } from "@expert-council/core";
 import { loadCouncilConfig } from "./config-loader.js";
 import { JsonlTelemetryStore } from "./file-telemetry.js";
 import { JsonModelAssessmentStore } from "./file-assessment.js";
+import { JsonRoutePolicyStore } from "./file-route-policy.js";
 import { JsonCouncilStateStore } from "./file-state.js";
 import { SplitCouncilStateStore } from "./persistent-state.js";
 import { PiExpertRuntime } from "./pi-runtime.js";
@@ -18,6 +19,7 @@ export interface CreateCouncilOptions {
   telemetryPath?: string;
   statePath?: string;
   modelAssessmentPath?: string;
+  routePolicyPath?: string;
   roleDirectory?: string;
   /** Host-provided SDK used by self-contained distributions such as the Codex plugin. */
   sdk?: PiSdkLike;
@@ -63,6 +65,7 @@ export function defaultCouncilStoragePaths(cwd: string, dataRoot = defaultCounci
     statePath: path.join(workspaceRoot, "state.json"),
     telemetryPath: path.join(path.resolve(dataRoot), "telemetry.jsonl"),
     modelAssessmentPath: path.join(path.resolve(dataRoot), "model-assessment.json"),
+    routePolicyPath: path.join(path.resolve(dataRoot), "route-policy.json"),
   };
 }
 
@@ -111,8 +114,16 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
       ?? defaults.modelAssessmentPath,
     "Model assessment path",
   );
+  const routePolicyPath = resolveOperatorPath(
+    cwd,
+    options.routePolicyPath
+      ?? process.env.EXPERT_COUNCIL_ROUTE_POLICY
+      ?? defaults.routePolicyPath,
+    "Route policy path",
+  );
   const stateStore = new JsonCouncilStateStore(statePath);
   const assessmentStore = new JsonModelAssessmentStore(modelAssessmentPath);
+  const routePolicyStore = new JsonRoutePolicyStore(routePolicyPath);
   const persistence = new SplitCouncilStateStore(stateStore, assessmentStore);
   let initialState = await persistence.load();
   if (process.platform === "win32" && !initialState?.modelAssessment) {
@@ -141,5 +152,7 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
   return new ExpertCouncilService(runtime, config, new JsonlTelemetryStore(telemetryPath), {
     ...(initialState ? { initialState } : {}),
     persistence,
+    readRoutePolicy: () => routePolicyStore.load(),
+    routePolicyPath,
   });
 }

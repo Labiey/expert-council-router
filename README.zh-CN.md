@@ -25,7 +25,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 包含 11 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
+- 包含 10 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
@@ -90,7 +90,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` 应显示 `npm:@expert-council/pi-package` 及其解析后的目录；新启动的 verbose Pi 会话应加载 `dist/extension.js`、`expert-council` Skill 和 11 个语义工具。后续升级：
+`pi list` 应显示 `npm:@expert-council/pi-package` 及其解析后的目录；新启动的 verbose Pi 会话应加载 `dist/extension.js`、`expert-council` Skill 和 10 个语义工具。后续升级：
 
 ```bash
 pi update npm:@expert-council/pi-package
@@ -373,7 +373,7 @@ expert-council status
 
 ## MCP Server
 
-MCP 表面刻意保持为 11 个语义工具：
+MCP 表面刻意保持为 10 个语义工具：
 
 - `expert_inspect`
 - `expert_build`
@@ -381,13 +381,26 @@ MCP 表面刻意保持为 11 个语义工具：
 - `expert_wait`
 - `expert_result`
 - `expert_abort`
-- `expert_policy`
 - `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
 
 `expert_inspect` 和 `expert_build` 默认返回面向宿主的紧凑视图。只有确实需要准确模型元数据、备选项、评分、工具或 Skill 时才传入 `detail: "full"`。
+
+### 路由策略文件
+
+模型黑白名单保存在共享状态目录中与 `model-assessment.json` 同级的 `route-policy.json`——不新增任何工具。文件包含所有会话共同遵守的 `system` 条目，以及按宿主会话键组织的 `sessions` 条目（Pi 会话 ID 在 resume 后保持不变；MCP stdio 会话使用稳定的 `"default"` 键）。会话只能收紧系统策略：deny 取并集、allow 取交集、deny 恒胜。条目为 `provider/id` 或裸 `provider`（整个供应商）。`expert_inspect` 会返回本会话的 `sessionKey`、当前 `effective` 策略与文件 `sourcePath`，宿主（或你）可以直接编辑该文件；改动在下次专家调用即生效，超过 30 天的会话条目自动清理，损坏文件会带警告忽略。
+
+```json
+{
+  "version": 1,
+  "system": { "deny": ["bailian"] },
+  "sessions": {
+    "4f0c…": { "allow": ["qwen-token-plan-cn/qwen3.8-max"], "updatedAt": "2026-09-07T02:00:00+08:00" }
+  }
+}
+```
 
 `expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。主代理应根据任务难度为每项任务显式设置 `timeoutMs`，而不是依赖运行时的十分钟兜底值。存在两个以上相互独立的任务时，应在继续其他主代理工作前一次发配整个批次：
 

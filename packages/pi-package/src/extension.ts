@@ -118,6 +118,16 @@ export default function expertCouncilExtension(
 ) {
   const getCouncil = dependencies.councilFor ?? councilFor;
 
+  /** Pi session identity: stable across resume/continue, so persisted per-session route policies reattach. */
+  const sessionKeyOf = (ctx: { sessionManager?: { getSessionId?: () => string } } | undefined): string => {
+    try {
+      const id = ctx?.sessionManager?.getSessionId?.();
+      return id && id.length >= 1 && id.length <= 200 ? id : "default";
+    } catch {
+      return "default";
+    }
+  };
+
   pi.registerTool({
     name: "expert_inspect",
     label: "Expert Inspect",
@@ -125,7 +135,7 @@ export default function expertCouncilExtension(
     parameters: Type.Object({ detail: Detail }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      const inventory = await (await getCouncil(ctx.cwd)).inspectResources();
+      const inventory = await (await getCouncil(ctx.cwd)).inspectResources({ sessionKey: sessionKeyOf(ctx) });
       return output(presentResourceInventory(inventory, params.detail));
     },
   });
@@ -190,6 +200,7 @@ export default function expertCouncilExtension(
       }
       const plan = await council.buildCouncil({
         task: params.task,
+        sessionKey: sessionKeyOf(ctx),
         ...(assessment.source === "submitted" && assessment.assessment
           ? { modelAssessment: assessment.assessment }
           : {}),
@@ -264,7 +275,7 @@ export default function expertCouncilExtension(
       if (!batch && (!params.role || !params.task)) {
         throw new Error("expert_delegate requires a non-empty assignments array or both role and task for one assignment.");
       }
-      const inventory = await council.inspectResources();
+      const inventory = await council.inspectResources({ sessionKey: sessionKeyOf(ctx) });
       const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
       if (assessmentStatus.status === "required") {
         return output({
@@ -287,6 +298,7 @@ export default function expertCouncilExtension(
       const assignments = requestedAssignments.map((assignment): DelegationRequest => ({
         role: assignment.role as ExpertRole,
         task: assignment.task,
+        sessionKey: sessionKeyOf(ctx),
         ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
         ...(assignment.councilId ? { councilId: assignment.councilId } : {}),
         ...(assignment.workspace ? { workspace: assignment.workspace } : {}),
@@ -358,31 +370,6 @@ export default function expertCouncilExtension(
       return output(await (await getCouncil(ctx.cwd)).abortExecution({
         executionId: params.executionId,
         ...(params.reason ? { reason: params.reason } : {}),
-      }));
-    },
-  });
-
-  pi.registerTool({
-    name: "expert_policy",
-    label: "Expert Route Policy",
-    description: "Set or inspect the session-scoped model route policy. Entries are `provider/id` or a bare `provider` for the whole provider. With an allow list only listed models are eligible (minus deny); with only a deny list every other model is eligible. Later expert_build and expert_delegate calls respect it. Call with no arguments to read the current policy. The policy lives for this session only.",
-    parameters: Type.Object({
-      allow: Type.Optional(Type.Array(Type.String(), { maxItems: 32 })),
-      deny: Type.Optional(Type.Array(Type.String(), { maxItems: 32 })),
-    }),
-    async execute(_id, params, signal, _update, ctx) {
-      signal?.throwIfAborted();
-      const council = await getCouncil(ctx.cwd);
-      if (!params.allow?.length && !params.deny?.length) {
-        const status = await council.getStatus();
-        return output({
-          routePolicy: status.routePolicy ?? {},
-          note: "Session route policy is currently empty: every discoverable model is eligible.",
-        });
-      }
-      return output(await council.setRoutePolicy({
-        ...(params.allow?.length ? { allow: params.allow } : {}),
-        ...(params.deny?.length ? { deny: params.deny } : {}),
       }));
     },
   });

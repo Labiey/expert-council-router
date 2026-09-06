@@ -60,6 +60,7 @@ function mockCouncil(): ExpertCouncil {
         supportedTools: [],
         limitations: [],
       },
+      routePolicy: { sessionKey: "default", effective: {} },
       warnings: [],
     }),
     buildCouncil: async (request) => ({ id: "c", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [] }),
@@ -157,7 +158,6 @@ describe("MCP semantic surface", () => {
       "expert_wait",
       "expert_result",
       "expert_abort",
-      "expert_policy",
       "expert_feedback",
       "expert_cleanup",
       "expert_escalate",
@@ -373,11 +373,9 @@ describe("Codex plugin packaging", () => {
   });
 });
 
-describe("expert_policy tool", () => {
-  it("validates its schema and applies the session route policy through the shared council", async () => {
-    expect(MCP_INPUT_SCHEMAS.expert_policy.allow?.safeParse(["q/one", "q"]).success).toBe(true);
-    expect(MCP_INPUT_SCHEMAS.expert_policy.deny?.safeParse(["r/one"]).success).toBe(true);
-    expect(MCP_INPUT_SCHEMAS.expert_policy.allow?.safeParse(Array.from({ length: 33 }, () => "x/y")).success).toBe(false);
+describe("route policy via file, not tools", () => {
+  it("exposes no policy tool and carries the route-policy view through inspect", async () => {
+    expect(MCP_TOOL_NAMES).not.toContain("expert_policy");
 
     const server = createClientRootMcpServer({ cwd: process.cwd() }, async () => mockCouncil());
     const client = new Client({ name: "policy-test", version: "0.1.0" });
@@ -385,15 +383,11 @@ describe("expert_policy tool", () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
-      const set = await client.callTool({
-        name: "expert_policy",
-        arguments: { deny: ["bailian", "deepseek/deepseek-v4-pro-0813"] },
-      });
-      expect(set.isError).not.toBe(true);
-      expect(JSON.stringify(set.content)).toContain("excludedModels");
-      const read = await client.callTool({ name: "expert_policy", arguments: {} });
-      expect(read.isError).not.toBe(true);
-      expect(JSON.stringify(read.content)).toContain("routePolicy");
+      const inspect = await client.callTool({ name: "expert_inspect", arguments: {} });
+      expect(inspect.isError).not.toBe(true);
+      expect(JSON.stringify(inspect.content)).toContain("routePolicy");
+      const rejected = await client.callTool({ name: "expert_policy", arguments: { deny: ["q"] } });
+      expect(rejected.isError).toBe(true);
     } finally {
       await client.close();
       await server.close();

@@ -24,7 +24,6 @@ export const MCP_TOOL_NAMES = [
   "expert_wait",
   "expert_result",
   "expert_abort",
-  "expert_policy",
   "expert_feedback",
   "expert_cleanup",
   "expert_escalate",
@@ -109,12 +108,6 @@ export const MCP_INPUT_SCHEMAS = {
     executionId: executionIdentifier,
     reason: z.string().min(1).max(1_000).optional(),
   },
-  expert_policy: {
-    allow: z.array(boundedText(200)).max(32).optional()
-      .describe("Only these models (or whole providers, as a bare `provider`) may be routed for the rest of this session; deny is subtracted from allow"),
-    deny: z.array(boundedText(200)).max(32).optional()
-      .describe("Never route to these models or whole providers for the rest of this session"),
-  },
   expert_cleanup: {
     executionId: executionIdentifier,
   },
@@ -136,6 +129,12 @@ export const MCP_INPUT_SCHEMAS = {
 
 function response(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value) }] };
+}
+
+/** MCP request session id; stdio conversations fall back to a stable "default" key. */
+function sessionKeyOf(extra: unknown): string {
+  const sessionId = (extra as { sessionId?: unknown } | undefined)?.sessionId;
+  return typeof sessionId === "string" && sessionId.length >= 1 && sessionId.length <= 200 ? sessionId : "default";
 }
 
 const configuredTimeout = Number.parseInt(process.env.EXPERT_COUNCIL_MCP_TIMEOUT_MS ?? "30000", 10);
@@ -179,7 +178,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     async (input, extra) => {
       const council = await councilProvider(extra);
       return response(presentResourceInventory(
-        await withMcpTimeout(council.inspectResources()),
+        await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) })),
         input.detail,
       ));
     },
@@ -194,7 +193,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     },
     async (input, extra) => {
       const council = await councilProvider(extra);
-      const inventory = await withMcpTimeout(council.inspectResources());
+      const inventory = await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) }));
       const assessment = resolveModelAssessment(
         inventory.models,
         inventory.modelAssessment,
@@ -212,6 +211,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       }
       const plan = await withMcpTimeout(council.buildCouncil({
         task: input.task,
+        sessionKey: sessionKeyOf(extra),
         ...(input.constraints ? { constraints: input.constraints } : {}),
         ...(assessment.source === "submitted" && assessment.assessment
           ? { modelAssessment: assessment.assessment }
@@ -245,7 +245,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       if (!input.assignments && (!input.role || !input.task)) {
         throw new Error("expert_delegate requires role/task or a non-empty assignments array");
       }
-      const inventory = await withMcpTimeout(council.inspectResources());
+      const inventory = await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) }));
       const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
       if (assessmentStatus.status === "required") {
         return response({
@@ -257,7 +257,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           warning: "expert_delegate did not start any execution. Complete the required web audit through expert_build first.",
         });
       }
-      const assignments: DelegationRequest[] = input.assignments
+      const assignments: DelegationRequest[] = (input.assignments
         ? input.assignments.map((assignment) => ({
           ...assignment,
           role: assignment.role as ExpertRole,
@@ -269,7 +269,10 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           ...(input.councilId ? { councilId: input.councilId } : {}),
           ...(input.workspace ? { workspace: input.workspace } : {}),
           ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
-        }];
+        }]).map((assignment) => ({
+          ...assignment,
+          sessionKey: sessionKeyOf(extra),
+        }));
       const receipts = assignments.map((assignment) => {
         const handle = council.startDelegation(assignment);
         return {
@@ -333,29 +336,6 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       return response(await withMcpTimeout(council.abortExecution({
         executionId: input.executionId,
         ...(input.reason ? { reason: input.reason } : {}),
-      })));
-    },
-  );
-  server.registerTool(
-    "expert_policy",
-    {
-      title: "Set Session Route Policy",
-      description: "Set or inspect the session-scoped model route policy. Entries are `provider/id` or a bare `provider` for the whole provider. With an allow list only listed models are eligible (minus deny); with only a deny list every other model is eligible. Later expert_build and expert_delegate calls respect it. Call with no arguments to read the current policy. The policy lives for this session only.",
-      inputSchema: MCP_INPUT_SCHEMAS.expert_policy,
-      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    },
-    async (input, extra) => {
-      const council = await councilProvider(extra);
-      if (!input.allow?.length && !input.deny?.length) {
-        const status = await withMcpTimeout(council.getStatus());
-        return response({
-          routePolicy: status.routePolicy ?? {},
-          note: "Session route policy is currently empty: every discoverable model is eligible.",
-        });
-      }
-      return response(await withMcpTimeout(council.setRoutePolicy({
-        ...(input.allow?.length ? { allow: input.allow } : {}),
-        ...(input.deny?.length ? { deny: input.deny } : {}),
       })));
     },
   );

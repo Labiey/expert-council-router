@@ -18,6 +18,7 @@ import {
   withModelStatus,
 } from "./model-assessment.js";
 import { listRoles } from "./roles.js";
+import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy } from "./route-policy.js";
 import { rankModels, routePolicyExcludes } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
 import type {
@@ -50,8 +51,8 @@ import type {
   AbortExecutionRequest,
   AbortExecutionResult,
   ExecutionProgress,
-  RoutePolicy,
-  SetRoutePolicyResult,
+  RoutePolicyDocument,
+  RoutePolicyEntry,
   AvailableModel,
 } from "./types.js";
 
@@ -121,7 +122,8 @@ export class ExpertCouncilService implements ExpertCouncil {
   private readonly executions = new Map<string, ExecutionState>();
   private readonly results = new Map<string, ExpertResult>();
   private readonly executionPromises = new Map<string, Promise<ExpertResult>>();
-  private routePolicy: RoutePolicy | undefined;
+  private routePolicyDoc: RoutePolicyDocument | undefined;
+  private routePolicyWarning: string | undefined;
   private modelAssessment?: ModelAssessmentSnapshot;
   private persistenceQueue: Promise<void> = Promise.resolve();
 
@@ -194,8 +196,10 @@ export class ExpertCouncilService implements ExpertCouncil {
     return this.persistenceQueue;
   }
 
-  async inspectResources(): Promise<ResourceInventory> {
+  async inspectResources(options?: { sessionKey?: string }): Promise<ResourceInventory> {
     await this.refreshSharedAssessment();
+    const sessionKey = options?.sessionKey ?? "default";
+    await this.refreshRoutePolicy();
     const [models, skills, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.runtime.listSkills(),
@@ -234,6 +238,8 @@ export class ExpertCouncilService implements ExpertCouncil {
       }),
     );
     const providers = [...new Set(models.map((model) => model.provider))];
+    const systemEntry = this.routePolicyDoc?.system;
+    const sessionEntry = this.routePolicyDoc?.sessions?.[sessionKey];
     return {
       models,
       skills,
@@ -243,7 +249,15 @@ export class ExpertCouncilService implements ExpertCouncil {
       runtimeCapabilities,
       ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
       modelAssessmentStatus: evaluateModelAssessment(models, this.modelAssessment),
+      routePolicy: {
+        sessionKey,
+        effective: resolveEffectivePolicy(this.routePolicyDoc, sessionKey) ?? {},
+        ...(systemEntry ? { system: systemEntry } : {}),
+        ...(sessionEntry ? { session: sessionEntry } : {}),
+        ...(this.stateOptions.routePolicyPath ? { sourcePath: this.stateOptions.routePolicyPath } : {}),
+      },
       warnings: [
+        ...(this.routePolicyWarning ? [this.routePolicyWarning] : []),
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
@@ -256,15 +270,17 @@ export class ExpertCouncilService implements ExpertCouncil {
 
   async buildCouncil(request: BuildCouncilRequest): Promise<CouncilPlan> {
     await this.refreshSharedAssessment();
+    const sessionKey = request.sessionKey ?? "default";
+    await this.refreshRoutePolicy();
     const [fetchedModels, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
       this.runtime.getCapabilities(),
       this.runtime.listProviderBilling?.() ?? Promise.resolve<Record<string, RuntimeBillingDiscovery>>({}),
     ]);
-    const models = this.filterByRoutePolicy(fetchedModels);
-    if (this.routePolicy && models.length === 0) {
-      throw new Error("The session route policy excludes every available model; adjust expert_policy (allow/deny) before building a council.");
+    const models = this.filterByRoutePolicy(fetchedModels, sessionKey);
+    if (models.length === 0 && resolveEffectivePolicy(this.routePolicyDoc, sessionKey)) {
+      throw new Error("The route policy excludes every available model; edit route-policy.json (system or the session entry) before building a council.");
     }
     if (request.modelAssessment) {
       const submitted = parseModelAssessmentSnapshot(request.modelAssessment);
@@ -359,9 +375,17 @@ export class ExpertCouncilService implements ExpertCouncil {
       this.telemetry.aggregate(),
       this.runtime.listSkills(),
     ]);
-    const models = this.filterByRoutePolicy(unfilteredModels);
-    if (this.routePolicy && models.length === 0) {
-      throw new Error("The session route policy excludes every available model; adjust expert_policy (allow/deny) before delegating.");
+    const sessionKey = request.sessionKey ?? "default";
+    await this.refreshRoutePolicy();
+    const models = this.filterByRoutePolicy(unfilteredModels, sessionKey);
+    if (models.length === 0 && resolveEffectivePolicy(this.routePolicyDoc, sessionKey)) {
+      return {
+        status: "failed",
+        role: request.role,
+        model: "unassigned",
+        summary: "The route policy excludes every available model; edit route-policy.json (system or the session entry) before delegating.",
+        executionMetadata: { attempts: 0, durationMs: 0, executionId: "n/a" },
+      };
     }
     const plan = request.councilId ? this.plans.get(request.councilId) : undefined;
     const planWarnings: string[] = [];
@@ -596,9 +620,23 @@ export class ExpertCouncilService implements ExpertCouncil {
    * view and concurrent Pi/Codex instances observe each other's markers
    * without a host restart.
    */
-  private filterByRoutePolicy(models: AvailableModel[]): AvailableModel[] {
-    if (!this.routePolicy) return models;
-    return models.filter((model) => !routePolicyExcludes(this.routePolicy, `${model.provider}/${model.id}`));
+  private async refreshRoutePolicy(): Promise<void> {
+    if (!this.stateOptions.readRoutePolicy) return;
+    try {
+      const raw = await this.stateOptions.readRoutePolicy();
+      // Prune stale session entries in memory; the store owns any write-back.
+      this.routePolicyDoc = raw ? pruneRoutePolicyDocument(parseRoutePolicyDocument(raw)) : undefined;
+      this.routePolicyWarning = undefined;
+    } catch (error) {
+      this.routePolicyDoc = undefined;
+      this.routePolicyWarning = `Route policy file could not be loaded and was ignored: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  private filterByRoutePolicy(models: AvailableModel[], sessionKey: string): AvailableModel[] {
+    const effective = resolveEffectivePolicy(this.routePolicyDoc, sessionKey);
+    if (!effective) return models;
+    return models.filter((model) => !routePolicyExcludes(effective, `${model.provider}/${model.id}`));
   }
 
   /** Mark provider-wide quota evidence: quota exhaustion applies to every model of the provider. */
@@ -829,40 +867,8 @@ export class ExpertCouncilService implements ExpertCouncil {
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
   }
 
-  /**
-   * Set the session-scoped model route policy. Entries are `provider/id` or a
-   * bare `provider`; with an allow list only listed models are eligible (minus
-   * deny), with only a deny list everything else is eligible. The policy is
-   * in-memory for this session and respected by later builds and delegations.
-   */
-  async setRoutePolicy(policy: RoutePolicy): Promise<SetRoutePolicyResult> {
-    const sanitize = (value: string): string | undefined => {
-      const cleaned = value.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-      return /^[^/]+(\/[^/]+)?$/.test(cleaned) ? cleaned : undefined;
-    };
-    const allow = policy.allow?.map(sanitize).filter((value): value is string => Boolean(value)).slice(0, 32);
-    const deny = policy.deny?.map(sanitize).filter((value): value is string => Boolean(value)).slice(0, 32);
-    this.routePolicy = {
-      ...(allow?.length ? { allow } : {}),
-      ...(deny?.length ? { deny } : {}),
-    };
-    const all = await this.runtime.listAvailableModels();
-    const kept = this.filterByRoutePolicy(all);
-    const keptKeys = new Set(kept.map((model) => `${model.provider}/${model.id}`));
-    const excludedModels = all
-      .map((model) => `${model.provider}/${model.id}`)
-      .filter((key) => !keptKeys.has(key))
-      .slice(0, 50);
-    return {
-      ...(this.routePolicy.allow ? { allow: this.routePolicy.allow } : {}),
-      ...(this.routePolicy.deny ? { deny: this.routePolicy.deny } : {}),
-      excludedModels,
-    };
-  }
-
   async getStatus(): Promise<CouncilStatus> {
     return {
-      ...(this.routePolicy ? { routePolicy: this.routePolicy } : {}),
       plans: [...this.plans.values()].map((plan) => ({
         id: plan.id,
         taskClass: plan.taskClass,

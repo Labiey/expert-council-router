@@ -70,15 +70,15 @@ var require_windows = __commonJS({
       }
       return false;
     }
-    function checkStat(stat8, path27, options) {
-      if (!stat8.isSymbolicLink() && !stat8.isFile()) {
+    function checkStat(stat9, path27, options) {
+      if (!stat9.isSymbolicLink() && !stat9.isFile()) {
         return false;
       }
       return checkPathExt(path27, options);
     }
     function isexe(path27, options, cb) {
-      fs15.stat(path27, function(er, stat8) {
-        cb(er, er ? false : checkStat(stat8, path27, options));
+      fs15.stat(path27, function(er, stat9) {
+        cb(er, er ? false : checkStat(stat9, path27, options));
       });
     }
     function sync(path27, options) {
@@ -94,20 +94,20 @@ var require_mode = __commonJS({
     isexe.sync = sync;
     var fs15 = __require("fs");
     function isexe(path27, options, cb) {
-      fs15.stat(path27, function(er, stat8) {
-        cb(er, er ? false : checkStat(stat8, options));
+      fs15.stat(path27, function(er, stat9) {
+        cb(er, er ? false : checkStat(stat9, options));
       });
     }
     function sync(path27, options) {
       return checkStat(fs15.statSync(path27), options);
     }
-    function checkStat(stat8, options) {
-      return stat8.isFile() && checkMode(stat8, options);
+    function checkStat(stat9, options) {
+      return stat9.isFile() && checkMode(stat9, options);
     }
-    function checkMode(stat8, options) {
-      var mod = stat8.mode;
-      var uid = stat8.uid;
-      var gid = stat8.gid;
+    function checkMode(stat9, options) {
+      var mod = stat9.mode;
+      var uid = stat9.uid;
+      var gid = stat9.gid;
       var myUid = options.uid !== void 0 ? options.uid : process.getuid && process.getuid();
       var myGid = options.gid !== void 0 ? options.gid : process.getgid && process.getgid();
       var u = parseInt("100", 8);
@@ -9500,8 +9500,8 @@ async function runWalkGrep(pattern, root, signal) {
     hits.push(line);
     return true;
   };
-  const stat8 = await fs4.stat(root).catch(() => null);
-  if (stat8?.isFile()) {
+  const stat9 = await fs4.stat(root).catch(() => null);
+  if (stat9?.isFile()) {
     await grepFile(root, re, push);
   } else {
     await walk2(root, "", (rel) => grepFile(path3.join(root, rel), re, push), signal);
@@ -38658,21 +38658,21 @@ var init_from = __esm({
     init_fetch_blob();
     ({ stat: stat2 } = fs5);
     blobFromSync = (path27, type) => fromBlob(statSync2(path27), path27, type);
-    blobFrom = (path27, type) => stat2(path27).then((stat8) => fromBlob(stat8, path27, type));
-    fileFrom = (path27, type) => stat2(path27).then((stat8) => fromFile(stat8, path27, type));
+    blobFrom = (path27, type) => stat2(path27).then((stat9) => fromBlob(stat9, path27, type));
+    fileFrom = (path27, type) => stat2(path27).then((stat9) => fromFile(stat9, path27, type));
     fileFromSync = (path27, type) => fromFile(statSync2(path27), path27, type);
-    fromBlob = (stat8, path27, type = "") => new fetch_blob_default([new BlobDataItem({
+    fromBlob = (stat9, path27, type = "") => new fetch_blob_default([new BlobDataItem({
       path: path27,
-      size: stat8.size,
-      lastModified: stat8.mtimeMs,
+      size: stat9.size,
+      lastModified: stat9.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat8, path27, type = "") => new file_default([new BlobDataItem({
+    fromFile = (stat9, path27, type = "") => new file_default([new BlobDataItem({
       path: path27,
-      size: stat8.size,
-      lastModified: stat8.mtimeMs,
+      size: stat9.size,
+      lastModified: stat9.mtimeMs,
       start: 0
-    })], basename2(path27), { type, lastModified: stat8.mtimeMs });
+    })], basename2(path27), { type, lastModified: stat9.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -45899,7 +45899,7 @@ var require_getCredentials = __commonJS({
     var fs15 = __require("fs");
     var util_1 = __require("util");
     var errorWithCode_1 = require_errorWithCode();
-    var readFile13 = fs15.readFile ? (0, util_1.promisify)(fs15.readFile) : async () => {
+    var readFile14 = fs15.readFile ? (0, util_1.promisify)(fs15.readFile) : async () => {
       throw new errorWithCode_1.ErrorWithCode("use key rather than keyFile.", "MISSING_CREDENTIALS");
     };
     var ExtensionFiles;
@@ -45921,7 +45921,7 @@ var require_getCredentials = __commonJS({
        * @returns A promise that resolves with the credentials.
        */
       async getCredentials() {
-        const key = await readFile13(this.keyFilePath, "utf8");
+        const key = await readFile14(this.keyFilePath, "utf8");
         let body;
         try {
           body = JSON.parse(key);
@@ -45947,7 +45947,7 @@ var require_getCredentials = __commonJS({
        * @returns A promise that resolves with the private key.
        */
       async getCredentials() {
-        const privateKey = await readFile13(this.keyFilePath, "utf8");
+        const privateKey = await readFile14(this.keyFilePath, "utf8");
         return { privateKey };
       }
     };
@@ -47577,7 +47577,7 @@ var require_filesubjecttokensupplier = __commonJS({
     exports.FileSubjectTokenSupplier = void 0;
     var util_1 = __require("util");
     var fs15 = __require("fs");
-    var readFile13 = (0, util_1.promisify)(fs15.readFile ?? (() => {
+    var readFile14 = (0, util_1.promisify)(fs15.readFile ?? (() => {
     }));
     var realpath6 = (0, util_1.promisify)(fs15.realpath ?? (() => {
     }));
@@ -47617,7 +47617,7 @@ var require_filesubjecttokensupplier = __commonJS({
           throw err2;
         }
         let subjectToken;
-        const rawText = await readFile13(parsedFilePath, { encoding: "utf8" });
+        const rawText = await readFile14(parsedFilePath, { encoding: "utf8" });
         if (this.formatType === "text") {
           subjectToken = rawText;
         } else if (this.formatType === "json" && this.subjectTokenFieldName) {
@@ -154260,8 +154260,8 @@ var require_graceful_fs = __commonJS({
       fs16.createReadStream = createReadStream4;
       fs16.createWriteStream = createWriteStream5;
       var fs$readFile = fs16.readFile;
-      fs16.readFile = readFile13;
-      function readFile13(path27, options, cb) {
+      fs16.readFile = readFile14;
+      function readFile14(path27, options, cb) {
         if (typeof options === "function")
           cb = options, options = null;
         return go$readFile(path27, options, cb);
@@ -154973,11 +154973,11 @@ var require_mtime_precision = __commonJS({
     function probe(file2, fs15, callback) {
       const cachedPrecision = fs15[cacheSymbol];
       if (cachedPrecision) {
-        return fs15.stat(file2, (err2, stat8) => {
+        return fs15.stat(file2, (err2, stat9) => {
           if (err2) {
             return callback(err2);
           }
-          callback(null, stat8.mtime, cachedPrecision);
+          callback(null, stat9.mtime, cachedPrecision);
         });
       }
       const mtime = new Date(Math.ceil(Date.now() / 1e3) * 1e3 + 5);
@@ -154985,13 +154985,13 @@ var require_mtime_precision = __commonJS({
         if (err2) {
           return callback(err2);
         }
-        fs15.stat(file2, (err3, stat8) => {
+        fs15.stat(file2, (err3, stat9) => {
           if (err3) {
             return callback(err3);
           }
-          const precision = stat8.mtime.getTime() % 1e3 === 0 ? "s" : "ms";
+          const precision = stat9.mtime.getTime() % 1e3 === 0 ? "s" : "ms";
           Object.defineProperty(fs15, cacheSymbol, { value: precision });
-          callback(null, stat8.mtime, precision);
+          callback(null, stat9.mtime, precision);
         });
       });
     }
@@ -155045,14 +155045,14 @@ var require_lockfile = __commonJS({
         if (options.stale <= 0) {
           return callback(Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED", file: file2 }));
         }
-        options.fs.stat(lockfilePath, (err3, stat8) => {
+        options.fs.stat(lockfilePath, (err3, stat9) => {
           if (err3) {
             if (err3.code === "ENOENT") {
               return acquireLock(file2, { ...options, stale: 0 }, callback);
             }
             return callback(err3);
           }
-          if (!isLockStale(stat8, options)) {
+          if (!isLockStale(stat9, options)) {
             return callback(Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED", file: file2 }));
           }
           removeLock(file2, options, (err4) => {
@@ -155064,8 +155064,8 @@ var require_lockfile = __commonJS({
         });
       });
     }
-    function isLockStale(stat8, options) {
-      return stat8.mtime.getTime() < Date.now() - options.stale;
+    function isLockStale(stat9, options) {
+      return stat9.mtime.getTime() < Date.now() - options.stale;
     }
     function removeLock(file2, options, callback) {
       options.fs.rmdir(getLockFile(file2, options), (err2) => {
@@ -155083,7 +155083,7 @@ var require_lockfile = __commonJS({
       lock2.updateDelay = lock2.updateDelay || options.update;
       lock2.updateTimeout = setTimeout(() => {
         lock2.updateTimeout = null;
-        options.fs.stat(lock2.lockfilePath, (err2, stat8) => {
+        options.fs.stat(lock2.lockfilePath, (err2, stat9) => {
           const isOverThreshold = lock2.lastUpdate + options.stale < Date.now();
           if (err2) {
             if (err2.code === "ENOENT" || isOverThreshold) {
@@ -155092,7 +155092,7 @@ var require_lockfile = __commonJS({
             lock2.updateDelay = 1e3;
             return updateLock(file2, options);
           }
-          const isMtimeOurs = lock2.mtime.getTime() === stat8.mtime.getTime();
+          const isMtimeOurs = lock2.mtime.getTime() === stat9.mtime.getTime();
           if (!isMtimeOurs) {
             return setLockAsCompromised(
               file2,
@@ -155217,11 +155217,11 @@ var require_lockfile = __commonJS({
         if (err2) {
           return callback(err2);
         }
-        options.fs.stat(getLockFile(file3, options), (err3, stat8) => {
+        options.fs.stat(getLockFile(file3, options), (err3, stat9) => {
           if (err3) {
             return err3.code === "ENOENT" ? callback(null, false) : callback(err3);
           }
-          return callback(null, !isLockStale(stat8, options));
+          return callback(null, !isLockStale(stat9, options));
         });
       });
     }
@@ -172910,7 +172910,7 @@ var require_snapshot_utils = __commonJS({
 var require_snapshot_recorder = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/undici/lib/mock/snapshot-recorder.js"(exports, module) {
     "use strict";
-    var { writeFile: writeFile4, readFile: readFile13, mkdir: mkdir4 } = __require("node:fs/promises");
+    var { writeFile: writeFile4, readFile: readFile14, mkdir: mkdir4 } = __require("node:fs/promises");
     var { dirname: dirname26, resolve: resolve17 } = __require("node:path");
     var { setTimeout: setTimeout2, clearTimeout: clearTimeout2 } = __require("node:timers");
     var { InvalidArgumentError, UndiciError } = require_errors2();
@@ -173127,7 +173127,7 @@ var require_snapshot_recorder = __commonJS({
           throw new InvalidArgumentError("Snapshot path is required");
         }
         try {
-          const data = await readFile13(resolve17(path27), "utf8");
+          const data = await readFile14(resolve17(path27), "utf8");
           const parsed = JSON.parse(data);
           if (Array.isArray(parsed)) {
             this.#snapshots.clear();
@@ -246668,8 +246668,8 @@ function createLsToolDefinition(cwd, options) {
               reject(new Error(`Path not found: ${dirPath}`));
               return;
             }
-            const stat8 = await ops.stat(dirPath);
-            if (!stat8.isDirectory()) {
+            const stat9 = await ops.stat(dirPath);
+            if (!stat9.isDirectory()) {
               reject(new Error(`Not a directory: ${dirPath}`));
               return;
             }
@@ -256027,8 +256027,8 @@ function findGitPaths(cwd) {
     const gitPath = join25(dir, ".git");
     if (existsSync13(gitPath)) {
       try {
-        const stat8 = statSync10(gitPath);
-        if (stat8.isFile()) {
+        const stat9 = statSync10(gitPath);
+        if (stat9.isFile()) {
           const content = readFileSync10(gitPath, "utf8").trim();
           if (content.startsWith("gitdir: ")) {
             const gitDir = resolve9(dir, content.slice(8).trim());
@@ -256039,7 +256039,7 @@ function findGitPaths(cwd) {
             const commonGitDir = existsSync13(commonDirPath) ? resolve9(gitDir, readFileSync10(commonDirPath, "utf8").trim()) : gitDir;
             return { repoDir: dir, commonGitDir, headPath };
           }
-        } else if (stat8.isDirectory()) {
+        } else if (stat9.isDirectory()) {
           const headPath = join25(gitPath, "HEAD");
           if (!existsSync13(headPath))
             return null;
@@ -311060,6 +311060,13 @@ function presentResourceInventory(inventory, detail2 = "compact") {
       reason: "missing",
       refreshHint: "A current web-audited modelAssessment is required before expert_build can assemble a council."
     },
+    routePolicy: {
+      sessionKey: inventory.routePolicy?.sessionKey ?? "default",
+      effective: inventory.routePolicy?.effective ?? {},
+      ...inventory.routePolicy?.system ? { system: inventory.routePolicy.system } : {},
+      ...inventory.routePolicy?.session ? { session: inventory.routePolicy.session } : {},
+      ...inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}
+    },
     warnings: inventory.warnings,
     detail: "compact",
     fullDetailHint: "Call expert_inspect with detail='full' only when exact model metadata is required."
@@ -311082,6 +311089,89 @@ function presentCouncilPlan(plan, detail2 = "compact") {
     warnings: plan.warnings,
     detail: "compact",
     fullDetailHint: "Call expert_build with detail='full' only when alternatives, scores, tools, or skills are required."
+  };
+}
+
+// packages/core/dist/route-policy.js
+var ROUTE_POLICY_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
+var routePolicyEntriesSchema = external_exports.array(external_exports.string().min(1).max(200)).max(32);
+var routePolicyEntrySchema = external_exports.object({
+  allow: routePolicyEntriesSchema.optional(),
+  deny: routePolicyEntriesSchema.optional(),
+  updatedAt: external_exports.string().min(1).max(60).optional(),
+  note: external_exports.string().min(1).max(500).optional(),
+  workspace: external_exports.string().min(1).max(500).optional()
+});
+var routePolicyDocumentSchema = external_exports.object({
+  version: external_exports.literal(1),
+  system: routePolicyEntrySchema.optional(),
+  sessions: external_exports.record(external_exports.string().min(1).max(200), routePolicyEntrySchema).optional()
+});
+function sanitizePolicyEntry(value3) {
+  const cleaned = value3.replace(/[\u0000-\u001f\u007f]/g, "").trim();
+  return /^[^/]+(\/[^/]+)?$/.test(cleaned) ? cleaned : void 0;
+}
+function sanitizeEntry(entry) {
+  if (!entry)
+    return entry;
+  const sanitize = (values) => {
+    const cleaned = values?.map(sanitizePolicyEntry).filter((value3) => Boolean(value3)).slice(0, 32);
+    return cleaned?.length ? cleaned : void 0;
+  };
+  const allow = sanitize(entry.allow);
+  const deny = sanitize(entry.deny);
+  if (!allow && !deny)
+    return void 0;
+  return {
+    ...allow ? { allow } : {},
+    ...deny ? { deny } : {},
+    ...entry.updatedAt ? { updatedAt: entry.updatedAt } : {},
+    ...entry.note ? { note: entry.note } : {},
+    ...entry.workspace ? { workspace: entry.workspace } : {}
+  };
+}
+function parseRoutePolicyDocument(input2) {
+  const parsed = routePolicyDocumentSchema.safeParse(input2);
+  if (!parsed.success) {
+    throw new ConfigValidationError(parsed.error.issues.map((issue2) => `routePolicy.${issue2.path.join(".") || "root"}: ${issue2.message}`));
+  }
+  const system = sanitizeEntry(parsed.data.system);
+  const rawSessions = parsed.data.sessions ?? {};
+  const sessions = {};
+  for (const [key, entry] of Object.entries(rawSessions)) {
+    const sanitizedKey = sanitizePolicyEntry(key);
+    const sanitized = sanitizeEntry(entry);
+    if (sanitizedKey && sanitized)
+      sessions[sanitizedKey] = sanitized;
+  }
+  return {
+    version: 1,
+    ...system ? { system } : {},
+    ...Object.keys(sessions).length ? { sessions } : {}
+  };
+}
+function pruneRoutePolicyDocument(document2, now = Date.now(), maxAgeMs = ROUTE_POLICY_SESSION_MAX_AGE_MS) {
+  const sessions = document2.sessions;
+  if (!sessions)
+    return document2;
+  const kept = {};
+  for (const [key, entry] of Object.entries(sessions)) {
+    const updated = entry.updatedAt ? Date.parse(entry.updatedAt) : Number.NaN;
+    if (!Number.isFinite(updated) || now - updated <= maxAgeMs)
+      kept[key] = entry;
+  }
+  return Object.keys(kept).length === Object.keys(sessions).length ? document2 : { version: 1, ...document2.system ? { system: document2.system } : {}, ...Object.keys(kept).length ? { sessions: kept } : {} };
+}
+function resolveEffectivePolicy(document2, sessionKey) {
+  const system = document2?.system;
+  const session = document2?.sessions?.[sessionKey];
+  if (!system && !session)
+    return void 0;
+  const denyUnion = [.../* @__PURE__ */ new Set([...system?.deny ?? [], ...session?.deny ?? []])];
+  const allow = system?.allow && session?.allow ? system.allow.filter((value3) => session.allow.includes(value3)) : system?.allow ?? session?.allow;
+  return {
+    ...allow?.length ? { allow } : {},
+    ...denyUnion.length ? { deny: denyUnion } : {}
   };
 }
 
@@ -311133,7 +311223,8 @@ var ExpertCouncilService = class {
   executions = /* @__PURE__ */ new Map();
   results = /* @__PURE__ */ new Map();
   executionPromises = /* @__PURE__ */ new Map();
-  routePolicy;
+  routePolicyDoc;
+  routePolicyWarning;
   modelAssessment;
   persistenceQueue = Promise.resolve();
   constructor(runtime, config2 = {}, telemetry = new MemoryTelemetryStore(), stateOptions = {}) {
@@ -311201,8 +311292,10 @@ var ExpertCouncilService = class {
     this.persistenceQueue = this.persistenceQueue.catch(() => void 0).then(() => this.stateOptions.persistence.save(snapshot, { replaceModelAssessment }));
     return this.persistenceQueue;
   }
-  async inspectResources() {
+  async inspectResources(options) {
     await this.refreshSharedAssessment();
+    const sessionKey = options?.sessionKey ?? "default";
+    await this.refreshRoutePolicy();
     const [models, skills, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.runtime.listSkills(),
@@ -311231,6 +311324,8 @@ var ExpertCouncilService = class {
       }];
     }));
     const providers = [...new Set(models.map((model) => model.provider))];
+    const systemEntry = this.routePolicyDoc?.system;
+    const sessionEntry = this.routePolicyDoc?.sessions?.[sessionKey];
     return {
       models,
       skills,
@@ -311240,7 +311335,15 @@ var ExpertCouncilService = class {
       runtimeCapabilities,
       ...this.modelAssessment ? { modelAssessment: this.modelAssessment } : {},
       modelAssessmentStatus: evaluateModelAssessment(models, this.modelAssessment),
+      routePolicy: {
+        sessionKey,
+        effective: resolveEffectivePolicy(this.routePolicyDoc, sessionKey) ?? {},
+        ...systemEntry ? { system: systemEntry } : {},
+        ...sessionEntry ? { session: sessionEntry } : {},
+        ...this.stateOptions.routePolicyPath ? { sourcePath: this.stateOptions.routePolicyPath } : {}
+      },
       warnings: [
+        ...this.routePolicyWarning ? [this.routePolicyWarning] : [],
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
@@ -311250,15 +311353,17 @@ var ExpertCouncilService = class {
   }
   async buildCouncil(request) {
     await this.refreshSharedAssessment();
+    const sessionKey = request.sessionKey ?? "default";
+    await this.refreshRoutePolicy();
     const [fetchedModels, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
       this.runtime.getCapabilities(),
       this.runtime.listProviderBilling?.() ?? Promise.resolve({})
     ]);
-    const models = this.filterByRoutePolicy(fetchedModels);
-    if (this.routePolicy && models.length === 0) {
-      throw new Error("The session route policy excludes every available model; adjust expert_policy (allow/deny) before building a council.");
+    const models = this.filterByRoutePolicy(fetchedModels, sessionKey);
+    if (models.length === 0 && resolveEffectivePolicy(this.routePolicyDoc, sessionKey)) {
+      throw new Error("The route policy excludes every available model; edit route-policy.json (system or the session entry) before building a council.");
     }
     if (request.modelAssessment) {
       const submitted = parseModelAssessmentSnapshot(request.modelAssessment);
@@ -311335,9 +311440,17 @@ var ExpertCouncilService = class {
       this.telemetry.aggregate(),
       this.runtime.listSkills()
     ]);
-    const models = this.filterByRoutePolicy(unfilteredModels);
-    if (this.routePolicy && models.length === 0) {
-      throw new Error("The session route policy excludes every available model; adjust expert_policy (allow/deny) before delegating.");
+    const sessionKey = request.sessionKey ?? "default";
+    await this.refreshRoutePolicy();
+    const models = this.filterByRoutePolicy(unfilteredModels, sessionKey);
+    if (models.length === 0 && resolveEffectivePolicy(this.routePolicyDoc, sessionKey)) {
+      return {
+        status: "failed",
+        role: request.role,
+        model: "unassigned",
+        summary: "The route policy excludes every available model; edit route-policy.json (system or the session entry) before delegating.",
+        executionMetadata: { attempts: 0, durationMs: 0, executionId: "n/a" }
+      };
     }
     const plan = request.councilId ? this.plans.get(request.councilId) : void 0;
     const planWarnings = [];
@@ -311544,10 +311657,23 @@ var ExpertCouncilService = class {
    * view and concurrent Pi/Codex instances observe each other's markers
    * without a host restart.
    */
-  filterByRoutePolicy(models) {
-    if (!this.routePolicy)
+  async refreshRoutePolicy() {
+    if (!this.stateOptions.readRoutePolicy)
+      return;
+    try {
+      const raw = await this.stateOptions.readRoutePolicy();
+      this.routePolicyDoc = raw ? pruneRoutePolicyDocument(parseRoutePolicyDocument(raw)) : void 0;
+      this.routePolicyWarning = void 0;
+    } catch (error61) {
+      this.routePolicyDoc = void 0;
+      this.routePolicyWarning = `Route policy file could not be loaded and was ignored: ${error61 instanceof Error ? error61.message : String(error61)}`;
+    }
+  }
+  filterByRoutePolicy(models, sessionKey) {
+    const effective = resolveEffectivePolicy(this.routePolicyDoc, sessionKey);
+    if (!effective)
       return models;
-    return models.filter((model) => !routePolicyExcludes(this.routePolicy, `${model.provider}/${model.id}`));
+    return models.filter((model) => !routePolicyExcludes(effective, `${model.provider}/${model.id}`));
   }
   /** Mark provider-wide quota evidence: quota exhaustion applies to every model of the provider. */
   async markModelAvailability(modelKey, reason, providerSiblings = []) {
@@ -311753,36 +311879,8 @@ var ExpertCouncilService = class {
     });
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
   }
-  /**
-   * Set the session-scoped model route policy. Entries are `provider/id` or a
-   * bare `provider`; with an allow list only listed models are eligible (minus
-   * deny), with only a deny list everything else is eligible. The policy is
-   * in-memory for this session and respected by later builds and delegations.
-   */
-  async setRoutePolicy(policy) {
-    const sanitize = (value3) => {
-      const cleaned = value3.replace(/[\u0000-\u001f\u007f]/g, "").trim();
-      return /^[^/]+(\/[^/]+)?$/.test(cleaned) ? cleaned : void 0;
-    };
-    const allow = policy.allow?.map(sanitize).filter((value3) => Boolean(value3)).slice(0, 32);
-    const deny = policy.deny?.map(sanitize).filter((value3) => Boolean(value3)).slice(0, 32);
-    this.routePolicy = {
-      ...allow?.length ? { allow } : {},
-      ...deny?.length ? { deny } : {}
-    };
-    const all = await this.runtime.listAvailableModels();
-    const kept = this.filterByRoutePolicy(all);
-    const keptKeys = new Set(kept.map((model) => `${model.provider}/${model.id}`));
-    const excludedModels = all.map((model) => `${model.provider}/${model.id}`).filter((key) => !keptKeys.has(key)).slice(0, 50);
-    return {
-      ...this.routePolicy.allow ? { allow: this.routePolicy.allow } : {},
-      ...this.routePolicy.deny ? { deny: this.routePolicy.deny } : {},
-      excludedModels
-    };
-  }
   async getStatus() {
     return {
-      ...this.routePolicy ? { routePolicy: this.routePolicy } : {},
       plans: [...this.plans.values()].map((plan) => ({
         id: plan.id,
         taskClass: plan.taskClass,
@@ -312116,9 +312214,61 @@ var JsonModelAssessmentStore = class {
   }
 };
 
+// packages/pi-runtime/dist/file-route-policy.js
+import { stat as stat7, readFile as readFile9 } from "node:fs/promises";
+var JsonRoutePolicyStore = class {
+  filePath;
+  cached;
+  cachedMtimeMs = -1;
+  cachedMissing = false;
+  constructor(filePath) {
+    this.filePath = filePath;
+  }
+  async load() {
+    let raw;
+    try {
+      const stats = await stat7(this.filePath);
+      if (this.cachedMissing === false && stats.mtimeMs === this.cachedMtimeMs && this.cachedMtimeMs >= 0) {
+        return this.cached;
+      }
+      raw = JSON.parse(await readFile9(this.filePath, "utf8"));
+      this.cachedMtimeMs = stats.mtimeMs;
+      this.cachedMissing = false;
+    } catch (error61) {
+      if (error61.code === "ENOENT") {
+        this.cached = void 0;
+        this.cachedMtimeMs = -1;
+        this.cachedMissing = true;
+        return void 0;
+      }
+      this.cached = void 0;
+      this.cachedMtimeMs = -1;
+      this.cachedMissing = true;
+      throw error61;
+    }
+    const parsed = parseRoutePolicyDocument(raw);
+    const pruned = pruneRoutePolicyDocument(parsed);
+    if (pruned !== parsed) {
+      await this.save(pruned).catch(() => void 0);
+      this.cachedMtimeMs = -1;
+    }
+    this.cached = pruned;
+    return pruned;
+  }
+  async save(document2) {
+    const { writeFile: writeFile4, rename: rename3 } = await import("node:fs/promises");
+    const path27 = await import("node:path");
+    const { randomUUID: randomUUID12 } = await import("node:crypto");
+    const temporary = path27.join(path27.dirname(this.filePath), `.${path27.basename(this.filePath)}.${process.pid}.${randomUUID12()}.tmp`);
+    await writeFile4(temporary, `${JSON.stringify(document2, null, 2)}
+`, { encoding: "utf8", mode: 384, flag: "wx" });
+    await rename3(temporary, this.filePath);
+  }
+};
+
 // packages/pi-runtime/dist/file-state.js
 import { randomUUID as randomUUID10 } from "node:crypto";
-import { chmod as chmod3, readFile as readFile9, rename as rename2, writeFile as writeFile3 } from "node:fs/promises";
+import { chmod as chmod3, readFile as readFile10, rename as rename2, writeFile as writeFile3 } from "node:fs/promises";
 import path21 from "node:path";
 var JsonCouncilStateStore = class {
   filePath;
@@ -312130,7 +312280,7 @@ var JsonCouncilStateStore = class {
     const filePath = await ensurePrivateStoragePath(this.filePath);
     let content;
     try {
-      content = await readFile9(filePath, "utf8");
+      content = await readFile10(filePath, "utf8");
     } catch (error61) {
       if (error61.code === "ENOENT")
         return void 0;
@@ -312202,12 +312352,12 @@ var SplitCouncilStateStore = class {
 };
 
 // packages/pi-runtime/dist/pi-runtime.js
-import { readFile as readFile12 } from "node:fs/promises";
+import { readFile as readFile13 } from "node:fs/promises";
 import path24 from "node:path";
 
 // packages/pi-runtime/dist/pi-sdk.js
 import { execFile as execFile2 } from "node:child_process";
-import { access as access5, readFile as readFile10 } from "node:fs/promises";
+import { access as access5, readFile as readFile11 } from "node:fs/promises";
 import path22 from "node:path";
 import { pathToFileURL as pathToFileURL4 } from "node:url";
 import { promisify as promisify2 } from "node:util";
@@ -312279,7 +312429,7 @@ async function dynamicImport2(specifier) {
 }
 var execFileAsync2 = promisify2(execFile2);
 async function loadFromPackageDirectory(packageDirectory) {
-  const manifest = JSON.parse(await readFile10(path22.join(packageDirectory, "package.json"), "utf8"));
+  const manifest = JSON.parse(await readFile11(path22.join(packageDirectory, "package.json"), "utf8"));
   const entry = path22.resolve(packageDirectory, manifest.main ?? "dist/index.js");
   await access5(entry);
   return dynamicImport2(pathToFileURL4(entry).href);
@@ -312348,7 +312498,7 @@ async function loadPiSdk() {
 // packages/pi-runtime/dist/workspace.js
 import { execFile as execFile3 } from "node:child_process";
 import { createHash as createHash2, randomUUID as randomUUID11 } from "node:crypto";
-import { chmod as chmod4, lstat as lstat2, mkdir as mkdir3, readFile as readFile11, realpath as realpath5, stat as stat7 } from "node:fs/promises";
+import { chmod as chmod4, lstat as lstat2, mkdir as mkdir3, readFile as readFile12, realpath as realpath5, stat as stat8 } from "node:fs/promises";
 import { tmpdir as tmpdir8, userInfo } from "node:os";
 import path23 from "node:path";
 import { promisify as promisify3 } from "node:util";
@@ -312414,7 +312564,7 @@ var WorkspaceBoundary = class {
     if (path23.relative(expected, resolved) !== "") {
       throw new Error("Expert Council worktree base resolves outside its expected temporary path.");
     }
-    const info = await stat7(resolved);
+    const info = await stat8(resolved);
     if (!info.isDirectory())
       throw new Error("Expert Council worktree base is not a directory.");
     assertOwnedAndPrivate(info, "Expert Council worktree base");
@@ -312442,7 +312592,7 @@ var WorkspaceBoundary = class {
         const worktree = await canonical(listed);
         if (worktree === base || !isWithin3(base, worktree))
           continue;
-        const info = await stat7(worktree);
+        const info = await stat8(worktree);
         assertOwnedAndPrivate(info, `Worktree ${worktree}`);
         const creationMs = worktreeNameEpochMs(worktree) ?? info.mtimeMs;
         if (Date.now() - creationMs < this.config.worktreeRetentionMs)
@@ -312543,7 +312693,7 @@ var WorkspaceBoundary = class {
       const created = await canonical(worktree);
       if (!isWithin3(worktreeBase, created))
         throw new Error("Created worktree escaped the private worktree base.");
-      const createdInfo = await stat7(created);
+      const createdInfo = await stat8(created);
       assertOwnedAndPrivate(createdInfo, `Worktree ${created}`);
       await chmod4(created, 448).catch((chmodError) => {
         if (process.platform !== "win32")
@@ -312552,7 +312702,7 @@ var WorkspaceBoundary = class {
       const marker = await lstat2(path23.join(created, ".git"));
       if (!marker.isFile())
         throw new Error("Created worktree has an invalid .git registration marker.");
-      const markerText = (await readFile11(path23.join(created, ".git"), "utf8")).trim();
+      const markerText = (await readFile12(path23.join(created, ".git"), "utf8")).trim();
       const gitDirValue = /^gitdir:\s*(.+)$/i.exec(markerText)?.[1];
       if (!gitDirValue)
         throw new Error("Created worktree .git registration is malformed.");
@@ -312563,7 +312713,7 @@ var WorkspaceBoundary = class {
       if (!isWithin3(worktreeRegistrations, registeredGitDir)) {
         throw new Error("Created worktree registration is outside this repository's Git metadata.");
       }
-      assertOwnedAndPrivate(await stat7(commonDir), "Repository Git metadata");
+      assertOwnedAndPrivate(await stat8(commonDir), "Repository Git metadata");
       return {
         cwd: path23.join(created, relativeCwd),
         root: created,
@@ -312607,7 +312757,7 @@ var WorkspaceBoundary = class {
         try {
           const resolved = await canonical(listed);
           if (resolved !== base && isWithin3(base, resolved) && path23.basename(resolved).endsWith(suffix)) {
-            assertOwnedAndPrivate(await stat7(resolved), `Worktree ${resolved}`);
+            assertOwnedAndPrivate(await stat8(resolved), `Worktree ${resolved}`);
             worktrees.push(resolved);
           }
         } catch (error61) {
@@ -312844,8 +312994,8 @@ function normalizeResult(parsed, request, rawText, changedFiles, workspace, usag
 }
 async function rolePrompt(role2, roleDirectory) {
   if (roleDirectory)
-    return readFile12(path24.resolve(roleDirectory, `${role2}.md`), "utf8");
-  return readFile12(new URL(`./roles/${role2}.md`, import.meta.url), "utf8");
+    return readFile13(path24.resolve(roleDirectory, `${role2}.md`), "utf8");
+  return readFile13(new URL(`./roles/${role2}.md`, import.meta.url), "utf8");
 }
 function executionPrompt(request, roleInstructions) {
   return `${roleInstructions}
@@ -313212,7 +313362,8 @@ function defaultCouncilStoragePaths(cwd, dataRoot = defaultCouncilDataRoot()) {
     workspaceRoot,
     statePath: path25.join(workspaceRoot, "state.json"),
     telemetryPath: path25.join(path25.resolve(dataRoot), "telemetry.jsonl"),
-    modelAssessmentPath: path25.join(path25.resolve(dataRoot), "model-assessment.json")
+    modelAssessmentPath: path25.join(path25.resolve(dataRoot), "model-assessment.json"),
+    routePolicyPath: path25.join(path25.resolve(dataRoot), "route-policy.json")
   };
 }
 async function createExpertCouncil(options = {}) {
@@ -313238,8 +313389,10 @@ async function createExpertCouncil(options = {}) {
   const telemetryPath = resolveOperatorPath(cwd, options.telemetryPath ?? process.env.EXPERT_COUNCIL_TELEMETRY ?? defaults4.telemetryPath, "Telemetry path");
   const statePath = resolveOperatorPath(cwd, options.statePath ?? process.env.EXPERT_COUNCIL_STATE ?? defaults4.statePath, "State path");
   const modelAssessmentPath = resolveOperatorPath(cwd, options.modelAssessmentPath ?? process.env.EXPERT_COUNCIL_MODEL_ASSESSMENT ?? defaults4.modelAssessmentPath, "Model assessment path");
+  const routePolicyPath = resolveOperatorPath(cwd, options.routePolicyPath ?? process.env.EXPERT_COUNCIL_ROUTE_POLICY ?? defaults4.routePolicyPath, "Route policy path");
   const stateStore = new JsonCouncilStateStore(statePath);
   const assessmentStore = new JsonModelAssessmentStore(modelAssessmentPath);
+  const routePolicyStore = new JsonRoutePolicyStore(routePolicyPath);
   const persistence = new SplitCouncilStateStore(stateStore, assessmentStore);
   let initialState = await persistence.load();
   if (process.platform === "win32" && !initialState?.modelAssessment) {
@@ -313264,7 +313417,9 @@ async function createExpertCouncil(options = {}) {
   }
   return new ExpertCouncilService(runtime, config2, new JsonlTelemetryStore(telemetryPath), {
     ...initialState ? { initialState } : {},
-    persistence
+    persistence,
+    readRoutePolicy: () => routePolicyStore.load(),
+    routePolicyPath
   });
 }
 
@@ -313337,10 +313492,6 @@ var MCP_INPUT_SCHEMAS = {
     executionId: executionIdentifier,
     reason: external_exports.string().min(1).max(1e3).optional()
   },
-  expert_policy: {
-    allow: external_exports.array(boundedText2(200)).max(32).optional().describe("Only these models (or whole providers, as a bare `provider`) may be routed for the rest of this session; deny is subtracted from allow"),
-    deny: external_exports.array(boundedText2(200)).max(32).optional().describe("Never route to these models or whole providers for the rest of this session")
-  },
   expert_cleanup: {
     executionId: executionIdentifier
   },
@@ -313361,6 +313512,10 @@ var MCP_INPUT_SCHEMAS = {
 };
 function response(value3) {
   return { content: [{ type: "text", text: JSON.stringify(value3) }] };
+}
+function sessionKeyOf(extra) {
+  const sessionId = extra?.sessionId;
+  return typeof sessionId === "string" && sessionId.length >= 1 && sessionId.length <= 200 ? sessionId : "default";
 }
 var configuredTimeout = Number.parseInt(process.env.EXPERT_COUNCIL_MCP_TIMEOUT_MS ?? "30000", 10);
 var MCP_TOOL_TIMEOUT_MS = Number.isFinite(configuredTimeout) && configuredTimeout >= 1e3 ? configuredTimeout : 3e4;
@@ -313385,7 +313540,7 @@ function createMcpServerWithProvider(councilProvider) {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
   }, async (input2, extra) => {
     const council = await councilProvider(extra);
-    return response(presentResourceInventory(await withMcpTimeout(council.inspectResources()), input2.detail));
+    return response(presentResourceInventory(await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) })), input2.detail));
   });
   server2.registerTool("expert_build", {
     title: "Build Expert Council",
@@ -313394,7 +313549,7 @@ function createMcpServerWithProvider(councilProvider) {
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
   }, async (input2, extra) => {
     const council = await councilProvider(extra);
-    const inventory = await withMcpTimeout(council.inspectResources());
+    const inventory = await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) }));
     const assessment = resolveModelAssessment(inventory.models, inventory.modelAssessment, input2.modelAssessment);
     if (assessment.status.status === "required") {
       return response({
@@ -313408,6 +313563,7 @@ function createMcpServerWithProvider(councilProvider) {
     }
     const plan = await withMcpTimeout(council.buildCouncil({
       task: input2.task,
+      sessionKey: sessionKeyOf(extra),
       ...input2.constraints ? { constraints: input2.constraints } : {},
       ...assessment.source === "submitted" && assessment.assessment ? { modelAssessment: assessment.assessment } : {}
     }));
@@ -313434,7 +313590,7 @@ function createMcpServerWithProvider(councilProvider) {
     if (!input2.assignments && (!input2.role || !input2.task)) {
       throw new Error("expert_delegate requires role/task or a non-empty assignments array");
     }
-    const inventory = await withMcpTimeout(council.inspectResources());
+    const inventory = await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) }));
     const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
     if (assessmentStatus.status === "required") {
       return response({
@@ -313446,7 +313602,7 @@ function createMcpServerWithProvider(councilProvider) {
         warning: "expert_delegate did not start any execution. Complete the required web audit through expert_build first."
       });
     }
-    const assignments = input2.assignments ? input2.assignments.map((assignment) => ({
+    const assignments = (input2.assignments ? input2.assignments.map((assignment) => ({
       ...assignment,
       role: assignment.role
     })) : [{
@@ -313456,7 +313612,10 @@ function createMcpServerWithProvider(councilProvider) {
       ...input2.councilId ? { councilId: input2.councilId } : {},
       ...input2.workspace ? { workspace: input2.workspace } : {},
       ...input2.timeoutMs ? { timeoutMs: input2.timeoutMs } : {}
-    }];
+    }]).map((assignment) => ({
+      ...assignment,
+      sessionKey: sessionKeyOf(extra)
+    }));
     const receipts = assignments.map((assignment) => {
       const handle = council.startDelegation(assignment);
       return {
@@ -313507,25 +313666,6 @@ function createMcpServerWithProvider(councilProvider) {
     return response(await withMcpTimeout(council.abortExecution({
       executionId: input2.executionId,
       ...input2.reason ? { reason: input2.reason } : {}
-    })));
-  });
-  server2.registerTool("expert_policy", {
-    title: "Set Session Route Policy",
-    description: "Set or inspect the session-scoped model route policy. Entries are `provider/id` or a bare `provider` for the whole provider. With an allow list only listed models are eligible (minus deny); with only a deny list every other model is eligible. Later expert_build and expert_delegate calls respect it. Call with no arguments to read the current policy. The policy lives for this session only.",
-    inputSchema: MCP_INPUT_SCHEMAS.expert_policy,
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
-  }, async (input2, extra) => {
-    const council = await councilProvider(extra);
-    if (!input2.allow?.length && !input2.deny?.length) {
-      const status = await withMcpTimeout(council.getStatus());
-      return response({
-        routePolicy: status.routePolicy ?? {},
-        note: "Session route policy is currently empty: every discoverable model is eligible."
-      });
-    }
-    return response(await withMcpTimeout(council.setRoutePolicy({
-      ...input2.allow?.length ? { allow: input2.allow } : {},
-      ...input2.deny?.length ? { deny: input2.deny } : {}
     })));
   });
   server2.registerTool("expert_feedback", {

@@ -76,6 +76,45 @@ describe("model assessment persistence formatting", () => {
   });
 });
 
+describe("route policy persistence", () => {
+  it("reloads edited route-policy.json without a restart and prunes stale session entries", async () => {
+    const { mkdtemp, readFile, rm, writeFile, utimes } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { JsonRoutePolicyStore } = await import("../packages/pi-runtime/src/file-route-policy.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ec-route-policy-"));
+    const filePath = path.join(dir, "route-policy.json");
+    try {
+      await writeFile(filePath, `${JSON.stringify({
+        version: 1,
+        system: { deny: ["bailian"] },
+        sessions: {
+          "old-session": { deny: ["zai"], updatedAt: "2020-01-01T00:00:00.000Z" },
+          "fresh-session": { deny: ["deepseek"], updatedAt: new Date().toISOString() },
+        },
+      }, null, 2)}\n`, "utf8");
+      const store = new JsonRoutePolicyStore(filePath);
+
+      const first = await store.load();
+      expect(first?.system?.deny).toEqual(["bailian"]);
+      expect(first?.sessions?.["old-session"]).toBeUndefined();
+      expect(first?.sessions?.["fresh-session"]).toBeDefined();
+      // Pruning is written back so the file does not grow without bound.
+      const onDisk = JSON.parse(await readFile(filePath, "utf8"));
+      expect(onDisk.sessions["old-session"]).toBeUndefined();
+
+      // Host edits the file: a newer mtime must be observed without a restart.
+      await writeFile(filePath, `${JSON.stringify({ version: 1, system: { deny: ["zai"] } }, null, 2)}\n`, "utf8");
+      const later = new Date(Date.now() + 5_000);
+      await utimes(filePath, later, later);
+      const second = await store.load();
+      expect(second?.system?.deny).toEqual(["zai"]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Pi runtime adapter", () => {
   it("recognizes named Pi plan catalogs without treating authentication alone as billing evidence", () => {
     expect(inferPiProviderBilling("qwen-token-plan-cn")).toMatchObject({

@@ -11,7 +11,7 @@ import {
   sanitizeOutcome,
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
-import type { CouncilStateSnapshot, ModelAssessmentSnapshot } from "../packages/core/src/index.js";
+import type { CouncilStateOptions, CouncilStateSnapshot, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
 const profiles = {
@@ -809,7 +809,7 @@ describe("quota-exhausted model status", () => {
   });
 });
 
-describe("session route policy", () => {
+describe("file-driven session route policy", () => {
   const assessment = {
     asOf: "2026-09-03T00:00:00.000Z",
     sources: ["https://livebench.ai/"],
@@ -821,24 +821,40 @@ describe("session route policy", () => {
   };
   const models = [model("q", "one"), model("r", "one"), model("r", "two")];
 
-  function policyService(runtime: MockRuntime, saved: ModelAssessmentSnapshot) {
+  function policyService(
+    runtime: MockRuntime,
+    saved: ModelAssessmentSnapshot,
+    readRoutePolicy?: CouncilStateOptions["readRoutePolicy"],
+    routePolicyPath?: string,
+  ) {
     return new ExpertCouncilService(runtime, {}, undefined, {
       initialState: abortInitialState(saved),
       persistence: {
         save: async () => {},
         updateModelAssessment: async () => {},
       },
+      ...(readRoutePolicy ? { readRoutePolicy } : {}),
+      ...(routePolicyPath ? { routePolicyPath } : {}),
     });
   }
 
-  it("denies a whole provider from builds and delegations", async () => {
+  const systemDenyQ: RoutePolicyDocument = {
+    version: 1,
+    system: { deny: ["q"], updatedAt: "2026-09-03T00:00:00.000Z" },
+  };
+
+  it("applies the system-level deny from route-policy.json to builds and delegations", async () => {
     const runtime = new MockRuntime(models, [
       { status: "success", role: "scout", model: "r/one", summary: "ok" },
     ]);
-    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
-    const applied = await service.setRoutePolicy({ deny: ["q"] });
-    expect(applied.deny).toEqual(["q"]);
-    expect(applied.excludedModels).toEqual(["q/one"]);
+    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)), async () => systemDenyQ, "C:/state/route-policy.json");
+
+    const inventory = await service.inspectResources();
+    expect(inventory.routePolicy).toMatchObject({
+      sessionKey: "default",
+      effective: { deny: ["q"] },
+      sourcePath: "C:/state/route-policy.json",
+    });
 
     const plan = await service.buildCouncil({ task: "Implement a small bounded feature", constraints: { costPolicy: "balanced" } });
     for (const expert of plan.experts) expect(expert.model).not.toContain("q/");
@@ -846,21 +862,40 @@ describe("session route policy", () => {
     const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
     expect(result.status).toBe("success");
     expect(result.model).toBe("r/one");
-    expect((await service.getStatus()).routePolicy).toEqual({ deny: ["q"] });
   });
 
-  it("subtracts deny from allow and rejects every model only when nothing remains", async () => {
-    const runtime = new MockRuntime(models);
-    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
-    const applied = await service.setRoutePolicy({ allow: ["q/one", "r/one"], deny: ["q/one"] });
-    expect(applied.excludedModels).toEqual(["q/one", "r/two"]);
+  it("merges the session entry by narrowing: deny unions, allow intersects, system deny cannot be unlocked", async () => {
+    const runtime = new MockRuntime(models, [
+      { status: "success", role: "scout", model: "r/two", summary: "ok" },
+    ]);
+    const doc: RoutePolicyDocument = {
+      version: 1,
+      system: { allow: ["q/one", "r/one", "r/two"], deny: ["q"] },
+      sessions: { "session-a": { allow: ["q/one", "r/two"], deny: ["r/one"] } },
+    };
+    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)), async () => doc);
 
-    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    const inventory = await service.inspectResources({ sessionKey: "session-a" });
+    // allow = intersection(system, session) = [q/one, r/two]; deny = union(q, r/one).
+    // q/one survives in the effective allow list but loses to deny at routing time.
+    expect(inventory.routePolicy.effective).toEqual({ allow: ["q/one", "r/two"], deny: ["q", "r/one"] });
+
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", sessionKey: "session-a", timeoutMs: 60_000 });
     expect(result.status).toBe("success");
-    expect(result.model).toBe("r/one");
+    expect(result.model).toBe("r/two");
 
-    await service.setRoutePolicy({ deny: ["q", "r"] });
-    // Delegation surfaces a structured failure instead of throwing, so MCP hosts can read it.
+    // Another session key only sees the system policy (its allow list keeps
+    // q/one, but routing-time deny wins).
+    const other = await service.inspectResources({ sessionKey: "session-b" });
+    expect(other.routePolicy.effective).toEqual({ allow: ["q/one", "r/one", "r/two"], deny: ["q"] });
+    expect(other.routePolicy.session).toBeUndefined();
+  });
+
+  it("excludes every model only when the merged policy leaves nothing and reports it structurally", async () => {
+    const runtime = new MockRuntime(models);
+    const doc: RoutePolicyDocument = { version: 1, system: { deny: ["q", "r"] } };
+    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)), async () => doc);
+
     const blocked = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
     expect(blocked.status).toBe("failed");
     expect(blocked.summary).toContain("route policy excludes every available model");
@@ -868,13 +903,24 @@ describe("session route policy", () => {
     await expect(service.buildCouncil({ task: "Implement a small bounded feature" })).rejects.toThrow(/route policy/i);
   });
 
-  it("is session-scoped: a fresh service instance starts without a policy", async () => {
-    const runtime = new MockRuntime(models);
-    const service = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
-    expect(await service.getStatus()).not.toHaveProperty("routePolicy");
-    await service.setRoutePolicy({ allow: ["q/one"] });
-    const fresh = policyService(runtime, JSON.parse(JSON.stringify(assessment)));
-    expect(await fresh.getStatus()).not.toHaveProperty("routePolicy");
+  it("ignores a corrupt route-policy file with a warning instead of blocking routing", async () => {
+    const runtime = new MockRuntime(models, [
+      { status: "success", role: "scout", model: "q/one", summary: "ok" },
+    ]);
+    const service = policyService(
+      runtime,
+      JSON.parse(JSON.stringify(assessment)),
+      async () => {
+        throw new Error("unexpected token");
+      },
+    );
+    const inventory = await service.inspectResources();
+    expect(inventory.routePolicy.effective).toEqual({});
+    expect(inventory.warnings.join(" ")).toContain("Route policy file could not be loaded and was ignored");
+
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("q/one");
   });
 });
 

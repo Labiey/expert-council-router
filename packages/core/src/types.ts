@@ -302,6 +302,8 @@ export interface BuildCouncilRequest {
   constraints?: RoutingConstraints;
   /** Optional Main Agent capability audit. The latest supplied snapshot is reused durably. */
   modelAssessment?: ModelAssessmentSnapshot;
+  /** Session key selecting which persisted route-policy session entry applies; defaults to "default". */
+  sessionKey?: string;
 }
 
 export interface RankedCandidate {
@@ -347,6 +349,8 @@ export interface DelegationRequest {
   workspace?: string;
   timeoutMs?: number;
   constraints?: RoutingConstraints;
+  /** Session key selecting which persisted route-policy session entry applies; defaults to "default". */
+  sessionKey?: string;
 }
 
 export interface DelegationHandle {
@@ -459,6 +463,7 @@ export interface ResourceInventory {
   runtimeCapabilities: RuntimeCapabilities;
   modelAssessment?: ModelAssessmentSnapshot;
   modelAssessmentStatus?: ModelAssessmentStatus;
+  routePolicy: ResourceRoutePolicyView;
   warnings: string[];
 }
 
@@ -473,11 +478,30 @@ export interface RoutePolicy {
   deny?: string[];
 }
 
-export interface SetRoutePolicyResult {
+/** One persisted route-policy entry: system-level or per-session. */
+export interface RoutePolicyEntry {
   allow?: string[];
   deny?: string[];
-  /** Inventory models the current policy excludes, bounded to 50 entries. */
-  excludedModels?: string[];
+  updatedAt?: string;
+  note?: string;
+  /** Informational workspace hint so humans can prune stale session entries. */
+  workspace?: string;
+}
+
+/** Persisted route-policy document (route-policy.json). */
+export interface RoutePolicyDocument {
+  version: 1;
+  system?: RoutePolicyEntry;
+  sessions?: Record<string, RoutePolicyEntry>;
+}
+
+/** Host-facing route-policy view returned by inspectResources. */
+export interface ResourceRoutePolicyView {
+  sessionKey: string;
+  effective: RoutePolicy;
+  system?: RoutePolicyEntry;
+  session?: RoutePolicyEntry;
+  sourcePath?: string;
 }
 
 export interface CouncilStatus {
@@ -485,7 +509,6 @@ export interface CouncilStatus {
   executions: ExecutionStateSnapshot[];
   telemetry: TelemetryAggregate[];
   modelAssessment?: ModelAssessmentSnapshot;
-  routePolicy?: RoutePolicy;
 }
 
 export interface ExecutionStateSnapshot {
@@ -543,18 +566,20 @@ export interface CouncilStatePersistence {
 export interface CouncilStateOptions {
   initialState?: CouncilStateSnapshot;
   persistence?: CouncilStatePersistence;
+  /** Load the persisted route-policy document; implementers should reload when the file changes. */
+  readRoutePolicy?: () => Promise<RoutePolicyDocument | undefined>;
+  /** Display path of route-policy.json surfaced to hosts through inspectResources. */
+  routePolicyPath?: string;
 }
 
 export interface ExpertCouncil {
-  inspectResources(): Promise<ResourceInventory>;
+  inspectResources(options?: { sessionKey?: string }): Promise<ResourceInventory>;
   buildCouncil(request: BuildCouncilRequest): Promise<CouncilPlan>;
   startDelegation(request: DelegationRequest): DelegationHandle;
   delegate(request: DelegationRequest): Promise<ExpertResult>;
   getResult(executionId: string): Promise<ExpertResultLookup>;
   /** Bounded progress snapshot of a running expert execution; the material for verification or handoff. */
   inspectExecution(executionId: string): Promise<ExecutionProgress | undefined>;
-  /** Set the session-scoped model route policy (allow/deny); later builds and delegations respect it. */
-  setRoutePolicy(policy: RoutePolicy): Promise<SetRoutePolicyResult>;
   /** Deliberately stop a running expert execution while preserving its progress; never retried or escalated. */
   abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
   waitForResults(request: ExpertWaitRequest): Promise<ExpertWaitResult>;

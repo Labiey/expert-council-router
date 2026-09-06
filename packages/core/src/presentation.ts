@@ -83,6 +83,13 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
             reason: "missing" as const,
             refreshHint: "A current web-audited modelAssessment is required before expert_build can assemble a council.",
           },
+    routePolicy: {
+      sessionKey: inventory.routePolicy?.sessionKey ?? "default",
+      effective: inventory.routePolicy?.effective ?? {},
+      ...(inventory.routePolicy?.system ? { system: inventory.routePolicy.system } : {}),
+      ...(inventory.routePolicy?.session ? { session: inventory.routePolicy.session } : {}),
+      ...(inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}),
+    },
     warnings: inventory.warnings,
     detail: "compact" as const,
     fullDetailHint: "Call expert_inspect with detail='full' only when exact model metadata is required.",
