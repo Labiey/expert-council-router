@@ -328,13 +328,37 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_result",
     label: "Expert Result",
-    description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown.",
+    description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown. Pass includeProgress while a task is still running to receive a bounded progress snapshot (last assistant output, elapsed time, files changed so far) for verification, handoff, or intervention decisions.",
     parameters: Type.Object({
       executionId: ExecutionIdentifier,
+      includeProgress: Type.Optional(Type.Boolean()),
     }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await getCouncil(ctx.cwd)).getResult(params.executionId));
+      const council = await getCouncil(ctx.cwd);
+      const lookup = await council.getResult(params.executionId);
+      if (lookup.status === "running" && params.includeProgress) {
+        const progress = await council.inspectExecution(params.executionId);
+        if (progress) return output(progress);
+      }
+      return output(lookup);
+    },
+  });
+
+  pi.registerTool({
+    name: "expert_abort",
+    label: "Expert Abort",
+    description: "Deliberately stop a running expert execution whose direction no longer matches expectations. The attempt is marked aborted and never retried or escalated, completed work such as a mutation worktree stays preserved until expert_cleanup, and the returned progress snapshot doubles as the handoff brief for a follow-up delegation. Verify in-progress work first with expert_result includeProgress.",
+    parameters: Type.Object({
+      executionId: ExecutionIdentifier,
+      reason: Type.Optional(Type.String()),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).abortExecution({
+        executionId: params.executionId,
+        ...(params.reason ? { reason: params.reason } : {}),
+      }));
     },
   });
 

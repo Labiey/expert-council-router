@@ -13,6 +13,7 @@ export function sanitizeOutcome(outcome: ExpertOutcome): ExpertOutcome {
     toolErrors: Math.max(0, outcome.toolErrors),
     retryCount: Math.max(0, outcome.retryCount),
     timedOut: outcome.timedOut,
+    ...(outcome.aborted !== undefined ? { aborted: outcome.aborted } : {}),
     ...(outcome.verificationPassed !== undefined ? { verificationPassed: outcome.verificationPassed } : {}),
     escalationCount: Math.max(0, outcome.escalationCount),
     attempts: Math.max(1, outcome.attempts),

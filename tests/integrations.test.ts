@@ -65,6 +65,8 @@ function mockCouncil(): ExpertCouncil {
     buildCouncil: async (request) => ({ id: "c", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [] }),
     delegate: async (request) => ({ status: "success", role: request.role, model: "p/m", summary: "ok" }),
     startDelegation: () => ({ executionId: "exec_mock", result: Promise.resolve(completed) }),
+    inspectExecution: async () => undefined,
+    abortExecution: async (request) => ({ executionId: request.executionId, status: "already-finished" }),
     getResult: async (executionId) => ({ executionId, status: "completed", result: completed }),
     waitForResults: async ({ executionIds, mode = "all" }) => ({
       status: "completed",
@@ -149,6 +151,7 @@ describe("MCP semantic surface", () => {
       "expert_delegate",
       "expert_wait",
       "expert_result",
+      "expert_abort",
       "expert_feedback",
       "expert_cleanup",
       "expert_escalate",
@@ -357,6 +360,31 @@ describe("Codex plugin packaging", () => {
         cwd: workspace,
         trustedWorkspaceRoots: [workspace],
       });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe("expert_abort tool", () => {
+  it("validates its schema and routes through the shared council", async () => {
+    expect(MCP_INPUT_SCHEMAS.expert_abort.executionId.safeParse("exec_1").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_abort.reason.safeParse("wrong direction").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_abort.reason.safeParse("").success).toBe(false);
+
+    const server = createClientRootMcpServer({ cwd: process.cwd() }, async () => mockCouncil());
+    const client = new Client({ name: "abort-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const result = await client.callTool({
+        name: "expert_abort",
+        arguments: { executionId: "exec_mock", reason: "wrong direction" },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(JSON.stringify(result.content)).toContain("already-finished");
     } finally {
       await client.close();
       await server.close();

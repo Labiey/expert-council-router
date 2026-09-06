@@ -56,9 +56,16 @@ const auditedCapabilityProfileSchema = z.object(capabilityFields).strict().refin
 
 export const modelAvailabilityObservationSchema = z.object({
   callable: z.literal(false),
+  kind: z.enum(["unavailable", "quota-exhausted"]).optional(),
   observedAt: z.string().datetime({ offset: true }),
   reason: z.string().min(1).max(500),
   source: z.literal("runtime-failure"),
+});
+
+const modelStatusObservationSchema = z.object({
+  state: z.enum(["available", "quota-exhausted", "unavailable"]),
+  observedAt: z.string().datetime({ offset: true }),
+  reason: z.string().min(1).max(500).optional(),
 });
 
 const modelAvailabilityRecordSchema = z.record(
@@ -89,6 +96,10 @@ export const modelAssessmentSnapshotSchema = z.object({
   }).optional(),
   summary: z.string().min(1).max(2_000).optional(),
   modelAvailability: modelAvailabilityRecordSchema.optional(),
+  modelStatus: z.record(
+    z.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/),
+    modelStatusObservationSchema,
+  ).optional(),
 }).strict();
 
 /** JSON Schema form used by hosts that cannot consume the Core Zod schema. */

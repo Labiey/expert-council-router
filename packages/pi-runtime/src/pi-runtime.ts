@@ -4,11 +4,14 @@ import {
   inferFailureType,
   normalizePiModels,
   getRole,
+  type AbortExecutionRequest,
+  type AbortExecutionResult,
   type AvailableModel,
   type CouncilConfig,
   type ExpertExecutionRequest,
   type ExpertResult,
   type ExpertRuntime,
+  type ExecutionProgress,
   type FailureType,
   type RuntimeBillingDiscovery,
   type RuntimeCapabilities,
@@ -288,8 +291,20 @@ function executionPrompt(request: ExpertExecutionRequest, roleInstructions: stri
   return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
 }
 
+interface ActiveExpertSession {
+  session: PiSessionLike;
+  startedAt: number;
+  workspace: PreparedWorkspace;
+  role: string;
+  model: string;
+  abortRequested: boolean;
+  timedOut: boolean;
+  reason?: string;
+}
+
 export class PiExpertRuntime implements ExpertRuntime {
   private readonly boundary: WorkspaceBoundary;
+  private readonly activeSessions = new Map<string, ActiveExpertSession>();
   private skillDiscoveryWarning?: string;
 
   private constructor(
@@ -427,8 +442,10 @@ export class PiExpertRuntime implements ExpertRuntime {
 
   async executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult> {
     const started = Date.now();
+    const executionKey = request.executionId ?? `exec-${Date.now()}`;
     let workspace: PreparedWorkspace | undefined;
     let session: PiSessionLike | undefined;
+    let entry: ActiveExpertSession | undefined;
     try {
       const available = await this.listAvailableModels();
       const [provider, ...idParts] = request.model.split("/");
@@ -440,7 +457,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       if (!nativeModel) throw new Error(`Pi model registry no longer contains ${request.model}.`);
 
       const effectiveReadOnly = request.readOnly || getRole(request.role).readOnly;
-      workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, request.executionId ?? `exec-${Date.now()}`);
+      workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, executionKey);
       const capabilities = await this.getCapabilities();
       const mutationTools = new Set(["edit", "write", "bash", "powershell"]);
       const tools = request.tools.filter(
@@ -460,6 +477,16 @@ export class PiExpertRuntime implements ExpertRuntime {
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
       });
       session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
+      entry = {
+        session,
+        startedAt: started,
+        workspace,
+        role: request.role,
+        model: request.model,
+        abortRequested: false,
+        timedOut: false,
+      };
+      this.activeSessions.set(executionKey, entry);
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
@@ -472,6 +499,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       })();
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
+          entry!.timedOut = true;
           const aborting = session?.abort?.();
           void aborting?.catch(() => undefined);
           reject(new ExecutionTimeoutError(`Expert execution timed out after ${timeoutMs}ms.`));
@@ -484,9 +512,17 @@ export class PiExpertRuntime implements ExpertRuntime {
           const aborting = session.abort?.();
           void aborting?.catch(() => undefined);
         }
+        // A Main-Agent abort is deliberate: return the preserved-progress
+        // result instead of a failure so routing never retries or escalates it.
+        if (entry.abortRequested && !entry.timedOut) {
+          return await this.buildAbortedResult(entry, request, started);
+        }
         throw error;
       } finally {
         if (timer) clearTimeout(timer);
+      }
+      if (entry.abortRequested) {
+        return await this.buildAbortedResult(entry, request, started);
       }
       const rawText = finalAssistantText(session);
       const sessionError = finalSessionError(session);
@@ -525,8 +561,90 @@ export class PiExpertRuntime implements ExpertRuntime {
         },
       };
     } finally {
+      this.activeSessions.delete(executionKey);
       session?.dispose();
     }
+  }
+
+  /**
+   * Deliberately stop a running expert session. The session is aborted (not
+   * killed), its attempt result becomes `aborted` with preserved progress, and
+   * any mutation worktree stays intact until expert_cleanup.
+   */
+  async abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult> {
+    const entry = this.activeSessions.get(request.executionId);
+    if (!entry) return { executionId: request.executionId, status: "not-found" };
+    entry.abortRequested = true;
+    entry.reason = request.reason;
+    const aborting = entry.session.abort?.();
+    void aborting?.catch(() => undefined);
+    const progress = await this.inspectEntry(request.executionId, entry).catch(() => undefined);
+    return { executionId: request.executionId, status: "abort-requested", progress };
+  }
+
+  async inspectExecution(executionId: string): Promise<ExecutionProgress | undefined> {
+    const entry = this.activeSessions.get(executionId);
+    if (!entry) return undefined;
+    return await this.inspectEntry(executionId, entry);
+  }
+
+  private async inspectEntry(executionId: string, entry: ActiveExpertSession): Promise<ExecutionProgress> {
+    const messages = entry.session.messages ?? entry.session.state?.messages ?? [];
+    const text = finalAssistantText(entry.session);
+    let filesChangedSoFar: string[] = [];
+    try {
+      filesChangedSoFar = await this.boundary.changedFiles(entry.workspace);
+    } catch {
+      // Best-effort progress; read-only workspaces have nothing to diff.
+    }
+    return {
+      executionId,
+      status: "running",
+      role: entry.role,
+      model: entry.model,
+      startedAt: new Date(entry.startedAt).toISOString(),
+      elapsedMs: Date.now() - entry.startedAt,
+      messageCount: messages.length,
+      ...(text ? { lastAssistantText: safeText(text, 2_000) } : {}),
+      workspace: entry.workspace.root,
+      isolated: entry.workspace.isolated,
+      ...(filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}),
+    };
+  }
+
+  /** Build the preserved-progress result for a Main-Agent abort. */
+  private async buildAbortedResult(
+    entry: ActiveExpertSession,
+    request: ExpertExecutionRequest,
+    started: number,
+  ): Promise<ExpertResult> {
+    const rawText = finalAssistantText(entry.session);
+    let changedFiles: string[] = [];
+    try {
+      changedFiles = await this.boundary.changedFiles(entry.workspace);
+    } catch {
+      // Read-only workspaces have no diff to preserve.
+    }
+    const reason = entry.reason ? ` Abort reason: ${entry.reason}` : "";
+    const summary = rawText
+      ? safeText(`${rawText}\n\n[Execution aborted by the Main Agent.${reason}]`, 4_000)
+      : `Expert execution aborted by the Main Agent.${reason}`;
+    const usage = sessionUsage(entry.session);
+    return {
+      status: "aborted",
+      role: request.role,
+      model: request.model,
+      summary: summary ?? "Expert execution aborted by the Main Agent.",
+      ...(changedFiles.length ? { filesChanged: changedFiles.slice(0, 1_000) } : {}),
+      executionMetadata: {
+        attempts: request.attempt,
+        workspace: entry.workspace.root,
+        isolated: entry.workspace.isolated,
+        failureType: "aborted",
+        durationMs: Date.now() - started,
+        ...(usage ? { usage } : {}),
+      },
+    };
   }
 
   async cleanupExecution(executionId: string) {

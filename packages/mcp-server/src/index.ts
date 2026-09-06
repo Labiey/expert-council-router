@@ -23,6 +23,7 @@ export const MCP_TOOL_NAMES = [
   "expert_delegate",
   "expert_wait",
   "expert_result",
+  "expert_abort",
   "expert_feedback",
   "expert_cleanup",
   "expert_escalate",
@@ -101,6 +102,11 @@ export const MCP_INPUT_SCHEMAS = {
   },
   expert_result: {
     executionId: executionIdentifier,
+    includeProgress: z.boolean().optional(),
+  },
+  expert_abort: {
+    executionId: executionIdentifier,
+    reason: z.string().min(1).max(1_000).optional(),
   },
   expert_cleanup: {
     executionId: executionIdentifier,
@@ -293,13 +299,34 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_result",
     {
       title: "Get Expert Result",
-      description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown.",
+      description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown. Pass includeProgress while a task is still running to receive a bounded progress snapshot (last assistant output, elapsed time, files changed so far) for verification, handoff, or intervention decisions.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_result,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
     async (input, extra) => {
       const council = await councilProvider(extra);
-      return response(await withMcpTimeout(council.getResult(input.executionId)));
+      const lookup = await withMcpTimeout(council.getResult(input.executionId));
+      if (lookup.status === "running" && input.includeProgress) {
+        const progress = await withMcpTimeout(council.inspectExecution(input.executionId)).catch(() => undefined);
+        if (progress) return response(progress);
+      }
+      return response(lookup);
+    },
+  );
+  server.registerTool(
+    "expert_abort",
+    {
+      title: "Abort Expert Execution",
+      description: "Deliberately stop a running expert execution whose direction no longer matches expectations. The attempt is marked aborted and never retried or escalated, completed work such as a mutation worktree stays preserved until expert_cleanup, and the returned progress snapshot doubles as the handoff brief for a follow-up delegation. Verify in-progress work first with expert_result includeProgress.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_abort,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input, extra) => {
+      const council = await councilProvider(extra);
+      return response(await withMcpTimeout(council.abortExecution({
+        executionId: input.executionId,
+        ...(input.reason ? { reason: input.reason } : {}),
+      })));
     },
   );
   server.registerTool(

@@ -309981,9 +309981,15 @@ var modelProfileSchema = external_exports.object({
 var auditedCapabilityProfileSchema = external_exports.object(capabilityFields).strict().refine((profile) => Object.values(profile).some((value3) => typeof value3 === "number"), { message: "must contain at least one numeric capability score" });
 var modelAvailabilityObservationSchema = external_exports.object({
   callable: external_exports.literal(false),
+  kind: external_exports.enum(["unavailable", "quota-exhausted"]).optional(),
   observedAt: external_exports.string().datetime({ offset: true }),
   reason: external_exports.string().min(1).max(500),
   source: external_exports.literal("runtime-failure")
+});
+var modelStatusObservationSchema = external_exports.object({
+  state: external_exports.enum(["available", "quota-exhausted", "unavailable"]),
+  observedAt: external_exports.string().datetime({ offset: true }),
+  reason: external_exports.string().min(1).max(500).optional()
 });
 var modelAvailabilityRecordSchema = external_exports.record(external_exports.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/), modelAvailabilityObservationSchema).refine((entries) => Object.keys(entries).length <= 64, {
   message: "must contain at most 64 availability observations"
@@ -309998,7 +310004,8 @@ var modelAssessmentSnapshotSchema = external_exports.object({
     message: "must contain at most 32 provider billing assessments"
   }).optional(),
   summary: external_exports.string().min(1).max(2e3).optional(),
-  modelAvailability: modelAvailabilityRecordSchema.optional()
+  modelAvailability: modelAvailabilityRecordSchema.optional(),
+  modelStatus: external_exports.record(external_exports.string().min(3).max(500).regex(/^[^/\u0000-\u001f]+\/.+$/), modelStatusObservationSchema).optional()
 }).strict();
 var MODEL_ASSESSMENT_JSON_SCHEMA = (() => {
   const schema = external_exports.toJSONSchema(modelAssessmentSnapshotSchema, { target: "draft-7" });
@@ -310270,6 +310277,7 @@ function sanitizeOutcome(outcome) {
     toolErrors: Math.max(0, outcome.toolErrors),
     retryCount: Math.max(0, outcome.retryCount),
     timedOut: outcome.timedOut,
+    ...outcome.aborted !== void 0 ? { aborted: outcome.aborted } : {},
     ...outcome.verificationPassed !== void 0 ? { verificationPassed: outcome.verificationPassed } : {},
     escalationCount: Math.max(0, outcome.escalationCount),
     attempts: Math.max(1, outcome.attempts),
@@ -310695,9 +310703,34 @@ var MODEL_UNAVAILABLE_MARKERS = [
   "unpurchased",
   "not eligible for using the model"
 ];
-function indicatesModelUnavailable(summary) {
+var MODEL_QUOTA_MARKERS = [
+  "insufficient_quota",
+  "quota exceeded",
+  "quota exhausted",
+  "exceeded your current quota",
+  "exhausted your quota",
+  "billing_hard_limit",
+  "insufficient balance",
+  "balance is not enough",
+  "not enough balance",
+  "account balance",
+  "arrears",
+  "payment required",
+  "\u6B20\u8D39",
+  "\u4F59\u989D\u4E0D\u8DB3",
+  "token plan quota",
+  "plan quota exhausted"
+];
+function classifyAvailabilityEvidence(summary) {
   const message = (summary instanceof Error ? summary.message : String(summary ?? "")).toLowerCase();
-  return MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker));
+  if (MODEL_QUOTA_MARKERS.some((marker) => message.includes(marker)))
+    return "quota-exhausted";
+  if (MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker)))
+    return "unavailable";
+  return void 0;
+}
+function indicatesModelUnavailable(summary) {
+  return classifyAvailabilityEvidence(summary) !== void 0;
 }
 function inferFailureType(value3, fallback = "unknown") {
   const message = value3 instanceof Error ? value3.message.toLowerCase() : String(value3).toLowerCase();
@@ -310791,31 +310824,40 @@ function normalizePiModels(inputs, available = true) {
 var DEFAULT_MODEL_ASSESSMENT_MAX_AGE_DAYS = 30;
 var MAX_MODEL_ASSESSMENT_FUTURE_SKEW_MS = 5 * 6e4;
 var MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 6e4;
+var MODEL_QUOTA_MARKER_TTL_MS = 6 * 60 * 6e4;
 var MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
+function markerTtlMs(kind, defaultTtlMs) {
+  return kind === "quota-exhausted" ? MODEL_QUOTA_MARKER_TTL_MS : defaultTtlMs;
+}
 function activeModelAvailability(assessment, now = /* @__PURE__ */ new Date(), ttlMs = MODEL_AVAILABILITY_MARKER_TTL_MS) {
   const entries = assessment?.modelAvailability ?? {};
   const active = {};
   for (const [key, marker] of Object.entries(entries)) {
     const observedAtMs = Date.parse(marker.observedAt);
-    if (!Number.isFinite(observedAtMs) || now.getTime() - observedAtMs > ttlMs || now.getTime() < observedAtMs)
+    const ttl = markerTtlMs(marker.kind, ttlMs);
+    if (!Number.isFinite(observedAtMs) || now.getTime() - observedAtMs > ttl || now.getTime() < observedAtMs)
       continue;
     active[key] = marker;
   }
   return active;
 }
 function availabilityWarning(key, marker) {
+  if (marker.kind === "quota-exhausted") {
+    return `Model ${key} quota or balance ran out at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active (short lifetime); top up or wait for the quota reset and the model is retried automatically.`;
+  }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
 function modelAvailabilityWarnings(assessment, models, now = /* @__PURE__ */ new Date()) {
   const inventory = new Set(models.map((model) => `${model.provider}/${model.id}`));
   return Object.entries(activeModelAvailability(assessment, now)).filter(([key]) => inventory.has(key)).map(([key, marker]) => availabilityWarning(key, marker));
 }
-function withModelAvailabilityMarker(assessment, modelKey, reason, observedAt = (/* @__PURE__ */ new Date()).toISOString()) {
+function withModelAvailabilityMarker(assessment, modelKey, reason, observedAt = (/* @__PURE__ */ new Date()).toISOString(), kind = "unavailable") {
   const existing = assessment.modelAvailability?.[modelKey];
-  if (existing && Date.parse(existing.observedAt) >= Date.parse(observedAt))
+  if (existing && Date.parse(existing.observedAt) >= Date.parse(observedAt) && existing.kind === kind)
     return assessment;
   const marker = {
     callable: false,
+    kind,
     observedAt,
     reason: reason.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_AVAILABILITY_REASON_LENGTH) || "model call failed",
     source: "runtime-failure"
@@ -310828,6 +310870,17 @@ function withModelAvailabilityMarker(assessment, modelKey, reason, observedAt = 
     }
   };
 }
+function withModelStatus(assessment, modelKey, state2, observedAt = (/* @__PURE__ */ new Date()).toISOString(), reason) {
+  const observation = {
+    state: state2,
+    observedAt,
+    ...reason ? { reason: reason.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_AVAILABILITY_REASON_LENGTH) } : {}
+  };
+  return {
+    ...assessment,
+    modelStatus: { ...assessment.modelStatus, [modelKey]: observation }
+  };
+}
 function preserveModelAvailability(previous, next) {
   if (!previous?.modelAvailability)
     return next;
@@ -310837,7 +310890,13 @@ function preserveModelAvailability(previous, next) {
     if (!previousMarker || Date.parse(marker.observedAt) >= Date.parse(previousMarker.observedAt))
       merged[key] = marker;
   }
-  return { ...next, modelAvailability: merged };
+  const statusMerged = { ...previous.modelStatus ?? {} };
+  for (const [key, status] of Object.entries(next.modelStatus ?? {})) {
+    const previousStatus = statusMerged[key];
+    if (!previousStatus || Date.parse(status.observedAt) >= Date.parse(previousStatus.observedAt))
+      statusMerged[key] = status;
+  }
+  return { ...next, modelAvailability: merged, modelStatus: statusMerged };
 }
 function evaluateModelAssessment(models, assessment, options = {}) {
   const now = options.now ?? /* @__PURE__ */ new Date();
@@ -311303,6 +311362,15 @@ var ExpertCouncilService = class {
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
     while (state2.attempts < maxAttempts) {
+      if (state2.abortRequested) {
+        lastResult = {
+          status: "aborted",
+          role: request.role,
+          model: current.model,
+          summary: `Execution aborted by the Main Agent before the next attempt${state2.abortReason ? `. Reason: ${state2.abortReason}` : ""}; completed work is preserved.`
+        };
+        break;
+      }
       state2.attempts += 1;
       state2.model = current.model;
       const attemptSnapshot = {
@@ -311356,11 +311424,13 @@ var ExpertCouncilService = class {
       }
       if (lastResult.status === "success")
         break;
+      if (lastResult.status === "aborted")
+        break;
       const failure = failureTypeForResult(lastResult);
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
       if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
         try {
-          await this.markModelUnavailable(current.model, lastResult.summary);
+          await this.markModelAvailability(current.model, lastResult.summary);
           unavailableMarked.push(current.model);
         } catch {
         }
@@ -311404,6 +311474,9 @@ var ExpertCouncilService = class {
     }
     Object.assign(state2, { status: result.status, model: result.model, finishedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const parsed = parseModelKey(result.model);
+    if (result.status === "success") {
+      await this.recordModelStatus(result.model, "available").catch(() => void 0);
+    }
     await this.telemetry.record({
       executionId: id,
       timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -311416,12 +311489,28 @@ var ExpertCouncilService = class {
       toolErrors: failures.filter((failure) => failure.type === "tool_call_error").length,
       retryCount: Math.max(0, state2.attempts - 1),
       timedOut: failures.some((failure) => failure.type === "timeout"),
+      ...result.status === "aborted" ? { aborted: true } : {},
       escalationCount: escalations,
       attempts: Math.max(1, state2.attempts),
       hostType: runtimeCapabilities.hostType,
       ...approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}
     });
     return result;
+  }
+  /**
+   * Record the current runtime status of a model into the shared assessment:
+   * `available` after successful calls, `quota-exhausted` or `unavailable`
+   * after classified provider failures. This lives in model-assessment.json,
+   * not telemetry, so the current per-model state is readable at a glance.
+   */
+  async recordModelStatus(modelKey, state2, reason) {
+    const observedAt = (/* @__PURE__ */ new Date()).toISOString();
+    if (this.modelAssessment) {
+      this.modelAssessment = withModelStatus(this.modelAssessment, modelKey, state2, observedAt, reason);
+    }
+    if (this.stateOptions.persistence?.updateModelAssessment) {
+      await this.stateOptions.persistence.updateModelAssessment((current) => current ? withModelStatus(current, modelKey, state2, observedAt, reason) : void 0);
+    }
   }
   /**
    * Adopt the newest shared assessment from durable storage before routing or
@@ -311440,15 +311529,60 @@ var ExpertCouncilService = class {
     } catch {
     }
   }
-  async markModelUnavailable(modelKey, reason) {
+  async markModelAvailability(modelKey, reason) {
     const observedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const kind = classifyAvailabilityEvidence(reason) ?? "unavailable";
     if (this.modelAssessment) {
-      this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt);
+      this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt, kind);
+      this.modelAssessment = withModelStatus(this.modelAssessment, modelKey, kind, observedAt, reason);
     }
     if (this.stateOptions.persistence?.updateModelAssessment) {
-      await this.stateOptions.persistence.updateModelAssessment((current) => current ? withModelAvailabilityMarker(current, modelKey, reason, observedAt) : void 0);
+      await this.stateOptions.persistence.updateModelAssessment((current) => {
+        if (!current)
+          return void 0;
+        let next = withModelAvailabilityMarker(current, modelKey, reason, observedAt, kind);
+        return withModelStatus(next, modelKey, kind, observedAt, reason);
+      });
     }
     void this.persistState().catch(() => void 0);
+  }
+  /**
+   * Deliberately stop a running expert execution. The attempt result becomes
+   * `aborted` (never retried or escalated), completed work such as a mutation
+   * worktree stays preserved until cleanup, and the returned progress snapshot
+   * doubles as the handoff brief for a follow-up delegation.
+   */
+  async abortExecution(request) {
+    const state2 = this.executions.get(request.executionId);
+    if (!state2)
+      return { executionId: request.executionId, status: "not-found", reason: request.reason };
+    if (this.results.has(request.executionId)) {
+      return { executionId: request.executionId, status: "already-finished", reason: request.reason };
+    }
+    state2.abortRequested = true;
+    state2.abortReason = request.reason;
+    void this.persistState().catch(() => void 0);
+    let progress;
+    let status = "abort-requested";
+    if (this.runtime.abortExecution) {
+      const outcome = await this.runtime.abortExecution(request).catch(() => void 0);
+      if (outcome?.status === "not-found") {
+        status = "abort-requested";
+      } else if (outcome) {
+        status = outcome.status;
+        progress = outcome.progress;
+      }
+    }
+    if (!progress) {
+      progress = await this.inspectExecution(request.executionId).catch(() => void 0);
+    }
+    return { executionId: request.executionId, status, reason: request.reason, progress };
+  }
+  async inspectExecution(executionId2) {
+    if (this.runtime.inspectExecution) {
+      return await this.runtime.inspectExecution(executionId2).catch(() => void 0);
+    }
+    return void 0;
   }
   async getResult(executionId2) {
     if (!this.executions.has(executionId2)) {
@@ -311506,6 +311640,12 @@ var ExpertCouncilService = class {
   async cleanup(executionId2) {
     if (!this.executions.has(executionId2))
       return { executionId: executionId2, status: "not-found" };
+    if (!this.results.has(executionId2)) {
+      await this.abortExecution({ executionId: executionId2, reason: "cleanup requested" });
+      const promise2 = this.executionPromises.get(executionId2);
+      if (promise2)
+        await promise2.catch(() => void 0);
+    }
     if (!this.runtime.cleanupExecution) {
       return { executionId: executionId2, status: "unsupported", message: "The configured expert runtime does not support cleanup." };
     }
@@ -311597,7 +311737,7 @@ var boundedText = (maximum) => external_exports.string().max(maximum).refine((va
 var timestamp = external_exports.string().min(1).max(100);
 var taskClass = external_exports.enum(["tiny", "normal", "complex-feature", "complex-debugging", "architecture"]);
 var costPolicy = external_exports.enum(["economy", "balanced", "speed", "quality"]);
-var executionStatus = external_exports.enum(["running", "success", "partial", "failed"]);
+var executionStatus = external_exports.enum(["running", "success", "partial", "failed", "aborted"]);
 var failureType = external_exports.enum([
   "tool_call_error",
   "reasoning_failure",
@@ -311606,6 +311746,7 @@ var failureType = external_exports.enum([
   "provider_error",
   "missing_context",
   "permission_error",
+  "aborted",
   "unknown"
 ]);
 var candidate = external_exports.object({
@@ -311655,6 +311796,8 @@ var execution = external_exports.object({
   status: executionStatus,
   model: identifier.optional(),
   attempts: external_exports.number().int().min(0).max(100),
+  abortRequested: external_exports.boolean().optional(),
+  abortReason: boundedText(1e3).optional(),
   attemptHistory: external_exports.array(attempt2).max(100).optional(),
   taskCategory: taskClass.optional(),
   startedAt: timestamp,
@@ -311667,7 +311810,7 @@ var testResult = external_exports.object({
 }).strict();
 var usage = external_exports.record(identifier, external_exports.union([external_exports.number().finite(), boundedText(1e3), external_exports.boolean(), external_exports.null()]));
 var expertResult = external_exports.object({
-  status: external_exports.enum(["success", "partial", "failed"]),
+  status: external_exports.enum(["success", "partial", "failed", "aborted"]),
   role: expertRoleSchema,
   model: identifier,
   summary: boundedText(4e3),
@@ -311865,7 +312008,7 @@ var JsonModelAssessmentStore = class {
   async saveUnqueued(snapshot) {
     const filePath = await ensurePrivateStoragePath(this.filePath);
     const temporary = path20.join(path20.dirname(filePath), `.${path20.basename(filePath)}.${process.pid}.${randomUUID9()}.tmp`);
-    await writeFile2(temporary, `${JSON.stringify(parseModelAssessmentSnapshot(snapshot))}
+    await writeFile2(temporary, `${JSON.stringify(parseModelAssessmentSnapshot(snapshot), null, 2)}
 `, {
       encoding: "utf8",
       mode: 384,
@@ -312656,6 +312799,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
   options;
   packageName;
   boundary;
+  activeSessions = /* @__PURE__ */ new Map();
   skillDiscoveryWarning;
   constructor(sdk, models, options, packageName) {
     this.sdk = sdk;
@@ -312764,8 +312908,10 @@ var PiExpertRuntime = class _PiExpertRuntime {
   }
   async executeExpert(request) {
     const started = Date.now();
+    const executionKey = request.executionId ?? `exec-${Date.now()}`;
     let workspace;
     let session;
+    let entry;
     try {
       const available = await this.listAvailableModels();
       const [provider, ...idParts] = request.model.split("/");
@@ -312777,7 +312923,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       if (!nativeModel)
         throw new Error(`Pi model registry no longer contains ${request.model}.`);
       const effectiveReadOnly = request.readOnly || getRole(request.role).readOnly;
-      workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, request.executionId ?? `exec-${Date.now()}`);
+      workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, executionKey);
       const capabilities = await this.getCapabilities();
       const mutationTools = /* @__PURE__ */ new Set(["edit", "write", "bash", "powershell"]);
       const tools = request.tools.filter((tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)));
@@ -312794,6 +312940,16 @@ var PiExpertRuntime = class _PiExpertRuntime {
         ...this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}
       });
       session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
+      entry = {
+        session,
+        startedAt: started,
+        workspace,
+        role: request.role,
+        model: request.model,
+        abortRequested: false,
+        timedOut: false
+      };
+      this.activeSessions.set(executionKey, entry);
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
@@ -312806,6 +312962,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       })();
       const timeout = new Promise((_2, reject) => {
         timer = setTimeout(() => {
+          entry.timedOut = true;
           const aborting = session?.abort?.();
           void aborting?.catch(() => void 0);
           reject(new ExecutionTimeoutError(`Expert execution timed out after ${timeoutMs}ms.`));
@@ -312818,10 +312975,16 @@ var PiExpertRuntime = class _PiExpertRuntime {
           const aborting = session.abort?.();
           void aborting?.catch(() => void 0);
         }
+        if (entry.abortRequested && !entry.timedOut) {
+          return await this.buildAbortedResult(entry, request, started);
+        }
         throw error61;
       } finally {
         if (timer)
           clearTimeout(timer);
+      }
+      if (entry.abortRequested) {
+        return await this.buildAbortedResult(entry, request, started);
       }
       const rawText = finalAssistantText(session);
       const sessionError = finalSessionError(session);
@@ -312860,8 +313023,82 @@ var PiExpertRuntime = class _PiExpertRuntime {
         }
       };
     } finally {
+      this.activeSessions.delete(executionKey);
       session?.dispose();
     }
+  }
+  /**
+   * Deliberately stop a running expert session. The session is aborted (not
+   * killed), its attempt result becomes `aborted` with preserved progress, and
+   * any mutation worktree stays intact until expert_cleanup.
+   */
+  async abortExecution(request) {
+    const entry = this.activeSessions.get(request.executionId);
+    if (!entry)
+      return { executionId: request.executionId, status: "not-found" };
+    entry.abortRequested = true;
+    entry.reason = request.reason;
+    const aborting = entry.session.abort?.();
+    void aborting?.catch(() => void 0);
+    const progress = await this.inspectEntry(request.executionId, entry).catch(() => void 0);
+    return { executionId: request.executionId, status: "abort-requested", progress };
+  }
+  async inspectExecution(executionId2) {
+    const entry = this.activeSessions.get(executionId2);
+    if (!entry)
+      return void 0;
+    return await this.inspectEntry(executionId2, entry);
+  }
+  async inspectEntry(executionId2, entry) {
+    const messages = entry.session.messages ?? entry.session.state?.messages ?? [];
+    const text = finalAssistantText(entry.session);
+    let filesChangedSoFar = [];
+    try {
+      filesChangedSoFar = await this.boundary.changedFiles(entry.workspace);
+    } catch {
+    }
+    return {
+      executionId: executionId2,
+      status: "running",
+      role: entry.role,
+      model: entry.model,
+      startedAt: new Date(entry.startedAt).toISOString(),
+      elapsedMs: Date.now() - entry.startedAt,
+      messageCount: messages.length,
+      ...text ? { lastAssistantText: safeText(text, 2e3) } : {},
+      workspace: entry.workspace.root,
+      isolated: entry.workspace.isolated,
+      ...filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}
+    };
+  }
+  /** Build the preserved-progress result for a Main-Agent abort. */
+  async buildAbortedResult(entry, request, started) {
+    const rawText = finalAssistantText(entry.session);
+    let changedFiles = [];
+    try {
+      changedFiles = await this.boundary.changedFiles(entry.workspace);
+    } catch {
+    }
+    const reason = entry.reason ? ` Abort reason: ${entry.reason}` : "";
+    const summary = rawText ? safeText(`${rawText}
+
+[Execution aborted by the Main Agent.${reason}]`, 4e3) : `Expert execution aborted by the Main Agent.${reason}`;
+    const usage2 = sessionUsage(entry.session);
+    return {
+      status: "aborted",
+      role: request.role,
+      model: request.model,
+      summary: summary ?? "Expert execution aborted by the Main Agent.",
+      ...changedFiles.length ? { filesChanged: changedFiles.slice(0, 1e3) } : {},
+      executionMetadata: {
+        attempts: request.attempt,
+        workspace: entry.workspace.root,
+        isolated: entry.workspace.isolated,
+        failureType: "aborted",
+        durationMs: Date.now() - started,
+        ...usage2 ? { usage: usage2 } : {}
+      }
+    };
   }
   async cleanupExecution(executionId2) {
     return this.boundary.cleanupExecution(executionId2);
@@ -313020,7 +313257,12 @@ var MCP_INPUT_SCHEMAS = {
     timeoutMs: external_exports.number().int().min(1e3).max(36e5).describe("Bounded wait selected from expected remaining task difficulty; this does not extend expert execution deadlines")
   },
   expert_result: {
-    executionId: executionIdentifier
+    executionId: executionIdentifier,
+    includeProgress: external_exports.boolean().optional()
+  },
+  expert_abort: {
+    executionId: executionIdentifier,
+    reason: external_exports.string().min(1).max(1e3).optional()
   },
   expert_cleanup: {
     executionId: executionIdentifier
@@ -313165,12 +313407,30 @@ function createMcpServerWithProvider(councilProvider) {
   });
   server2.registerTool("expert_result", {
     title: "Get Expert Result",
-    description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown.",
+    description: "Retrieve completed expert feedback by execution ID, or report that the task is still running or unknown. Pass includeProgress while a task is still running to receive a bounded progress snapshot (last assistant output, elapsed time, files changed so far) for verification, handoff, or intervention decisions.",
     inputSchema: MCP_INPUT_SCHEMAS.expert_result,
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
   }, async (input2, extra) => {
     const council = await councilProvider(extra);
-    return response(await withMcpTimeout(council.getResult(input2.executionId)));
+    const lookup = await withMcpTimeout(council.getResult(input2.executionId));
+    if (lookup.status === "running" && input2.includeProgress) {
+      const progress = await withMcpTimeout(council.inspectExecution(input2.executionId)).catch(() => void 0);
+      if (progress)
+        return response(progress);
+    }
+    return response(lookup);
+  });
+  server2.registerTool("expert_abort", {
+    title: "Abort Expert Execution",
+    description: "Deliberately stop a running expert execution whose direction no longer matches expectations. The attempt is marked aborted and never retried or escalated, completed work such as a mutation worktree stays preserved until expert_cleanup, and the returned progress snapshot doubles as the handoff brief for a follow-up delegation. Verify in-progress work first with expert_result includeProgress.",
+    inputSchema: MCP_INPUT_SCHEMAS.expert_abort,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+  }, async (input2, extra) => {
+    const council = await councilProvider(extra);
+    return response(await withMcpTimeout(council.abortExecution({
+      executionId: input2.executionId,
+      ...input2.reason ? { reason: input2.reason } : {}
+    })));
   });
   server2.registerTool("expert_feedback", {
     title: "Record Expert Outcome Feedback",

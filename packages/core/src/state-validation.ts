@@ -12,7 +12,7 @@ const boundedText = (maximum: number) => z.string().max(maximum).refine(
 const timestamp = z.string().min(1).max(100);
 const taskClass = z.enum(["tiny", "normal", "complex-feature", "complex-debugging", "architecture"]);
 const costPolicy = z.enum(["economy", "balanced", "speed", "quality"]);
-const executionStatus = z.enum(["running", "success", "partial", "failed"]);
+const executionStatus = z.enum(["running", "success", "partial", "failed", "aborted"]);
 const failureType = z.enum([
   "tool_call_error",
   "reasoning_failure",
@@ -21,6 +21,7 @@ const failureType = z.enum([
   "provider_error",
   "missing_context",
   "permission_error",
+  "aborted",
   "unknown",
 ]);
 
@@ -75,6 +76,8 @@ const execution = z.object({
   status: executionStatus,
   model: identifier.optional(),
   attempts: z.number().int().min(0).max(100),
+  abortRequested: z.boolean().optional(),
+  abortReason: boundedText(1_000).optional(),
   attemptHistory: z.array(attempt).max(100).optional(),
   taskCategory: taskClass.optional(),
   startedAt: timestamp,
@@ -93,7 +96,7 @@ const usage = z.record(
 );
 
 const expertResult = z.object({
-  status: z.enum(["success", "partial", "failed"]),
+  status: z.enum(["success", "partial", "failed", "aborted"]),
   role: expertRoleSchema,
   model: identifier,
   summary: boundedText(4_000),

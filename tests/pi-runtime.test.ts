@@ -44,6 +44,38 @@ describe("Pi SDK load failure diagnostics", () => {
   });
 });
 
+describe("model assessment persistence formatting", () => {
+  it("writes the shared assessment as structured multi-line JSON", async () => {
+    const { mkdtemp, readFile, rm } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { JsonModelAssessmentStore } = await import("../packages/pi-runtime/src/file-assessment.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ec-assessment-"));
+    try {
+      const store = new JsonModelAssessmentStore(path.join(dir, "model-assessment.json"));
+      await store.save({
+        asOf: "2026-09-05T00:00:00.000Z",
+        sources: ["https://livebench.ai/"],
+        models: { "p/m": { coding: 8 } },
+        modelAvailability: {
+          "p/dead": { callable: false, kind: "quota-exhausted", observedAt: "2026-09-05T00:00:00.000Z", reason: "insufficient_quota", source: "runtime-failure" },
+        },
+        modelStatus: {
+          "p/m": { state: "available", observedAt: "2026-09-05T00:00:00.000Z" },
+        },
+      });
+      const raw = await readFile(path.join(dir, "model-assessment.json"), "utf8");
+      expect(raw.split("\n").length).toBeGreaterThan(5);
+      expect(raw).toContain("\n  \"sources\"");
+      const parsed = JSON.parse(raw);
+      expect(parsed.modelStatus["p/m"].state).toBe("available");
+      expect(parsed.modelAvailability["p/dead"].kind).toBe("quota-exhausted");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Pi runtime adapter", () => {
   it("recognizes named Pi plan catalogs without treating authentication alone as billing evidence", () => {
     expect(inferPiProviderBilling("qwen-token-plan-cn")).toMatchObject({

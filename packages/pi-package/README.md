@@ -24,7 +24,7 @@ The current release (0.5.4) includes:
 - Hard tool allowlists and installed-Skill filtering for every expert session.
 - Isolated Git worktrees for writable experts.
 - A JSON-capable CLI.
-- An MCP Server with nine asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
+- An MCP Server with ten asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
 - Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
 - Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
@@ -372,13 +372,14 @@ Common flags:
 
 ## MCP Server
 
-The MCP surface is deliberately limited to nine semantic tools:
+The MCP surface is deliberately limited to ten semantic tools:
 
 - `expert_inspect`
 - `expert_build`
 - `expert_delegate`
 - `expert_wait`
 - `expert_result`
+- `expert_abort`
 - `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
@@ -530,7 +531,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all nine `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.5.4` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all ten `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.5.4` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 

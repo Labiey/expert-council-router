@@ -7,6 +7,7 @@ import {
   parseModelAssessmentSnapshot,
 } from "./config.js";
 import { decideEscalation } from "./escalation.js";
+import { classifyAvailabilityEvidence } from "./failures.js";
 import { failureTypeForResult, indicatesModelUnavailable } from "./failures.js";
 import {
   activeModelAvailability,
@@ -14,6 +15,7 @@ import {
   modelAvailabilityWarnings,
   preserveModelAvailability,
   withModelAvailabilityMarker,
+  withModelStatus,
 } from "./model-assessment.js";
 import { listRoles } from "./roles.js";
 import { rankModels } from "./routing.js";
@@ -45,6 +47,9 @@ import type {
   RuntimeBillingDiscovery,
   RoutingConstraints,
   TelemetryStore,
+  AbortExecutionRequest,
+  AbortExecutionResult,
+  ExecutionProgress,
 } from "./types.js";
 
 type ExecutionState = ExecutionStateSnapshot;
@@ -391,6 +396,15 @@ export class ExpertCouncilService implements ExpertCouncil {
     const maxAttempts = this.config.retry.maxAttempts;
 
     while (state.attempts < maxAttempts) {
+      if (state.abortRequested) {
+        lastResult = {
+          status: "aborted",
+          role: request.role,
+          model: current.model,
+          summary: `Execution aborted by the Main Agent before the next attempt${state.abortReason ? `. Reason: ${state.abortReason}` : ""}; completed work is preserved.`,
+        };
+        break;
+      }
       state.attempts += 1;
       state.model = current.model;
       const attemptSnapshot: ExecutionAttemptSnapshot = {
@@ -456,11 +470,13 @@ export class ExpertCouncilService implements ExpertCouncil {
       }
 
       if (lastResult.status === "success") break;
+      // A Main-Agent abort is deliberate: never classify, retry, or escalate it.
+      if (lastResult.status === "aborted") break;
       const failure = failureTypeForResult(lastResult);
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
       if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
         try {
-          await this.markModelUnavailable(current.model, lastResult.summary);
+          await this.markModelAvailability(current.model, lastResult.summary);
           unavailableMarked.push(current.model);
         } catch {
           // Marker persistence is best-effort; escalation and telemetry still record the failure.
@@ -510,6 +526,9 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);
+    if (result.status === "success") {
+      await this.recordModelStatus(result.model, "available").catch(() => undefined);
+    }
     await this.telemetry.record({
       executionId: id,
       timestamp: new Date().toISOString(),
@@ -522,12 +541,31 @@ export class ExpertCouncilService implements ExpertCouncil {
       toolErrors: failures.filter((failure) => failure.type === "tool_call_error").length,
       retryCount: Math.max(0, state.attempts - 1),
       timedOut: failures.some((failure) => failure.type === "timeout"),
+      ...(result.status === "aborted" ? { aborted: true } : {}),
       escalationCount: escalations,
       attempts: Math.max(1, state.attempts),
       hostType: runtimeCapabilities.hostType,
       ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
     });
     return result;
+  }
+
+  /**
+   * Record the current runtime status of a model into the shared assessment:
+   * `available` after successful calls, `quota-exhausted` or `unavailable`
+   * after classified provider failures. This lives in model-assessment.json,
+   * not telemetry, so the current per-model state is readable at a glance.
+   */
+  private async recordModelStatus(modelKey: string, state: "available" | "quota-exhausted" | "unavailable", reason?: string): Promise<void> {
+    const observedAt = new Date().toISOString();
+    if (this.modelAssessment) {
+      this.modelAssessment = withModelStatus(this.modelAssessment, modelKey, state, observedAt, reason);
+    }
+    if (this.stateOptions.persistence?.updateModelAssessment) {
+      await this.stateOptions.persistence.updateModelAssessment((current) =>
+        current ? withModelStatus(current, modelKey, state, observedAt, reason) : undefined,
+      );
+    }
   }
 
   /**
@@ -547,19 +585,64 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
   }
 
-  private async markModelUnavailable(modelKey: string, reason: string): Promise<void> {
+  private async markModelAvailability(modelKey: string, reason: string): Promise<void> {
     const observedAt = new Date().toISOString();
+    const kind = classifyAvailabilityEvidence(reason) ?? "unavailable";
     if (this.modelAssessment) {
-      this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt);
+      this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, modelKey, reason, observedAt, kind);
+      this.modelAssessment = withModelStatus(this.modelAssessment, modelKey, kind, observedAt, reason);
     }
     if (this.stateOptions.persistence?.updateModelAssessment) {
       // Call through the persistence object: extracting the method would lose
       // `this` and silently break the durable update.
-      await this.stateOptions.persistence.updateModelAssessment((current) =>
-        current ? withModelAvailabilityMarker(current, modelKey, reason, observedAt) : undefined,
-      );
+      await this.stateOptions.persistence.updateModelAssessment((current) => {
+        if (!current) return undefined;
+        let next = withModelAvailabilityMarker(current, modelKey, reason, observedAt, kind);
+        return withModelStatus(next, modelKey, kind, observedAt, reason);
+      });
     }
     void this.persistState().catch(() => undefined);
+  }
+
+  /**
+   * Deliberately stop a running expert execution. The attempt result becomes
+   * `aborted` (never retried or escalated), completed work such as a mutation
+   * worktree stays preserved until cleanup, and the returned progress snapshot
+   * doubles as the handoff brief for a follow-up delegation.
+   */
+  async abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult> {
+    const state = this.executions.get(request.executionId);
+    if (!state) return { executionId: request.executionId, status: "not-found", reason: request.reason };
+    if (this.results.has(request.executionId)) {
+      return { executionId: request.executionId, status: "already-finished", reason: request.reason };
+    }
+    state.abortRequested = true;
+    state.abortReason = request.reason;
+    void this.persistState().catch(() => undefined);
+    let progress: ExecutionProgress | undefined;
+    let status: AbortExecutionResult["status"] = "abort-requested";
+    if (this.runtime.abortExecution) {
+      const outcome = await this.runtime.abortExecution(request).catch(() => undefined);
+      if (outcome?.status === "not-found") {
+        // No live session in the runtime (e.g. between attempts): the flag above
+        // stops the delegation loop before the next attempt.
+        status = "abort-requested";
+      } else if (outcome) {
+        status = outcome.status;
+        progress = outcome.progress;
+      }
+    }
+    if (!progress) {
+      progress = await this.inspectExecution(request.executionId).catch(() => undefined);
+    }
+    return { executionId: request.executionId, status, reason: request.reason, progress };
+  }
+
+  async inspectExecution(executionId: string): Promise<ExecutionProgress | undefined> {
+    if (this.runtime.inspectExecution) {
+      return await this.runtime.inspectExecution(executionId).catch(() => undefined);
+    }
+    return undefined;
   }
 
   async getResult(executionId: string): Promise<ExpertResultLookup> {
@@ -627,6 +710,13 @@ export class ExpertCouncilService implements ExpertCouncil {
 
   async cleanup(executionId: string): Promise<ExpertCleanupResult> {
     if (!this.executions.has(executionId)) return { executionId, status: "not-found" };
+    if (!this.results.has(executionId)) {
+      // Removing a live worktree under a running session would surface as a
+      // model failure and trigger escalation; abort deliberately first.
+      await this.abortExecution({ executionId, reason: "cleanup requested" });
+      const promise = this.executionPromises.get(executionId);
+      if (promise) await promise.catch(() => undefined);
+    }
     if (!this.runtime.cleanupExecution) {
       return { executionId, status: "unsupported", message: "The configured expert runtime does not support cleanup." };
     }

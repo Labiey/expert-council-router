@@ -25,7 +25,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离。
 - 支持 JSON 输出的 CLI。
-- 包含 9 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
+- 包含 10 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
@@ -380,6 +380,7 @@ MCP 表面刻意保持为 9 个语义工具：
 - `expert_delegate`
 - `expert_wait`
 - `expert_result`
+- `expert_abort`
 - `expert_feedback`
 - `expert_cleanup`
 - `expert_escalate`
@@ -531,7 +532,7 @@ if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
 若要开发插件，可克隆仓库、执行 `npm ci && npm run build`，再把仓库根目录的绝对路径传给 `codex plugin marketplace add`。普通使用建议安装固定版本的远程 Release。
 
-加载成功时会同时出现 `expert-council` Skill 和全部 9 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.5.2` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
+加载成功时会同时出现 `expert-council` Skill 和全部 10 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.5.2` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
 
 在新的 Codex 任务中输入以下提示以验证安装：
 

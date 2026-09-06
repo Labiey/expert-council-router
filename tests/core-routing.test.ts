@@ -20,6 +20,35 @@ import {
 } from "../packages/core/src/index.js";
 import { capabilities, model } from "./helpers.js";
 
+describe("availability evidence classification", () => {
+  it("classifies quota exhaustion ahead of the generic unavailable markers", async () => {
+    const { classifyAvailabilityEvidence } = await import("../packages/core/src/failures.js");
+    expect(classifyAvailabilityEvidence("403 AccessDenied: insufficient_quota - You exceeded your current quota.")).toBe("quota-exhausted");
+    expect(classifyAvailabilityEvidence("账户欠费，请充值后重试")).toBe("quota-exhausted");
+    expect(classifyAvailabilityEvidence("Provider returned 402 payment required")).toBe("quota-exhausted");
+    expect(classifyAvailabilityEvidence("model_not_found for p/dead")).toBe("unavailable");
+    expect(classifyAvailabilityEvidence("Provider returned 429 rate limit exceeded.")).toBeUndefined();
+    expect(classifyAvailabilityEvidence("tool call failed")).toBeUndefined();
+  });
+
+  it("expires quota markers on a shorter lifetime than dead-model markers", async () => {
+    const { activeModelAvailability, MODEL_QUOTA_MARKER_TTL_MS } = await import("../packages/core/src/model-assessment.js");
+    const now = new Date("2026-09-05T12:00:00.000Z");
+    const assessment = {
+      asOf: "2026-09-05T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: {},
+      modelAvailability: {
+        "p/quota": { callable: false, kind: "quota-exhausted", observedAt: "2026-09-05T05:00:00.000Z", reason: "insufficient_quota", source: "runtime-failure" },
+        "p/dead": { callable: false, kind: "unavailable", observedAt: "2026-09-05T05:00:00.000Z", reason: "model_not_found", source: "runtime-failure" },
+      },
+    };
+    const active = activeModelAvailability(assessment, now);
+    expect(Object.keys(active)).toEqual(["p/dead"]);
+    expect(MODEL_QUOTA_MARKER_TTL_MS).toBeLessThan(24 * 60 * 60_000);
+  });
+});
+
 describe("model normalization", () => {
   it("normalizes current Pi metadata and reasoning support safely", () => {
     const normalized = normalizePiModel({

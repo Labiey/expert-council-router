@@ -1,5 +1,12 @@
 import { modelInventoryFingerprint } from "./council.js";
-import type { AvailableModel, ModelAssessmentSnapshot, ModelAssessmentStatus, ModelAvailabilityObservation } from "./types.js";
+import type {
+  AvailableModel,
+  AvailabilityMarkerKind,
+  ModelAssessmentSnapshot,
+  ModelAssessmentStatus,
+  ModelAvailabilityObservation,
+  ModelStatusObservation,
+} from "./types.js";
 
 export const DEFAULT_MODEL_ASSESSMENT_MAX_AGE_DAYS = 30;
 export const MAX_MODEL_ASSESSMENT_FUTURE_SKEW_MS = 5 * 60_000;
@@ -10,7 +17,17 @@ export const MAX_MODEL_ASSESSMENT_FUTURE_SKEW_MS = 5 * 60_000;
  * a model that returns after a provider-side removal or outage is retried.
  */
 export const MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 60_000;
+/**
+ * Quota exhaustion is recoverable (top-up or quota reset), so its marker
+ * lifetime is deliberately shorter than the dead-model one: routing retries
+ * the model sooner instead of writing it off for a full day.
+ */
+export const MODEL_QUOTA_MARKER_TTL_MS = 6 * 60 * 60_000;
 export const MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
+
+function markerTtlMs(kind: AvailabilityMarkerKind | undefined, defaultTtlMs: number): number {
+  return kind === "quota-exhausted" ? MODEL_QUOTA_MARKER_TTL_MS : defaultTtlMs;
+}
 
 export function activeModelAvailability(
   assessment: ModelAssessmentSnapshot | undefined,
@@ -21,13 +38,17 @@ export function activeModelAvailability(
   const active: Record<string, ModelAvailabilityObservation> = {};
   for (const [key, marker] of Object.entries(entries)) {
     const observedAtMs = Date.parse(marker.observedAt);
-    if (!Number.isFinite(observedAtMs) || now.getTime() - observedAtMs > ttlMs || now.getTime() < observedAtMs) continue;
+    const ttl = markerTtlMs(marker.kind, ttlMs);
+    if (!Number.isFinite(observedAtMs) || now.getTime() - observedAtMs > ttl || now.getTime() < observedAtMs) continue;
     active[key] = marker;
   }
   return active;
 }
 
 function availabilityWarning(key: string, marker: ModelAvailabilityObservation): string {
+  if (marker.kind === "quota-exhausted") {
+    return `Model ${key} quota or balance ran out at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active (short lifetime); top up or wait for the quota reset and the model is retried automatically.`;
+  }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
 
@@ -51,11 +72,13 @@ export function withModelAvailabilityMarker(
   modelKey: string,
   reason: string,
   observedAt: string = new Date().toISOString(),
+  kind: AvailabilityMarkerKind = "unavailable",
 ): ModelAssessmentSnapshot {
   const existing = assessment.modelAvailability?.[modelKey];
-  if (existing && Date.parse(existing.observedAt) >= Date.parse(observedAt)) return assessment;
+  if (existing && Date.parse(existing.observedAt) >= Date.parse(observedAt) && existing.kind === kind) return assessment;
   const marker: ModelAvailabilityObservation = {
     callable: false,
+    kind,
     observedAt,
     reason: reason.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_AVAILABILITY_REASON_LENGTH) || "model call failed",
     source: "runtime-failure",
@@ -66,6 +89,31 @@ export function withModelAvailabilityMarker(
       ...assessment.modelAvailability,
       [modelKey]: marker,
     },
+  };
+}
+
+/**
+ * Record the current runtime status of a model into the shared assessment.
+ * Successful calls mark the model available again; failures mark
+ * quota-exhausted or unavailable with the provider diagnostic as evidence.
+ */
+export function withModelStatus(
+  assessment: ModelAssessmentSnapshot,
+  modelKey: string,
+  state: ModelStatusObservation["state"],
+  observedAt: string = new Date().toISOString(),
+  reason?: string,
+): ModelAssessmentSnapshot {
+  const observation: ModelStatusObservation = {
+    state,
+    observedAt,
+    ...(reason
+      ? { reason: reason.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_AVAILABILITY_REASON_LENGTH) }
+      : {}),
+  };
+  return {
+    ...assessment,
+    modelStatus: { ...assessment.modelStatus, [modelKey]: observation },
   };
 }
 
@@ -84,7 +132,12 @@ export function preserveModelAvailability(
     const previousMarker = merged[key];
     if (!previousMarker || Date.parse(marker.observedAt) >= Date.parse(previousMarker.observedAt)) merged[key] = marker;
   }
-  return { ...next, modelAvailability: merged };
+  const statusMerged = { ...(previous.modelStatus ?? {}) };
+  for (const [key, status] of Object.entries(next.modelStatus ?? {})) {
+    const previousStatus = statusMerged[key];
+    if (!previousStatus || Date.parse(status.observedAt) >= Date.parse(previousStatus.observedAt)) statusMerged[key] = status;
+  }
+  return { ...next, modelAvailability: merged, modelStatus: statusMerged };
 }
 
 export interface ResolvedModelAssessment {

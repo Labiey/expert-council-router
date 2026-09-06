@@ -146,6 +146,16 @@ export async function runCli(
         result = await service.cleanup(executionId);
         break;
       }
+      case "abort": {
+        const executionId = values[0];
+        if (!executionId || !/^[a-zA-Z0-9_-]{1,200}$/.test(executionId)) throw new Error("abort requires a valid execution ID");
+        const reason = option(args, "--reason");
+        result = await service.abortExecution({
+          executionId,
+          ...(reason ? { reason: bounded(reason, "reason", 1_000) } : {}),
+        });
+        break;
+      }
       default:
         throw new Error(`Unknown command: ${command}`);
     }

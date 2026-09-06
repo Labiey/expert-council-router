@@ -39,9 +39,46 @@ const MODEL_UNAVAILABLE_MARKERS = [
   "not eligible for using the model",
 ] as const;
 
-export function indicatesModelUnavailable(summary: unknown): boolean {
+/**
+ * Phrases whose provider failures indicate the plan or API balance ran out.
+ * Unlike dead models these may recover after a top-up or quota reset, so they
+ * are marked with a distinct, shorter-lived `quota-exhausted` kind.
+ */
+const MODEL_QUOTA_MARKERS = [
+  "insufficient_quota",
+  "quota exceeded",
+  "quota exhausted",
+  "exceeded your current quota",
+  "exhausted your quota",
+  "billing_hard_limit",
+  "insufficient balance",
+  "balance is not enough",
+  "not enough balance",
+  "account balance",
+  "arrears",
+  "payment required",
+  "欠费",
+  "余额不足",
+  "token plan quota",
+  "plan quota exhausted",
+] as const;
+
+export type AvailabilityEvidence = "unavailable" | "quota-exhausted";
+
+/**
+ * Classify provider-failure evidence: quota exhaustion wins over the generic
+ * unavailable markers because messages such as "403 AccessDenied: quota
+ * exhausted" must land in the recoverable quota kind, not the dead-model one.
+ */
+export function classifyAvailabilityEvidence(summary: unknown): AvailabilityEvidence | undefined {
   const message = (summary instanceof Error ? summary.message : String(summary ?? "")).toLowerCase();
-  return MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker));
+  if (MODEL_QUOTA_MARKERS.some((marker) => message.includes(marker))) return "quota-exhausted";
+  if (MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker))) return "unavailable";
+  return undefined;
+}
+
+export function indicatesModelUnavailable(summary: unknown): boolean {
+  return classifyAvailabilityEvidence(summary) !== undefined;
 }
 
 export function inferFailureType(value: unknown, fallback: FailureType = "unknown"): FailureType {

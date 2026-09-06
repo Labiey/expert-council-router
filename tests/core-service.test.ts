@@ -497,24 +497,26 @@ describe("runtime availability marking", () => {
       },
       { status: "success", role: "scout", model: "p/alive", summary: "ok" },
     ]);
-    let updates: Array<string | undefined>;
     // Class-based persistence (like SplitCouncilStateStore): the service must
     // call updateModelAssessment through the object, never as an extracted
     // unbound function, or `this` is lost.
     class RecordingPersistence {
-      updates: Array<string | undefined> = [];
+      markerUpdates = 0;
       saved: ModelAssessmentSnapshot = assessment;
       async save(): Promise<void> {}
       async updateModelAssessment(
         mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
       ): Promise<void> {
-        const next = mutate(this.saved);
-        this.updates.push(next?.modelAvailability && "p/dead" in next.modelAvailability ? "p/dead" : undefined);
-        if (next) this.saved = next;
+        const before = this.saved;
+        const next = mutate(before);
+        if (!next) return;
+        if (Object.keys(next.modelAvailability ?? {}).length > Object.keys(before.modelAvailability ?? {}).length) {
+          this.markerUpdates += 1;
+        }
+        this.saved = next;
       }
     }
     const persistence = new RecordingPersistence();
-    updates = persistence.updates;
     const service = new ExpertCouncilService(runtime, {}, undefined, {
       initialState: initialState(assessment),
       persistence,
@@ -525,8 +527,10 @@ describe("runtime availability marking", () => {
     expect(result.model).toBe("p/alive");
     expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
     expect(result.risks?.join(" ")).toContain("marked in the persisted model assessment");
-    expect(updates).toEqual(["p/dead"]);
+    expect(persistence.markerUpdates).toBe(1);
     expect(persistence.saved.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, source: "runtime-failure" });
+    expect(persistence.saved.modelStatus?.["p/dead"]).toMatchObject({ state: "unavailable" });
+    expect(persistence.saved.modelStatus?.["p/alive"]).toMatchObject({ state: "available" });
 
     const plan = await service.buildCouncil({ task: "Implement a small bounded feature" });
     expect(plan.experts.map((expert) => expert.model)).not.toContain("p/dead");
@@ -550,11 +554,17 @@ describe("runtime availability marking", () => {
       },
       { status: "success", role: "scout", model: "p/alive", summary: "ok" },
     ]);
-    let updateCalls = 0;
+    let markerUpdates = 0;
     const persistence = {
       save: async () => {},
-      updateModelAssessment: async () => {
-        updateCalls += 1;
+      updateModelAssessment: async (
+        mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+      ) => {
+        const before = current;
+        const next = mutate(before);
+        if (next && Object.keys(next.modelAvailability ?? {}).length > Object.keys(before?.modelAvailability ?? {}).length) {
+          markerUpdates += 1;
+        }
       },
     };
     const service = new ExpertCouncilService(runtime, {}, undefined, {
@@ -564,7 +574,7 @@ describe("runtime availability marking", () => {
     const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
     expect(result.status).toBe("success");
     expect(result.executionMetadata?.unavailableModels).toBeUndefined();
-    expect(updateCalls).toBe(0);
+    expect(markerUpdates).toBe(0);
   });
 
   it("warns about active markers during inspection and preserves them across a fresh audit", async () => {
@@ -612,6 +622,138 @@ describe("runtime availability marking", () => {
     expect(result.status).toBe("success");
     expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
     expect((await service.inspectResources()).modelAssessment).toBeUndefined();
+  });
+});
+
+const abortModels = [model("p", "dead"), model("p", "alive")];
+const markAssessment = {
+  asOf: "2026-09-01T00:00:00.000Z",
+  sources: ["https://livebench.ai/"],
+  models: {
+    "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+    "p/alive": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+  },
+};
+const abortInitialState = (snapshot: ModelAssessmentSnapshot): CouncilStateSnapshot => ({
+  version: 1,
+  plans: [],
+  executions: [],
+  results: [],
+  modelAssessment: snapshot,
+});
+
+describe("Main-Agent abort", () => {
+  it("marks a runtime-reported abort as aborted without retry or escalation", async () => {
+    const runtime = new MockRuntime(abortModels, [
+      {
+        status: "aborted",
+        role: "scout",
+        model: "p/dead",
+        summary: "Expert execution aborted by the Main Agent. Abort reason: wrong direction.",
+        filesChanged: ["notes.md"],
+        executionMetadata: { failureType: "aborted", attempts: 1 },
+      },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("aborted");
+    expect(runtime.requests.length).toBe(1);
+    expect(result.executionMetadata?.failureType).toBe("aborted");
+    expect(result.summary).toContain("aborted by the Main Agent");
+    expect(result.filesChanged).toEqual(["notes.md"]);
+  });
+
+  it("aborts a running delegation, skips the next attempt, and returns a handoff progress snapshot", async () => {
+    let attemptStarted = false;
+    let abortRequested = false;
+    let attempts = 0;
+    const runtime = new MockRuntime(abortModels);
+    runtime.executeExpert = async (request) => {
+      attemptStarted = true;
+      attempts += 1;
+      while (!abortRequested) await new Promise((resolve) => setTimeout(resolve, 5));
+      return {
+        status: "aborted",
+        role: request.role,
+        model: request.model,
+        summary: "Expert execution aborted by the Main Agent. Abort reason: wrong direction.",
+        executionMetadata: { failureType: "aborted" as const, attempts: request.attempt },
+      };
+    };
+    runtime.abortExecution = async (request) => {
+      abortRequested = true;
+      return {
+        executionId: request.executionId,
+        status: "abort-requested" as const,
+        progress: {
+          executionId: request.executionId,
+          status: "running" as const,
+          role: "scout",
+          model: "p/dead",
+          startedAt: new Date().toISOString(),
+          elapsedMs: 25,
+          messageCount: 4,
+          lastAssistantText: "Currently exploring roles.ts",
+        },
+      };
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    const handle = service.startDelegation({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    while (!attemptStarted) await new Promise((resolve) => setTimeout(resolve, 5));
+    const outcome = await service.abortExecution({ executionId: handle.executionId, reason: "wrong direction" });
+    expect(outcome.status).toBe("abort-requested");
+    expect(outcome.progress?.lastAssistantText).toBe("Currently exploring roles.ts");
+    const result = await handle.result;
+    expect(result.status).toBe("aborted");
+    expect(result.summary).toContain("Abort reason: wrong direction");
+    expect(attempts).toBe(1);
+  });
+
+  it("reports not-found and already-finished abort outcomes", async () => {
+    const runtime = new MockRuntime(abortModels, [
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    expect((await service.abortExecution({ executionId: "exec_missing" })).status).toBe("not-found");
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect((await service.abortExecution({ executionId: result.executionMetadata!.executionId! })).status).toBe("already-finished");
+  });
+});
+
+describe("quota-exhausted model status", () => {
+  it("marks quota failures with the distinct kind and records current status", async () => {
+    const runtime = new MockRuntime(abortModels, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "403 AccessDenied: insufficient_quota - You exceeded your current quota.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    const saved = { ...markAssessment };
+    const persistence = {
+      save: async () => {},
+      updateModelAssessment: async (
+        mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+      ) => {
+        const next = mutate(saved);
+        if (next) Object.assign(saved, next);
+      },
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: abortInitialState(markAssessment),
+      persistence,
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
+    expect(saved.modelAvailability?.["p/dead"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
+    expect(saved.modelStatus?.["p/dead"]).toMatchObject({ state: "quota-exhausted" });
+    expect(saved.modelStatus?.["p/alive"]).toMatchObject({ state: "available" });
+    const inventory = await service.inspectResources();
+    expect(inventory.warnings.join(" ")).toContain("quota or balance ran out");
   });
 });
 

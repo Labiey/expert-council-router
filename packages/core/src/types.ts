@@ -35,6 +35,8 @@ export type FailureType =
   | "provider_error"
   | "missing_context"
   | "permission_error"
+  | /** The Main Agent deliberately ended the execution; never retried or escalated. */
+    "aborted"
   | "unknown";
 
 export interface ApiCost {
@@ -105,7 +107,7 @@ export interface TestResult {
 }
 
 export interface ExpertResult {
-  status: "success" | "partial" | "failed";
+  status: "success" | "partial" | "failed" | "aborted";
   role: ExpertRole;
   model: string;
   summary: string;
@@ -140,6 +142,10 @@ export interface ExpertRuntime {
    * because the conversation's startup folder is not a repository.
    */
   getCapabilities(cwd?: string): Promise<RuntimeCapabilities>;
+  /** Deliberately stop a running expert session and preserve its progress; never retried or escalated. */
+  abortExecution?(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
+  /** Bounded progress snapshot of a running expert execution. */
+  inspectExecution?(executionId: string): Promise<ExecutionProgress | undefined>;
   cleanupExecution?(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">>;
 }
 
@@ -147,6 +153,36 @@ export interface RuntimeBillingDiscovery {
   policy: BillingPolicyEntry;
   source: "pi-runtime" | "pi-provider-catalog" | "pi-model-catalog" | "unverified";
   reason: string;
+}
+
+/** Bounded progress snapshot for a running expert execution. */
+export interface ExecutionProgress {
+  executionId: string;
+  status: "running";
+  role: string;
+  model: string;
+  startedAt: string;
+  elapsedMs: number;
+  messageCount: number;
+  /** Latest assistant output, bounded; the material for verification, handoff, or intervention. */
+  lastAssistantText?: string;
+  workspace?: string;
+  isolated?: boolean;
+  filesChangedSoFar?: string[];
+}
+
+export interface AbortExecutionRequest {
+  executionId: string;
+  /** Recorded with the abort so the Main Agent can document why work stopped. */
+  reason?: string;
+}
+
+export interface AbortExecutionResult {
+  executionId: string;
+  status: "abort-requested" | "not-found" | "already-finished";
+  reason?: string;
+  /** Final progress snapshot captured at abort time: the handoff brief. */
+  progress?: ExecutionProgress;
 }
 
 export interface ExpertCleanupResult {
@@ -185,11 +221,27 @@ export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension
 }
 
 /** Runtime-observed evidence that a model listed by the host can no longer be called. */
+/**
+ * Why a model is currently marked non-callable. `unavailable` means the model
+ * itself is gone or the subscription lacks it; `quota-exhausted` means access
+ * is valid but the plan or API balance ran out and may recover after a top-up
+ * or quota reset, so it expires on a shorter marker lifetime.
+ */
+export type AvailabilityMarkerKind = "unavailable" | "quota-exhausted";
+
 export interface ModelAvailabilityObservation {
   callable: false;
+  kind?: AvailabilityMarkerKind;
   observedAt: string;
   reason: string;
   source: "runtime-failure";
+}
+
+/** Current per-model runtime status snapshot, persisted in the shared assessment. */
+export interface ModelStatusObservation {
+  state: "available" | "quota-exhausted" | "unavailable";
+  observedAt: string;
+  reason?: string;
 }
 
 export interface RoleDefinition {
@@ -225,6 +277,8 @@ export interface ModelAssessmentSnapshot {
   summary?: string;
   /** Runtime-learned callability markers recorded after the audit; conservative local evidence with a bounded lifetime. */
   modelAvailability?: Record<string, ModelAvailabilityObservation>;
+  /** Current per-model runtime status (available, quota-exhausted, or unavailable), updated on every observed outcome. */
+  modelStatus?: Record<string, ModelStatusObservation>;
 }
 
 export interface ModelAssessmentStatus {
@@ -350,6 +404,8 @@ export interface ExpertOutcome {
   toolErrors: number;
   retryCount: number;
   timedOut: boolean;
+  /** True when the Main Agent deliberately aborted the execution. */
+  aborted?: boolean;
   verificationPassed?: boolean;
   escalationCount: number;
   attempts: number;
@@ -416,9 +472,12 @@ export interface CouncilStatus {
 export interface ExecutionStateSnapshot {
   id: string;
   role: ExpertRole;
-  status: "running" | "success" | "partial" | "failed";
+  status: "running" | "success" | "partial" | "failed" | "aborted";
   model?: string;
   attempts: number;
+  /** Set when the Main Agent requested an abort; the delegation loop skips the next attempt. */
+  abortRequested?: boolean;
+  abortReason?: string;
   attemptHistory?: ExecutionAttemptSnapshot[];
   taskCategory?: TaskClass;
   startedAt: string;
@@ -428,7 +487,7 @@ export interface ExecutionStateSnapshot {
 export interface ExecutionAttemptSnapshot {
   attempt: number;
   model: string;
-  status: "running" | "success" | "partial" | "failed";
+  status: "running" | "success" | "partial" | "failed" | "aborted";
   startedAt: string;
   finishedAt?: string;
   failureType?: FailureType;
@@ -473,6 +532,10 @@ export interface ExpertCouncil {
   startDelegation(request: DelegationRequest): DelegationHandle;
   delegate(request: DelegationRequest): Promise<ExpertResult>;
   getResult(executionId: string): Promise<ExpertResultLookup>;
+  /** Bounded progress snapshot of a running expert execution; the material for verification or handoff. */
+  inspectExecution(executionId: string): Promise<ExecutionProgress | undefined>;
+  /** Deliberately stop a running expert execution while preserving its progress; never retried or escalated. */
+  abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
   waitForResults(request: ExpertWaitRequest): Promise<ExpertWaitResult>;
   cleanup(executionId: string): Promise<ExpertCleanupResult>;
   recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult>;

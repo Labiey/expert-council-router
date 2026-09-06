@@ -26,7 +26,7 @@ export class JsonModelAssessmentStore {
   private async saveUnqueued(snapshot: ModelAssessmentSnapshot): Promise<void> {
     const filePath = await ensurePrivateStoragePath(this.filePath);
     const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
-    await writeFile(temporary, `${JSON.stringify(parseModelAssessmentSnapshot(snapshot))}\n`, {
+    await writeFile(temporary, `${JSON.stringify(parseModelAssessmentSnapshot(snapshot), null, 2)}\n`, {
       encoding: "utf8",
       mode: 0o600,
       flag: "wx",
