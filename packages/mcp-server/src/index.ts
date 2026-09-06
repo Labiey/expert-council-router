@@ -152,7 +152,7 @@ type CouncilProvider = (requestContext?: unknown) => Promise<ExpertCouncil>;
 
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
   const server = new McpServer(
-    { name: "expert-council", version: "0.5.4" },
+    { name: "expert-council", version: "0.5.5" },
     { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
   );
   // A stdio server process serves exactly one host conversation, so this
