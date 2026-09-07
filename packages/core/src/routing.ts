@@ -178,9 +178,16 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
     const key = `${model.provider}/${model.id}`;
     const profile = effectiveProfile(model, config, constraints);
     const billingProfile = profile.billingProfile ?? model.billingProfile;
-    const billingKey = billingProfile ?? model.provider;
-    const billing = config.billing.providers[billingKey]
-      ?? constraints?.billingOverrides?.[billingKey]
+    // Explicit billingProfile bindings win; then per-model entries (provider/id)
+    // override the provider-level default — subscription token plans carry
+    // periodic quotas with per-model burn rates.
+    const billing = (billingProfile
+      ? config.billing.providers[billingProfile] ?? constraints?.billingOverrides?.[billingProfile]
+      : undefined)
+      ?? config.billing.providers[key]
+      ?? constraints?.billingOverrides?.[key]
+      ?? config.billing.providers[model.provider]
+      ?? constraints?.billingOverrides?.[model.provider]
       ?? getBillingEntry(config, model.provider, billingProfile);
     const failures = hardConstraintFailures(model, role, profile, billing, config, constraints);
     if (failures.length) {

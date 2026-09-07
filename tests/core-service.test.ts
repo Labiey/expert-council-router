@@ -940,6 +940,31 @@ describe("file-driven session route policy", () => {
   });
 });
 
+describe("quota-aware billing guidance", () => {
+  it("warns when a subscription provider relies on one blanket provider-level class", async () => {
+    const models = [
+      model("sub", "one"), model("sub", "two"), model("sub", "three"), model("sub", "four"), model("sub", "five"),
+      model("other", "one"),
+    ];
+    const assessment = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: Object.fromEntries(models.map((entry) => [`${entry.provider}/${entry.id}`, { coding: 8 }])),
+      billing: { sub: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" } },
+    };
+    const runtime = new MockRuntime(models);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(assessment) });
+    const inventory = await service.inspectResources();
+    expect(inventory.warnings.join(" ")).toContain("subscription-billed but has no per-model cost classes");
+
+    // Adding a model-level entry silences the warning.
+    assessment.billing["sub/one"] = { billingType: "subscription", marginalCostClass: "low", usagePreference: "consume-first" };
+    const refreshed = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(assessment) });
+    const updated = await refreshed.inspectResources();
+    expect(updated.warnings.join(" ")).not.toContain("subscription-billed but has no per-model cost classes");
+  });
+});
+
 describe("council cost policy guidance", () => {
   it("reminds the host to establish one cost policy with the user when costPolicy is omitted", async () => {
     const runtime = new MockRuntime([model("p", "one")]);

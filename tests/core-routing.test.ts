@@ -452,3 +452,53 @@ describe("route policy exclusion", () => {
     expect(routePolicyExcludes({}, "q/one")).toBe(false);
   });
 });
+
+describe("per-model billing entries", () => {
+  const models = [model("sub", "flagship"), model("sub", "flash")];
+
+  function rankedWith(overrides: Record<string, unknown>, config = parseCouncilConfig({})) {
+    return rankModels({
+      models,
+      role: "scout",
+      config,
+      constraints: { costPolicy: "economy", billingOverrides: overrides as never },
+    });
+  }
+
+  it("lets a provider/id entry override the provider-level cost class", () => {
+    // Provider-level: everything very-low. Model-level: flagship burns quota faster.
+    // balanced preference keeps the raw class scores distinguishable (10 vs 9.5).
+    const ranked = rankedWith({
+      sub: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "balanced" },
+      "sub/flagship": { billingType: "subscription", marginalCostClass: "low", usagePreference: "balanced" },
+    });
+    // Under economy weights the light model must outrank the flagship.
+    expect(ranked.candidates[0]?.model).toBe("sub/flash");
+    const flagship = ranked.candidates.find((candidate) => candidate.model === "sub/flagship");
+    expect(flagship?.reasons.join(" ")).toContain("subscription/low billing");
+  });
+
+  it("prefers config provider entries over assessment overrides at the same level, then falls back per model", () => {
+    // No provider-level key anywhere: each model resolves its own entry.
+    const config = parseCouncilConfig({
+      billing: { providers: { "sub/flagship": { billingType: "subscription", marginalCostClass: "high", usagePreference: "consume-first" } } },
+    });
+    const ranked = rankedWith({}, config);
+    const flagship = ranked.candidates.find((candidate) => candidate.model === "sub/flagship");
+    expect(flagship?.reasons.join(" ")).toContain("subscription/high billing");
+  });
+
+  it("keeps billingProfile bindings ahead of model-level entries", () => {
+    const config = parseCouncilConfig({
+      billing: {
+        providers: {
+          "bound-profile": { billingType: "subscription", marginalCostClass: "scarce", usagePreference: "consume-first" },
+        },
+      },
+      profiles: { models: { "sub/flagship": { billingProfile: "bound-profile" } } },
+    });
+    const ranked = rankedWith({ "sub/flagship": { billingType: "subscription", marginalCostClass: "low", usagePreference: "consume-first" } }, config);
+    const flagship = ranked.candidates.find((candidate) => candidate.model === "sub/flagship");
+    expect(flagship?.reasons.join(" ")).toContain("subscription/scarce billing");
+  });
+});

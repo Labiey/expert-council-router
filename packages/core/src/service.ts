@@ -238,6 +238,16 @@ export class ExpertCouncilService implements ExpertCouncil {
       }),
     );
     const providers = [...new Set(models.map((model) => model.provider))];
+    // Subscription token plans have periodic quotas with per-model burn rates;
+    // a single provider-level "very-low" hides that difference from routing.
+    const blanketSubscriptionWarnings = providers
+      .filter((provider) => {
+        const providerModels = models.filter((model) => model.provider === provider);
+        if (providerModels.length < 5) return false;
+        if (billing[provider]?.billingType !== "subscription") return false;
+        return !providerModels.some((model) => billing[`${provider}/${model.id}`]);
+      })
+      .map((provider) => `Provider ${provider} is subscription-billed but has no per-model cost classes: token plans carry periodic quotas with per-model burn rates, so add "${provider}/<model>" billing entries instead of one provider-level class.`);
     const systemEntry = this.routePolicyDoc?.system;
     const sessionEntry = this.routePolicyDoc?.sessions?.[sessionKey];
     return {
@@ -261,6 +271,7 @@ export class ExpertCouncilService implements ExpertCouncil {
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
+        ...blanketSubscriptionWarnings,
         ...providers
           .filter((provider) => (billing[provider]?.billingType ?? "unknown") === "unknown")
           .map((provider) => `Provider ${provider} billing is unknown: ${billingSources[provider]?.reason ?? "no reliable evidence"}`),

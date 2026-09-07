@@ -177,6 +177,8 @@ subscription  metered  quota  free  unknown
 
 Marginal cost and usage preference are two independent fields because published token prices cannot express subscription plans, fixed quotas, local inference, or promotional credits. The Pi Runtime adapter classifies runtime-reported subscription access or named Token Plan catalogs as `subscription`; otherwise a provider whose Pi model catalog exposes non-zero prices is `metered`, and providers without reliable evidence stay `unknown`. `expert_inspect` returns the inference source, and explicit user configuration always has the highest priority. Models within the same metered provider are still compared on specific prices through `routing.apiPriceWeight` (default `0.35`); an all-zero price table is treated as "not provided", never guessed to be free.
 
+**Per-model billing entries.** Subscription token plans carry periodic quotas (often weekly) with per-model burn rates, so one provider-level class cannot express the real marginal cost. Add `provider/id` keys to override the provider default for specific models — routing checks the explicit `billingProfile` first, then the model-level entry, then the provider-level entry. The same works in `model-assessment.json` billing and in user configuration:
+
 ```json
 {
   "billing": {
@@ -184,6 +186,11 @@ Marginal cost and usage preference are two independent fields because published 
       "subscription-provider": {
         "billingType": "subscription",
         "marginalCostClass": "very-low",
+        "usagePreference": "consume-first"
+      },
+      "subscription-provider/qwen3.8-max": {
+        "billingType": "subscription",
+        "marginalCostClass": "low",
         "usagePreference": "consume-first"
       },
       "scarce-provider": {

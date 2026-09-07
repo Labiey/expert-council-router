@@ -229,6 +229,7 @@ export function evaluateModelAssessment(
           "Do not build or delegate a council yet.",
           "Use an already available web/research tool to audit only the models listed in researchModels; preserve current saved scores for other requiredModels entries and do not install a tool or package.",
           "Use current benchmark evidence for capabilities and provider documentation or runtime evidence for access/billing; never infer personal billing from published token prices.",
+          "For subscription or quota-bearing plans, add per-model billing entries with provider/id keys classifying marginalCostClass by quota burn rate: token plans carry periodic quotas, so flagship models are not as cheap as light ones.",
           "Submit one complete modelAssessment covering every requiredModels entry, dated from the actual host clock, with 1 to 12 consolidated source URLs.",
         ],
   };

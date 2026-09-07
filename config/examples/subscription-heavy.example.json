@@ -6,6 +6,11 @@
         "marginalCostClass": "very-low",
         "usagePreference": "consume-first"
       },
+      "subscription-provider/flagship-model": {
+        "billingType": "subscription",
+        "marginalCostClass": "low",
+        "usagePreference": "consume-first"
+      },
       "scarce-quota-provider": {
         "billingType": "quota",
         "marginalCostClass": "scarce",

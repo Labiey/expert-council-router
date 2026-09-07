@@ -178,6 +178,8 @@ subscription  metered  quota  free  unknown
 
 边际成本和使用偏好是两个独立字段，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。Pi Runtime 适配器会把运行时明确报告的订阅或具名 Token Plan 目录识别为 `subscription`；否则，Pi 模型目录存在非零单价的 Provider 识别为 `metered`，没有可靠证据的保持 `unknown`。`expert_inspect` 会返回推断来源，显式用户配置始终具有最高优先级。同一按量 Provider 内的模型仍会通过 `routing.apiPriceWeight`（默认 `0.35`）比较具体单价；全零价格表按“未提供”处理，不会猜测为免费。
 
+**按模型的计费条目。** 订阅 token plan 带有周期配额（常见为周限额）且各模型消耗倍率不同，单一 provider 级档位无法表达真实边际成本。为特定模型增加 `provider/id` 键即可覆盖 provider 默认值——路由先查显式 `billingProfile`，再查模型级条目，最后才是 provider 级。同样的键也可用于 `model-assessment.json` 的 billing 段与用户配置：
+
 ```json
 {
   "billing": {
@@ -185,6 +187,11 @@ subscription  metered  quota  free  unknown
       "subscription-provider": {
         "billingType": "subscription",
         "marginalCostClass": "very-low",
+        "usagePreference": "consume-first"
+      },
+      "subscription-provider/qwen3.8-max": {
+        "billingType": "subscription",
+        "marginalCostClass": "low",
         "usagePreference": "consume-first"
       },
       "scarce-provider": {

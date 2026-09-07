@@ -310462,8 +310462,7 @@ function rankModels(input2) {
     const key = `${model.provider}/${model.id}`;
     const profile = effectiveProfile(model, config2, constraints);
     const billingProfile = profile.billingProfile ?? model.billingProfile;
-    const billingKey = billingProfile ?? model.provider;
-    const billing = config2.billing.providers[billingKey] ?? constraints?.billingOverrides?.[billingKey] ?? getBillingEntry(config2, model.provider, billingProfile);
+    const billing = (billingProfile ? config2.billing.providers[billingProfile] ?? constraints?.billingOverrides?.[billingProfile] : void 0) ?? config2.billing.providers[key] ?? constraints?.billingOverrides?.[key] ?? config2.billing.providers[model.provider] ?? constraints?.billingOverrides?.[model.provider] ?? getBillingEntry(config2, model.provider, billingProfile);
     const failures = hardConstraintFailures(model, role2, profile, billing, config2, constraints);
     if (failures.length) {
       rejected.push({ model: key, provider: model.provider, score: 0, reasons: [], rejected: failures });
@@ -310964,6 +310963,7 @@ function evaluateModelAssessment(models, assessment, options = {}) {
       "Do not build or delegate a council yet.",
       "Use an already available web/research tool to audit only the models listed in researchModels; preserve current saved scores for other requiredModels entries and do not install a tool or package.",
       "Use current benchmark evidence for capabilities and provider documentation or runtime evidence for access/billing; never infer personal billing from published token prices.",
+      "For subscription or quota-bearing plans, add per-model billing entries with provider/id keys classifying marginalCostClass by quota burn rate: token plans carry periodic quotas, so flagship models are not as cheap as light ones.",
       "Submit one complete modelAssessment covering every requiredModels entry, dated from the actual host clock, with 1 to 12 consolidated source URLs."
     ]
   };
@@ -311324,6 +311324,14 @@ var ExpertCouncilService = class {
       }];
     }));
     const providers = [...new Set(models.map((model) => model.provider))];
+    const blanketSubscriptionWarnings = providers.filter((provider) => {
+      const providerModels = models.filter((model) => model.provider === provider);
+      if (providerModels.length < 5)
+        return false;
+      if (billing[provider]?.billingType !== "subscription")
+        return false;
+      return !providerModels.some((model) => billing[`${provider}/${model.id}`]);
+    }).map((provider) => `Provider ${provider} is subscription-billed but has no per-model cost classes: token plans carry periodic quotas with per-model burn rates, so add "${provider}/<model>" billing entries instead of one provider-level class.`);
     const systemEntry = this.routePolicyDoc?.system;
     const sessionEntry = this.routePolicyDoc?.sessions?.[sessionKey];
     return {
@@ -311347,6 +311355,7 @@ var ExpertCouncilService = class {
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
+        ...blanketSubscriptionWarnings,
         ...providers.filter((provider) => (billing[provider]?.billingType ?? "unknown") === "unknown").map((provider) => `Provider ${provider} billing is unknown: ${billingSources[provider]?.reason ?? "no reliable evidence"}`)
       ]
     };
