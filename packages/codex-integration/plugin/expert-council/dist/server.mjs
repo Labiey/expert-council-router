@@ -311727,6 +311727,7 @@ var ExpertCouncilService = class {
     const state2 = this.executions.get(request.executionId);
     if (!state2)
       return { executionId: request.executionId, status: "not-found", reason: request.reason };
+    void this.runtime.abortExecution?.(request).catch(() => void 0);
     if (this.results.has(request.executionId)) {
       return { executionId: request.executionId, status: "already-finished", reason: request.reason };
     }
@@ -313183,6 +313184,12 @@ var PiExpertRuntime = class _PiExpertRuntime {
         await session.prompt(prompt);
         await session.waitForIdle?.();
       })();
+      void execution2.catch(() => void 0);
+      let forceSettle;
+      const abortSettled = new Promise((resolve17) => {
+        forceSettle = resolve17;
+      });
+      entry.forceSettle = forceSettle;
       const timeout = new Promise((_2, reject) => {
         timer = setTimeout(() => {
           entry.timedOut = true;
@@ -313192,7 +313199,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
         }, timeoutMs);
       });
       try {
-        await Promise.race([execution2, timeout]);
+        await Promise.race([execution2, timeout, abortSettled]);
       } catch (error61) {
         if (error61 instanceof ExecutionTimeoutError) {
           const aborting = session.abort?.();
@@ -313263,6 +313270,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
     entry.reason = request.reason;
     const aborting = entry.session.abort?.();
     void aborting?.catch(() => void 0);
+    entry.forceSettle?.();
     const progress = await this.inspectEntry(request.executionId, entry).catch(() => void 0);
     return { executionId: request.executionId, status: "abort-requested", progress };
   }

@@ -693,6 +693,10 @@ export class ExpertCouncilService implements ExpertCouncil {
   async abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult> {
     const state = this.executions.get(request.executionId);
     if (!state) return { executionId: request.executionId, status: "not-found", reason: request.reason };
+    // A terminal core state does not guarantee the underlying expert session
+    // has settled; always ask the runtime to stop any live session first so a
+    // settled execution cannot leak a zombie Pi session.
+    void this.runtime.abortExecution?.(request).catch(() => undefined);
     if (this.results.has(request.executionId)) {
       return { executionId: request.executionId, status: "already-finished", reason: request.reason };
     }

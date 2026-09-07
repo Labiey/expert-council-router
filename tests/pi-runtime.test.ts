@@ -507,3 +507,71 @@ describe("Pi runtime adapter", () => {
     expect(abortCalls).toBeGreaterThan(0);
   });
 });
+
+describe("zombie-session abort regression", () => {
+  it("forces a hung expert session to settle so dispose and cleanup always run", async () => {
+    const { parseCouncilConfig } = await import("../packages/core/src/index.js");
+    const { PiExpertRuntime } = await import("../packages/pi-runtime/src/pi-runtime.js");
+    const config = parseCouncilConfig({});
+    const disposeCalls: number[] = [];
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m" }],
+      getModel: () => ({ id: "m", provider: "p" }),
+    };
+    // A Pi session whose prompt promise never settles: exactly the zombie
+    // scenario behind repeated phantom "attempt 2/3/…" notifications.
+    const hungSession = {
+      prompt: () => new Promise<void>(() => {}),
+      dispose: () => { disposeCalls.push(1); },
+      messages: [],
+      getAvailableThinkingLevels: () => ["default"],
+    };
+    const sdk = {
+      ModelRuntime: { create: async () => modelRuntime },
+      createAgentSession: async () => ({ session: hungSession }),
+      DefaultResourceLoader: class {
+        async reload() {}
+        getSkills() { return { skills: [], diagnostics: [] }; }
+        getExtensions() { return { extensions: [], diagnostics: [] }; }
+      },
+      SettingsManager: { create: () => ({}) },
+      getAgentDir: () => "unused",
+    };
+    const { mkdtemp } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ec-zombie-"));
+    const runtime = await PiExpertRuntime.create({ cwd: dir, config, sdk, modelRuntime, roleDirectory: path.join(process.cwd(), "packages", "core", "dist", "roles") });
+
+    const pending = runtime.executeExpert({
+      executionId: "exec_zombie",
+      role: "scout",
+      task: "Inspect a tiny file",
+      model: "p/m",
+      tools: ["read"],
+      skills: [],
+      readOnly: true,
+      timeoutMs: 300_000,
+      attempt: 1,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    // Wait until the session is actually registered (first transform may be slow).
+    for (let i = 0; i < 100; i += 1) {
+      if (await runtime.inspectExecution("exec_zombie")) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    const requested = await runtime.abortExecution({ executionId: "exec_zombie", reason: "stop" });
+    expect(requested.status).toBe("abort-requested");
+
+    // The executeExpert promise must settle promptly instead of hanging until
+    // the timeout, and the finally cleanup (delete + dispose) must run.
+    const result = await Promise.race([
+      pending,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("executeExpert did not settle after abort")), 2_000)),
+    ]);
+    expect(result.status).toBe("aborted");
+    expect(result.summary).toContain("aborted by the Main Agent");
+    expect(disposeCalls.length).toBe(1);
+    expect(await runtime.inspectExecution("exec_zombie")).toBeUndefined();
+  });
+});

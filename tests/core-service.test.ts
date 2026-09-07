@@ -663,6 +663,22 @@ describe("Main-Agent abort", () => {
     expect(result.filesChanged).toEqual(["notes.md"]);
   });
 
+  it("stops the runtime session even when the execution already finished", async () => {
+    // Regression: an already-terminal core state must not skip the runtime
+    // abort, or a zombie expert session keeps leaking notifications.
+    const runtime = new MockRuntime(abortModels, [
+      { status: "success", role: "scout", model: "p/dead", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    const executionId = result.executionMetadata?.executionId;
+    expect(executionId).toBeTruthy();
+    const outcome = await service.abortExecution({ executionId: executionId!, reason: "late stop" });
+    expect(outcome.status).toBe("already-finished");
+    expect(runtime.abortCalls).toEqual([{ executionId: executionId!, reason: "late stop" }]);
+  });
+
   it("aborts a running delegation, skips the next attempt, and returns a handoff progress snapshot", async () => {
     let attemptStarted = false;
     let abortRequested = false;

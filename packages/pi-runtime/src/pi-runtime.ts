@@ -300,6 +300,8 @@ interface ActiveExpertSession {
   abortRequested: boolean;
   timedOut: boolean;
   reason?: string;
+  /** Resolved by abortExecution to force the execution race to settle. */
+  forceSettle?: () => void;
 }
 
 export class PiExpertRuntime implements ExpertRuntime {
@@ -497,6 +499,14 @@ export class PiExpertRuntime implements ExpertRuntime {
         await session!.prompt(prompt);
         await session!.waitForIdle?.();
       })();
+      // After a forced abort settle the prompt promise may never resolve;
+      // its rejection must not surface as an unhandled rejection.
+      void execution.catch(() => undefined);
+      let forceSettle: (() => void) | undefined;
+      const abortSettled = new Promise<void>((resolve) => {
+        forceSettle = resolve;
+      });
+      entry!.forceSettle = forceSettle;
       const timeout = new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
           entry!.timedOut = true;
@@ -506,7 +516,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         }, timeoutMs);
       });
       try {
-        await Promise.race([execution, timeout]);
+        await Promise.race([execution, timeout, abortSettled]);
       } catch (error) {
         if (error instanceof ExecutionTimeoutError) {
           const aborting = session.abort?.();
@@ -578,6 +588,10 @@ export class PiExpertRuntime implements ExpertRuntime {
     entry.reason = request.reason;
     const aborting = entry.session.abort?.();
     void aborting?.catch(() => undefined);
+    // A Pi session may never settle its prompt promise after abort(); force
+    // the execution race to settle so executeExpert emits the aborted result
+    // and its finally cleanup (activeSessions.delete + dispose) always runs.
+    entry.forceSettle?.();
     const progress = await this.inspectEntry(request.executionId, entry).catch(() => undefined);
     return { executionId: request.executionId, status: "abort-requested", progress };
   }

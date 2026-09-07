@@ -1,4 +1,6 @@
 import type {
+  AbortExecutionRequest,
+  AbortExecutionResult,
   AvailableModel,
   ExpertExecutionRequest,
   ExpertResult,
@@ -34,6 +36,12 @@ export function model(provider: string, id: string, overrides: Partial<Available
 export class MockRuntime implements ExpertRuntime {
   readonly requests: ExpertExecutionRequest[] = [];
   readonly capabilityRequests: Array<string | undefined> = [];
+  readonly abortCalls: Array<{ executionId: string; reason?: string }> = [];
+
+  async abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult> {
+    this.abortCalls.push({ executionId: request.executionId, ...(request.reason ? { reason: request.reason } : {}) });
+    return { executionId: request.executionId, status: "not-found" };
+  }
 
   constructor(
     readonly models: AvailableModel[],
