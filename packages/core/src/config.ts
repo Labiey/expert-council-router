@@ -91,8 +91,9 @@ export const modelAssessmentSnapshotSchema = z.object({
   billing: z.record(
     z.string().min(1).max(200).regex(/^[^\u0000-\u001f]+$/),
     billingEntrySchema,
-  ).refine((providers) => Object.keys(providers).length <= 32, {
-    message: "must contain at most 32 provider billing assessments",
+  ).refine((providers) => Object.keys(providers).length <= 128, {
+    // Per-model entries (provider/id) legitimately exceed one per provider.
+    message: "must contain at most 128 billing assessments",
   }).optional(),
   summary: z.string().min(1).max(2_000).optional(),
   modelAvailability: modelAvailabilityRecordSchema.optional(),
@@ -107,7 +108,7 @@ export const MODEL_ASSESSMENT_JSON_SCHEMA = (() => {
   const schema = z.toJSONSchema(modelAssessmentSnapshotSchema, { target: "draft-7" }) as Record<string, unknown>;
   const properties = schema.properties as Record<string, Record<string, unknown>>;
   properties.models = { ...properties.models, minProperties: 1, maxProperties: 64 };
-  properties.billing = { ...properties.billing, maxProperties: 32 };
+  properties.billing = { ...properties.billing, maxProperties: 128 };
   const profile = properties.models.additionalProperties as Record<string, unknown>;
   properties.models.additionalProperties = { ...profile, minProperties: 1 };
   return schema;
