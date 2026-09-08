@@ -87,6 +87,18 @@ export function inferFailureType(value: unknown, fallback: FailureType = "unknow
   if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) {
     return "permission_error";
   }
+  // Quota/balance exhaustion (HTTP 429 and plan-quota wording) is provider
+  // evidence: classifying it as provider_error lets the availability marker
+  // record the whole plan and stop routing into the same depleted quota.
+  if (
+    message.includes("429") ||
+    message.includes("quota") ||
+    message.includes("insufficient") ||
+    message.includes("欠费") ||
+    message.includes("余额不足")
+  ) {
+    return "provider_error";
+  }
   if (PROVIDER_FAILURE_MARKERS.some((marker) => message.includes(marker))) return "provider_error";
   if (message.includes("tool")) return "tool_call_error";
   if (message.includes("test") || message.includes("assertion")) return "test_failure";

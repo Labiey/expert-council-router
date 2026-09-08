@@ -1090,3 +1090,49 @@ describe("required delegation timeouts", () => {
     expect(runtime.requests).toHaveLength(1);
   });
 });
+
+describe("429 quota exhaustion classification", () => {
+  it("classifies plan-quota 429 failures as provider_error so the whole plan gets marked", async () => {
+    const models = [model("plan", "one"), model("plan", "two"), model("r", "one")];
+    const assessment = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: Object.fromEntries(models.map((entry) => [`${entry.provider}/${entry.id}`, { coding: 8 }])),
+    };
+    const results = [
+      {
+        status: "failed",
+        role: "scout",
+        model: "plan/one",
+        summary: '429: {"message":"Your token-plan 1-week quota has been exhausted.","type":"insufficient_quota"}',
+        executionMetadata: { failureType: "unknown" },
+      },
+      { status: "success", role: "scout", model: "r/one", summary: "ok" },
+    ];
+    // The runtime mislabeled it "unknown"; inferFailureType must recover
+    // provider evidence from the summary so the plan-wide marker still lands.
+    const runtime = new MockRuntime(models, results.map((result) => ({
+      ...result,
+      executionMetadata: result.status === "success" ? result.executionMetadata : undefined,
+    })));
+    const saved: ModelAssessmentSnapshot = JSON.parse(JSON.stringify(assessment));
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: abortInitialState(assessment),
+      persistence: {
+        save: async () => {},
+        updateModelAssessment: async (
+          mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+        ) => {
+          const next = mutate(saved);
+          if (next) Object.assign(saved, next);
+        },
+      },
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("r/one");
+    expect(saved.modelAvailability?.["plan/one"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
+    expect(saved.modelAvailability?.["plan/two"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
+    expect(saved.modelStatus?.["plan/two"]).toMatchObject({ state: "quota-exhausted" });
+  });
+});

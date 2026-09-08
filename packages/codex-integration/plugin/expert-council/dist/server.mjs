@@ -310750,6 +310750,9 @@ function inferFailureType(value3, fallback = "unknown") {
   if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) {
     return "permission_error";
   }
+  if (message.includes("429") || message.includes("quota") || message.includes("insufficient") || message.includes("\u6B20\u8D39") || message.includes("\u4F59\u989D\u4E0D\u8DB3")) {
+    return "provider_error";
+  }
   if (PROVIDER_FAILURE_MARKERS.some((marker) => message.includes(marker)))
     return "provider_error";
   if (message.includes("tool"))
