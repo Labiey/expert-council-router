@@ -18,7 +18,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.5.6）已包含：
+当前版本（0.6.0）已包含：
 
 - 与宿主无关的 Core：配置校验、模型归一化、计费策略、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
@@ -101,7 +101,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.5.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.6.0 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -409,7 +409,7 @@ MCP 表面刻意保持为 10 个语义工具：
 }
 ```
 
-`expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。主代理应根据任务难度为每项任务显式设置 `timeoutMs`，而不是依赖运行时的十分钟兜底值。存在两个以上相互独立的任务时，应在继续其他主代理工作前一次发配整个批次：
+`expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。`timeoutMs` 是每项任务的必填参数（1000–3600000 ms）——缺省即报错；请按任务难度设置。超时的尝试会自动把重试预算放大 1.5×，且当专家发现以现有工具无法完成任务时会以结构化 `missing_context`/`permission_error` 提前终止。存在两个以上相互独立的任务时，应在继续其他主代理工作前一次发配整个批次：
 
 ```json
 {
@@ -516,7 +516,7 @@ packages/codex-integration/plugin/expert-council/
 `v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.5.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.6.0 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -542,7 +542,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.5.6 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.6.0 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json

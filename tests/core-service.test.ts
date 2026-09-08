@@ -155,7 +155,7 @@ describe("retry and escalation", () => {
     const runtime = new MockRuntime([model("cheap", "one")], [pending]);
     const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
 
-    const handle = service.startDelegation({ role: "reviewer", task: "Review a bounded change" });
+    const handle = service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 });
     expect(handle.executionId).toMatch(/^exec_/);
     expect(await service.getResult(handle.executionId)).toEqual({
       executionId: handle.executionId,
@@ -178,8 +178,8 @@ describe("retry and escalation", () => {
     const pending = [0, 1].map(() => new Promise<Completed>((resolve) => finishers.push(resolve)));
     const runtime = new MockRuntime([model("cheap", "one")], pending);
     const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
-    const first = service.startDelegation({ role: "reviewer", task: "Review module A" });
-    const second = service.startDelegation({ role: "reviewer", task: "Review module B" });
+    const first = service.startDelegation({ role: "reviewer", task: "Review module A", timeoutMs: 60_000 });
+    const second = service.startDelegation({ role: "reviewer", task: "Review module B", timeoutMs: 60_000 });
 
     const waited = service.waitForResults({
       executionIds: [first.executionId, second.executionId],
@@ -218,7 +218,7 @@ describe("retry and escalation", () => {
       const service = new ExpertCouncilService(new MockRuntime([model("cheap", "one")], [pending]), {
         profiles: { models: profiles },
       });
-      const handle = service.startDelegation({ role: "reviewer", task: "Review a long-running change" });
+      const handle = service.startDelegation({ role: "reviewer", task: "Review a long-running change", timeoutMs: 60_000 });
       const waiting = service.waitForResults({ executionIds: [handle.executionId], timeoutMs: 1_000 });
       await vi.advanceTimersByTimeAsync(1_000);
       expect(await waiting).toMatchObject({
@@ -250,7 +250,7 @@ describe("retry and escalation", () => {
       }),
     ]);
     const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
-    const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol" });
+    const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol", timeoutMs: 60_000 });
     expect(result.status).toBe("success");
     expect(runtime.requests).toHaveLength(2);
     expect(runtime.requests[0]?.model).toBe(runtime.requests[1]?.model);
@@ -281,7 +281,7 @@ describe("retry and escalation", () => {
       } },
       retry: { maxAttempts: 3, maxEscalations: 2, correctedRetriesPerModel: 1 },
     });
-    const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol" });
+    const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol", timeoutMs: 60_000 });
     expect(result.status).toBe("success");
     expect(new Set(runtime.requests.map((request) => request.model)).size).toBe(2);
     expect(result.executionMetadata?.escalationCount).toBe(1);
@@ -298,6 +298,7 @@ describe("retry and escalation", () => {
       role: "implementation-worker",
       task: "Rename a local symbol",
       councilId: plan.id,
+      timeoutMs: 60_000,
     });
     expect(result.model).toBe("quality/two");
     expect(result.risks?.join(" ")).toContain("different model inventory");
@@ -318,7 +319,7 @@ describe("retry and escalation", () => {
       profiles: { models: profiles },
       retry: { maxAttempts: 2, maxEscalations: 1, correctedRetriesPerModel: 1 },
     });
-    const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol" });
+    const result = await service.delegate({ role: "implementation-worker", task: "Rename a local symbol", timeoutMs: 60_000 });
     expect(result.status).toBe("failed");
     expect(runtime.requests).toHaveLength(2);
   });
@@ -329,6 +330,13 @@ describe("retry and escalation", () => {
       task: "fix",
       currentModel: "p/a",
       previousFailures: [{ model: "p/a", type: "provider_error", summary: "outage" }],
+    }, [{ model: "p/a", provider: "p", score: 8, reasons: [] }, { model: "q/b", provider: "q", score: 7, reasons: [] }])).toMatchObject({ action: "escalate", model: "q/b" });
+    // missing_context is a task-level blocker: it must not be retried on the same model.
+    expect(decideEscalation({
+      role: "debugger",
+      task: "fix",
+      currentModel: "p/a",
+      previousFailures: [{ model: "p/a", type: "missing_context", summary: "required file absent" }],
     }, [{ model: "p/a", provider: "p", score: 8, reasons: [] }, { model: "q/b", provider: "q", score: 7, reasons: [] }])).toMatchObject({ action: "escalate", model: "q/b" });
   });
 });
@@ -361,7 +369,7 @@ describe("telemetry privacy and aggregation", () => {
       executionMetadata: { usage: { inputTokens: 100, outputTokens: 20, estimatedCost: 0.01 } },
     })]);
     const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } }, telemetry);
-    const result = await service.delegate({ role: "reviewer", task: "Review a bounded change" });
+    const result = await service.delegate({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 });
     const executionId = result.executionMetadata!.executionId!;
     expect(await service.recordFeedback({ executionId, verificationPassed: true })).toEqual({
       executionId,
@@ -390,7 +398,7 @@ describe("telemetry privacy and aggregation", () => {
     const runtime = new MockRuntime([model("cheap", "one")]);
     const first = new ExpertCouncilService(runtime, { profiles: { models: profiles } }, undefined, { persistence });
     const plan = await first.buildCouncil({ task: "Rename a local symbol" });
-    const completed = await first.delegate({ role: "implementation-worker", task: "Rename a local symbol" });
+    const completed = await first.delegate({ role: "implementation-worker", task: "Rename a local symbol", timeoutMs: 60_000 });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     expect(snapshot?.plans[0]?.id).toBe(plan.id);
 
@@ -454,7 +462,7 @@ describe("Skill trust policy", () => {
       [{ name: "planning", installed: true, enabled: true }],
     );
     await new ExpertCouncilService(untrustedRuntime, { profiles: { models: profiles } })
-      .delegate({ role: "planner", task: "Plan a bounded change" });
+      .delegate({ role: "planner", task: "Plan a bounded change", timeoutMs: 60_000 });
     expect(untrustedRuntime.requests[0]?.skills).toEqual([]);
 
     const allowlistedRuntime = new MockRuntime(
@@ -466,7 +474,7 @@ describe("Skill trust policy", () => {
     await new ExpertCouncilService(allowlistedRuntime, {
       profiles: { models: profiles },
       security: { trustedSkills: ["planning"] },
-    }).delegate({ role: "planner", task: "Plan a bounded change" });
+    }).delegate({ role: "planner", task: "Plan a bounded change", timeoutMs: 60_000 });
     expect(allowlistedRuntime.requests[0]?.skills).toEqual(["planning"]);
   });
 });
@@ -1025,32 +1033,18 @@ describe("shared assessment freshness", () => {
   });
 });
 
-describe("role-aware default timeouts", () => {
-  it("gives mutation roles a 30-minute default when the host forgets timeoutMs", async () => {
+describe("required delegation timeouts", () => {
+  it("rejects a delegation without an explicit timeoutMs", async () => {
     const runtime = new MockRuntime([model("p", "alive")], [
-      { status: "success", role: "implementation-worker", model: "p/alive", summary: "ok" },
-    ]);
-    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
-    await service.delegate({ role: "implementation-worker", task: "Implement a small bounded feature", timeoutMs: 60_000 });
-    // Explicit host timeout wins untouched.
-    expect(runtime.requests[0]?.timeoutMs).toBe(60_000);
-
-    const forgetful = new MockRuntime([model("p", "alive")], [
-      { status: "success", role: "implementation-worker", model: "p/alive", summary: "ok" },
-    ]);
-    const service2 = new ExpertCouncilService(forgetful, {}, undefined, { initialState: abortInitialState(markAssessment) });
-    await service2.delegate({ role: "implementation-worker", task: "Implement a small bounded feature" });
-    expect(forgetful.requests[0]?.timeoutMs).toBe(1_800_000);
-
-    const scout = new MockRuntime([model("p", "alive")], [
       { status: "success", role: "scout", model: "p/alive", summary: "ok" },
     ]);
-    const service3 = new ExpertCouncilService(scout, {}, undefined, { initialState: abortInitialState(markAssessment) });
-    await service3.delegate({ role: "scout", task: "Inspect a tiny file" });
-    expect(scout.requests[0]?.timeoutMs).toBe(600_000);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    await expect(service.delegate({ role: "scout", task: "Inspect a tiny file" } as never))
+      .rejects.toThrow(/explicit timeout/i);
+    expect(runtime.requests).toHaveLength(0);
   });
 
-  it("scales the retry budget after a timeout instead of re-running the same spec", async () => {
+  it("scales the retry budget by 1.5x after a timed-out attempt", async () => {
     let attempts = 0;
     const runtime = new MockRuntime(abortModels);
     runtime.executeExpert = async (request) => {
@@ -1061,17 +1055,38 @@ describe("role-aware default timeouts", () => {
           status: "failed",
           role: request.role,
           model: request.model,
-          summary: "Expert execution timed out after 600000ms.",
+          summary: `Expert execution timed out after ${request.timeoutMs}ms.`,
           executionMetadata: { failureType: "timeout", attempts: request.attempt },
         };
       }
       return { status: "success", role: request.role, model: request.model, summary: "ok" };
     };
     const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
-    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file" });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 600_000 });
     expect(result.status).toBe("success");
     expect(runtime.requests[0]?.timeoutMs).toBe(600_000);
-    // Attempt 2 gets 1.5x the role default, proving the budget grows.
+    // Attempt 2 gets 1.5x the explicit budget, proving the budget grows.
     expect(runtime.requests[1]?.timeoutMs).toBe(900_000);
+  });
+
+  it("terminates the loop on a task-level blocker without retry or escalation", async () => {
+    const runtime = new MockRuntime(abortModels, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "The required environment is absent from the isolated worktree.",
+        executionMetadata: { failureType: "missing_context" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "must not run" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("required environment is absent");
+    expect(result.executionMetadata?.failureType).toBe("missing_context");
+    expect(result.executionMetadata?.attempts).toBe(1);
+    expect(result.executionMetadata?.escalationCount).toBe(0);
+    expect(runtime.requests).toHaveLength(1);
   });
 });

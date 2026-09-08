@@ -138,6 +138,16 @@ describe("CLI JSON integration", () => {
     expect(JSON.parse(stderr).error).toContain("--timeout-ms must be an integer");
   });
 
+  it("requires an explicit --timeout-ms for delegate", async () => {
+    let stderr = "";
+    const code = await runCli(["delegate", "scout", "review", "--json"], {
+      stdout: { write: () => {} },
+      stderr: { write: (output) => { stderr += output; } },
+    }, mockCouncil());
+    expect(code).toBe(1);
+    expect(JSON.parse(stderr).error).toContain("requires --timeout-ms");
+  });
+
   it("rejects a numeric option with no value", async () => {
     let stderr = "";
     const code = await runCli(["build", "review", "--max-experts", "--json"], {
@@ -196,9 +206,15 @@ describe("MCP semantic surface", () => {
     expect(MCP_INPUT_SCHEMAS.expert_wait.executionIds.safeParse(["exec_one", "exec_one"]).success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_wait.timeoutMs.safeParse(999).success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_wait.timeoutMs.safeParse(120_000).success).toBe(true);
+    // timeoutMs is now required on every expert_delegate assignment.
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.timeoutMs.safeParse(undefined).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.timeoutMs.safeParse(600_000).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
       { role: "scout", task: "map files" },
-      { role: "reviewer", task: "review findings" },
+    ]).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
+      { role: "scout", task: "map files", timeoutMs: 600_000 },
+      { role: "reviewer", task: "review findings", timeoutMs: 600_000 },
     ]).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_feedback.verificationPassed.safeParse(true).success).toBe(true);
   });
@@ -236,7 +252,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.6 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.6.0 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -253,7 +269,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.5.6 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.6.0 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });
@@ -623,7 +639,7 @@ describe("Pi adapter registration", () => {
 
     const delegated = await tools.get("expert_delegate")!.execute(
       "call",
-      { role: "reviewer", task: "review", ...(taskDescription ? { taskDescription } : {}) },
+      { role: "reviewer", task: "review", timeoutMs: 60_000, ...(taskDescription ? { taskDescription } : {}) },
       undefined,
       undefined,
       { cwd: ".", isIdle: () => idle },
@@ -676,8 +692,8 @@ describe("Pi adapter registration", () => {
     const delegated = await tools.get("expert_delegate")!.execute(
       "call",
       { assignments: [
-        { role: "scout", task: "map files", taskDescription: "repository map" },
-        { role: "reviewer", task: "review findings" },
+        { role: "scout", task: "map files", taskDescription: "repository map", timeoutMs: 60_000 },
+        { role: "reviewer", task: "review findings", timeoutMs: 60_000 },
       ] },
       undefined,
       undefined,

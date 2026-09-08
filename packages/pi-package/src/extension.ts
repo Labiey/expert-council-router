@@ -104,7 +104,7 @@ const DelegationAssignment = Type.Object({
   })),
   councilId: Type.Optional(ExecutionIdentifier),
   workspace: Type.Optional(WorkspacePath),
-  timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000 })),
+  timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
 });
 type DelegationAssignmentInput = Static<typeof DelegationAssignment>;
 
@@ -233,7 +233,7 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_delegate",
     label: "Expert Delegate",
-    description: "Start one or up to eight bounded semantic expert assignments in the background and immediately return execution IDs.",
+    description: "Start one or up to eight bounded semantic expert assignments in the background and immediately return execution IDs. timeoutMs is required for every assignment: set it explicitly from task difficulty (read-only investigation 5–15 min, implementation/debugging 30–60 min).",
     promptGuidelines: [
       "Dispatch every independent assignment selected for the current batch before ending the turn; prefer the assignments array when two or more tasks are ready.",
       "Pass assignments as a real JSON array, never as a quoted or stringified JSON value.",
@@ -251,7 +251,7 @@ export default function expertCouncilExtension(
       })),
       councilId: Type.Optional(ExecutionIdentifier),
       workspace: Type.Optional(WorkspacePath),
-      timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000 })),
+      timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
       assignments: Type.Optional(Type.Array(DelegationAssignment, { minItems: 1, maxItems: 8 })),
     }, { additionalProperties: false }),
     prepareArguments(args) {
@@ -293,7 +293,7 @@ export default function expertCouncilExtension(
         ...(params.taskDescription ? { taskDescription: params.taskDescription } : {}),
         ...(params.councilId ? { councilId: params.councilId } : {}),
         ...(params.workspace ? { workspace: params.workspace } : {}),
-        ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}),
+        timeoutMs: params.timeoutMs,
       }];
       const assignments = requestedAssignments.map((assignment): DelegationRequest => ({
         role: assignment.role as ExpertRole,
@@ -302,7 +302,7 @@ export default function expertCouncilExtension(
         ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
         ...(assignment.councilId ? { councilId: assignment.councilId } : {}),
         ...(assignment.workspace ? { workspace: assignment.workspace } : {}),
-        ...(assignment.timeoutMs ? { timeoutMs: assignment.timeoutMs } : {}),
+        timeoutMs: assignment.timeoutMs,
       }));
       const receipts = assignments.map((assignment) => {
         const handle = council.startDelegation(assignment);

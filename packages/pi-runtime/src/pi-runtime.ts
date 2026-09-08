@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import {
   inferFailureType,
-  defaultRoleTimeoutMs,
   normalizePiModels,
   getRole,
   type AbortExecutionRequest,
@@ -289,7 +288,7 @@ async function rolePrompt(role: string, roleDirectory?: string): Promise<string>
 }
 
 function executionPrompt(request: ExpertExecutionRequest, roleInstructions: string): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Isolated worktrees contain only Git-tracked files: virtualenvs, node_modules, and other untracked artifacts are absent, so locate the host workspace interpreter by absolute path or install dependencies before running tests.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent — account for this before planning commands.\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
 }
 
 interface ActiveExpertSession {
@@ -494,7 +493,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
       const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory));
-      const timeoutMs = request.timeoutMs ?? defaultRoleTimeoutMs(request.role);
+      const timeoutMs = request.timeoutMs;
       let timer: NodeJS.Timeout | undefined;
       const execution = (async () => {
         await session!.prompt(prompt);

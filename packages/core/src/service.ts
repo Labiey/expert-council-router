@@ -17,7 +17,7 @@ import {
   withModelAvailabilityMarker,
   withModelStatus,
 } from "./model-assessment.js";
-import { defaultRoleTimeoutMs, listRoles } from "./roles.js";
+import { listRoles } from "./roles.js";
 import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy } from "./route-policy.js";
 import { rankModels, routePolicyExcludes } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
@@ -321,6 +321,12 @@ export class ExpertCouncilService implements ExpertCouncil {
   }
 
   startDelegation(request: DelegationRequest): DelegationHandle {
+    // The execution budget is a required part of the delegation contract: a
+    // missing or out-of-range value must fail loudly instead of silently
+    // falling back to a default or an immediate timeout.
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1_000 || request.timeoutMs > 3_600_000) {
+      throw new Error("Delegation requires an explicit timeoutMs between 1000 and 3600000: set a budget from task difficulty.");
+    }
     const id = executionId();
     const state: ExecutionState = {
       id,
@@ -369,22 +375,6 @@ export class ExpertCouncilService implements ExpertCouncil {
 
   async delegate(request: DelegationRequest): Promise<ExpertResult> {
     return this.startDelegation(request).result;
-  }
-
-  /**
-   * Per-attempt execution budget. An explicit host timeout wins untouched.
-   * Without one, the role-aware default applies — and a timed-out attempt
-   * proves that budget was too small, so retries scale it up instead of
-   * re-running the same impossible specification.
-   */
-  private attemptTimeoutMs(role: DelegationRequest["role"], failures: Array<{ type: string }>, attempts: number): number {
-    const base = defaultRoleTimeoutMs(role);
-    const lastFailure = failures.at(-1)?.type;
-    if (lastFailure === "timeout") {
-      const scaled = Math.min(base * (1 + 0.5 * Math.max(0, attempts - 1)), 3_600_000);
-      return Math.round(scaled);
-    }
-    return base;
   }
 
   private async runDelegation(
@@ -455,6 +445,10 @@ export class ExpertCouncilService implements ExpertCouncil {
     let retriesForCurrent = 0;
     let escalations = 0;
     let lastResult: ExpertResult | undefined;
+    // Per-attempt execution budget. The host must supply an explicit timeout;
+    // a timed-out attempt proves that budget was too small, so the loop scales
+    // it up instead of re-running the same impossible specification.
+    let currentTimeoutMs = request.timeoutMs;
     const cumulativeUsage: NonNullable<ExpertOutcome["approximateUsage"]> = {};
     const maxAttempts = this.config.retry.maxAttempts;
 
@@ -509,7 +503,7 @@ export class ExpertCouncilService implements ExpertCouncil {
           : {}),
         readOnly: role.readOnly,
         ...(request.workspace ? { workspace: request.workspace } : {}),
-        timeoutMs: request.timeoutMs ?? this.attemptTimeoutMs(request.role, failures, state.attempts),
+        timeoutMs: currentTimeoutMs,
         attempt: state.attempts,
         ...(failures.length ? { priorFailure: { type: failures.at(-1)!.type, summary: failures.at(-1)!.summary } } : {}),
       });
@@ -536,7 +530,16 @@ export class ExpertCouncilService implements ExpertCouncil {
       // A Main-Agent abort is deliberate: never classify, retry, or escalate it.
       if (lastResult.status === "aborted") break;
       const failure = failureTypeForResult(lastResult);
+      // Task-level blockers (missing context, permission denied) cannot be
+      // fixed by another model: terminate the delegation loop and keep
+      // lastResult as the terminal result — no retry, no escalation.
+      if (failure === "missing_context" || failure === "permission_error") break;
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
+      if (failure === "timeout") {
+        // An explicitly timed-out attempt proves the budget was too small:
+        // scale the next attempt's budget (bounded) instead of repeating it.
+        currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), 3_600_000);
+      }
       if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
         try {
           const provider = parseModelKey(current.model).provider;

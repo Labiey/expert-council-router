@@ -310263,21 +310263,6 @@ function getRole(role2) {
 function listRoles() {
   return Object.values(DEFAULT_ROLES).map((role2) => ({ ...role2, tools: [...role2.tools], skills: [...role2.skills] }));
 }
-function defaultRoleTimeoutMs(role2) {
-  switch (role2) {
-    case "implementation-worker":
-    case "debugger":
-      return 30 * 6e4;
-    case "verifier":
-    case "architecture-oracle":
-      return 20 * 6e4;
-    case "reviewer":
-    case "planner":
-      return 15 * 6e4;
-    default:
-      return 10 * 6e4;
-  }
-}
 
 // packages/core/dist/telemetry.js
 function sanitizeOutcome(outcome) {
@@ -310670,7 +310655,7 @@ function buildCouncilPlan(request, models, config2, telemetry = []) {
 }
 
 // packages/core/dist/escalation.js
-var CORRECTABLE = /* @__PURE__ */ new Set(["tool_call_error", "missing_context", "test_failure"]);
+var CORRECTABLE = /* @__PURE__ */ new Set(["tool_call_error", "test_failure"]);
 function decideEscalation(request, candidates, correctedRetriesPerModel = 1) {
   const currentFailures = request.previousFailures.filter((failure) => failure.model === request.currentModel);
   const latest = request.previousFailures.at(-1);
@@ -311408,6 +311393,9 @@ var ExpertCouncilService = class {
     return plan;
   }
   startDelegation(request) {
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1e3 || request.timeoutMs > 36e5) {
+      throw new Error("Delegation requires an explicit timeoutMs between 1000 and 3600000: set a budget from task difficulty.");
+    }
     const id = executionId();
     const state2 = {
       id,
@@ -311455,21 +311443,6 @@ var ExpertCouncilService = class {
   }
   async delegate(request) {
     return this.startDelegation(request).result;
-  }
-  /**
-   * Per-attempt execution budget. An explicit host timeout wins untouched.
-   * Without one, the role-aware default applies — and a timed-out attempt
-   * proves that budget was too small, so retries scale it up instead of
-   * re-running the same impossible specification.
-   */
-  attemptTimeoutMs(role2, failures, attempts) {
-    const base = defaultRoleTimeoutMs(role2);
-    const lastFailure = failures.at(-1)?.type;
-    if (lastFailure === "timeout") {
-      const scaled = Math.min(base * (1 + 0.5 * Math.max(0, attempts - 1)), 36e5);
-      return Math.round(scaled);
-    }
-    return base;
   }
   async runDelegation(request, state2, started) {
     const id = state2.id;
@@ -311532,6 +311505,7 @@ var ExpertCouncilService = class {
     let retriesForCurrent = 0;
     let escalations = 0;
     let lastResult;
+    let currentTimeoutMs = request.timeoutMs;
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
     while (state2.attempts < maxAttempts) {
@@ -311573,7 +311547,7 @@ var ExpertCouncilService = class {
         ...current.reasoningLevel ?? preferredReasoning ? { reasoningLevel: current.reasoningLevel ?? preferredReasoning } : {},
         readOnly: role2.readOnly,
         ...request.workspace ? { workspace: request.workspace } : {},
-        timeoutMs: request.timeoutMs ?? this.attemptTimeoutMs(request.role, failures, state2.attempts),
+        timeoutMs: currentTimeoutMs,
         attempt: state2.attempts,
         ...failures.length ? { priorFailure: { type: failures.at(-1).type, summary: failures.at(-1).summary } } : {}
       });
@@ -311600,7 +311574,12 @@ var ExpertCouncilService = class {
       if (lastResult.status === "aborted")
         break;
       const failure = failureTypeForResult(lastResult);
+      if (failure === "missing_context" || failure === "permission_error")
+        break;
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
+      if (failure === "timeout") {
+        currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), 36e5);
+      }
       if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
         try {
           const provider = parseModelKey(current.model).provider;
@@ -313050,7 +313029,8 @@ ${request.task}
 - Never modify an existing file before inspecting the relevant content.
 - Prefer targeted edits over rewriting whole files.
 - Verify paths rather than guessing.
-- Isolated worktrees contain only Git-tracked files: virtualenvs, node_modules, and other untracked artifacts are absent, so locate the host workspace interpreter by absolute path or install dependencies before running tests.
+- Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent \u2014 account for this before planning commands.
+- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.
 - Diagnose a failed tool call before retrying with a changed approach.
 - Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.
 - Do not reveal or request chain-of-thought.
@@ -313219,7 +313199,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
       const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory));
-      const timeoutMs = request.timeoutMs ?? defaultRoleTimeoutMs(request.role);
+      const timeoutMs = request.timeoutMs;
       let timer;
       const execution2 = (async () => {
         await session.prompt(prompt);
@@ -313503,7 +313483,7 @@ var delegationAssignment = external_exports.object({
   taskDescription: boundedText2(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
-  timeoutMs: external_exports.number().int().min(1e3).max(36e5).optional().describe("Explicit expert execution deadline chosen for this assignment's difficulty")
+  timeoutMs: external_exports.number().int().min(1e3).max(36e5).describe("Explicit expert execution deadline chosen for this assignment's difficulty")
 });
 var MCP_INPUT_SCHEMAS = {
   expert_inspect: {
@@ -313525,7 +313505,7 @@ var MCP_INPUT_SCHEMAS = {
     taskDescription: boundedText2(500).optional().describe("An optional concise host-facing label for the background task"),
     councilId: executionIdentifier.optional(),
     workspace: workspacePath.optional(),
-    timeoutMs: external_exports.number().int().min(1e3).max(36e5).optional().describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
+    timeoutMs: external_exports.number().int().min(1e3).max(36e5).describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
     assignments: external_exports.array(delegationAssignment).min(1).max(8).optional().describe("Use for two or more independent assignments so all are dispatched before the host turn ends")
   },
   expert_wait: {
@@ -313579,7 +313559,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.5.6" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.6.0" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {
@@ -313628,7 +313608,7 @@ function createMcpServerWithProvider(councilProvider) {
   });
   server2.registerTool("expert_delegate", {
     title: "Delegate Expert Task",
-    description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. Before the first delegation or council in a conversation, establish one cost policy with the user \u2014 economy, balanced, or speed \u2014 via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. Set each timeoutMs explicitly from task difficulty.",
+    description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. Before the first delegation or council in a conversation, establish one cost policy with the user \u2014 economy, balanced, or speed \u2014 via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. timeoutMs is required for every assignment: set it explicitly from task difficulty (read-only investigation 5\u201315 min, implementation/debugging 30\u201360 min).",
     inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
   }, async (input2, extra) => {
@@ -313660,7 +313640,7 @@ function createMcpServerWithProvider(councilProvider) {
       ...input2.taskDescription ? { taskDescription: input2.taskDescription } : {},
       ...input2.councilId ? { councilId: input2.councilId } : {},
       ...input2.workspace ? { workspace: input2.workspace } : {},
-      ...input2.timeoutMs ? { timeoutMs: input2.timeoutMs } : {}
+      timeoutMs: input2.timeoutMs
     }]).map((assignment) => ({
       ...assignment,
       sessionKey: sessionKeyOf(extra)

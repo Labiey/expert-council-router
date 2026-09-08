@@ -144,8 +144,8 @@ describe("Pi 0.84.4 extension host integration", () => {
       const started = performance.now();
       const result = await delegate!.execute("call", {
         assignments: JSON.stringify([
-          { role: "scout", task: "map files", taskDescription: "map" },
-          { role: "reviewer", task: "review map", taskDescription: "review" },
+          { role: "scout", task: "map files", taskDescription: "map", timeoutMs: 60_000 },
+          { role: "reviewer", task: "review map", taskDescription: "review", timeoutMs: 60_000 },
         ]),
       }, undefined, undefined);
       expect(performance.now() - started).toBeLessThan(250);

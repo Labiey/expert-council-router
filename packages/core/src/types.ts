@@ -95,7 +95,8 @@ export interface ExpertExecutionRequest {
   reasoningLevel?: string;
   readOnly: boolean;
   workspace?: string;
-  timeoutMs?: number;
+  /** Explicit expert execution deadline in milliseconds (1_000–3_600_000). */
+  timeoutMs: number;
   attempt: number;
   priorFailure?: { type: FailureType; summary: string };
 }
@@ -347,7 +348,8 @@ export interface DelegationRequest {
   role: ExpertRole;
   councilId?: string;
   workspace?: string;
-  timeoutMs?: number;
+  /** Explicit expert execution deadline in milliseconds (1_000–3_600_000). */
+  timeoutMs: number;
   constraints?: RoutingConstraints;
   /** Session key selecting which persisted route-policy session entry applies; defaults to "default". */
   sessionKey?: string;

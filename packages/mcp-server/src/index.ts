@@ -63,7 +63,7 @@ const delegationAssignment = z.object({
   taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
-  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional()
+  timeoutMs: z.number().int().min(1_000).max(3_600_000)
     .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
 });
 
@@ -87,7 +87,7 @@ export const MCP_INPUT_SCHEMAS = {
     taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
     councilId: executionIdentifier.optional(),
     workspace: workspacePath.optional(),
-    timeoutMs: z.number().int().min(1_000).max(3_600_000).optional()
+    timeoutMs: z.number().int().min(1_000).max(3_600_000)
       .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
     assignments: z.array(delegationAssignment).min(1).max(8).optional()
       .describe("Use for two or more independent assignments so all are dispatched before the host turn ends"),
@@ -158,7 +158,7 @@ type CouncilProvider = (requestContext?: unknown) => Promise<ExpertCouncil>;
 
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
   const server = new McpServer(
-    { name: "expert-council", version: "0.5.6" },
+    { name: "expert-council", version: "0.6.0" },
     { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
   );
   // A stdio server process serves exactly one host conversation, so this
@@ -233,7 +233,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_delegate",
     {
       title: "Delegate Expert Task",
-      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. Before the first delegation or council in a conversation, establish one cost policy with the user — economy, balanced, or speed — via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. Set each timeoutMs explicitly from task difficulty.",
+      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. Before the first delegation or council in a conversation, establish one cost policy with the user — economy, balanced, or speed — via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. timeoutMs is required for every assignment: set it explicitly from task difficulty (read-only investigation 5–15 min, implementation/debugging 30–60 min).",
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -268,7 +268,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           ...(input.taskDescription ? { taskDescription: input.taskDescription } : {}),
           ...(input.councilId ? { councilId: input.councilId } : {}),
           ...(input.workspace ? { workspace: input.workspace } : {}),
-          ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+          timeoutMs: input.timeoutMs,
         }]).map((assignment) => ({
           ...assignment,
           sessionKey: sessionKeyOf(extra),

@@ -1,6 +1,8 @@
 import type { EscalationDecision, EscalationRequest, FailureType, RankedCandidate } from "./types.js";
 
-const CORRECTABLE: ReadonlySet<FailureType> = new Set(["tool_call_error", "missing_context", "test_failure"]);
+// missing_context is a task-level blocker that another model cannot fix; the
+// delegation service terminates the loop on it instead of retrying the same spec.
+const CORRECTABLE: ReadonlySet<FailureType> = new Set(["tool_call_error", "test_failure"]);
 
 export function decideEscalation(
   request: EscalationRequest,

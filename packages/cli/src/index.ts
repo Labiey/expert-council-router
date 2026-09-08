@@ -121,12 +121,15 @@ export async function runCli(
         if (!role || !ROLES.has(role)) throw new Error(`delegate requires a valid semantic role: ${[...ROLES].join(", ")}`);
         const task = bounded(values.slice(1).join(" ").trim(), "delegate task", 100_000);
         const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000);
+        if (timeoutMs === undefined) {
+          throw new Error("delegate requires --timeout-ms <ms> (1000–3600000): set an explicit budget from task difficulty");
+        }
         result = await service.delegate({
           role,
           task,
           sessionKey: option(args, "--session-key") ?? undefined,
           ...(option(args, "--workspace") ? { workspace: bounded(option(args, "--workspace")!, "workspace", 32_768) } : {}),
-          ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+          timeoutMs,
         });
         break;
       }

@@ -2,6 +2,14 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## Unreleased (0.6.0)
+
+### Breaking
+
+- `timeoutMs` is now a required argument on every expert delegation (service, MCP schema, Pi package, CLI). Omitting it throws instead of falling back to a silent default. A timed-out attempt automatically scales the next attempt's budget by 1.5× (capped at 3,600,000 ms).
+- Experts are instructed to stop immediately with a structured `missing_context`/`permission_error` result when a task is impossible with their assigned tools, and the delegation loop terminates on those failure types instead of retrying or escalating — the result (with `recommendedNextAction`) reaches the Main Agent in real time through the existing steer/followUp channel.
+- Billing assessments accept up to 128 entries so per-model (`provider/id`) classes fit larger inventories.
+
 ## 0.5.6 - 2026-09-07
 
 ### Added
