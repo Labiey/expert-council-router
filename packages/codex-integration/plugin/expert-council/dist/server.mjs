@@ -310262,6 +310262,21 @@ function getRole(role2) {
 function listRoles() {
   return Object.values(DEFAULT_ROLES).map((role2) => ({ ...role2, tools: [...role2.tools], skills: [...role2.skills] }));
 }
+function defaultRoleTimeoutMs(role2) {
+  switch (role2) {
+    case "implementation-worker":
+    case "debugger":
+      return 30 * 6e4;
+    case "verifier":
+    case "architecture-oracle":
+      return 20 * 6e4;
+    case "reviewer":
+    case "planner":
+      return 15 * 6e4;
+    default:
+      return 10 * 6e4;
+  }
+}
 
 // packages/core/dist/telemetry.js
 function sanitizeOutcome(outcome) {
@@ -311440,6 +311455,21 @@ var ExpertCouncilService = class {
   async delegate(request) {
     return this.startDelegation(request).result;
   }
+  /**
+   * Per-attempt execution budget. An explicit host timeout wins untouched.
+   * Without one, the role-aware default applies — and a timed-out attempt
+   * proves that budget was too small, so retries scale it up instead of
+   * re-running the same impossible specification.
+   */
+  attemptTimeoutMs(role2, failures, attempts) {
+    const base = defaultRoleTimeoutMs(role2);
+    const lastFailure = failures.at(-1)?.type;
+    if (lastFailure === "timeout") {
+      const scaled = Math.min(base * (1 + 0.5 * Math.max(0, attempts - 1)), 36e5);
+      return Math.round(scaled);
+    }
+    return base;
+  }
   async runDelegation(request, state2, started) {
     const id = state2.id;
     await this.refreshSharedAssessment();
@@ -311542,7 +311572,7 @@ var ExpertCouncilService = class {
         ...current.reasoningLevel ?? preferredReasoning ? { reasoningLevel: current.reasoningLevel ?? preferredReasoning } : {},
         readOnly: role2.readOnly,
         ...request.workspace ? { workspace: request.workspace } : {},
-        ...request.timeoutMs ? { timeoutMs: request.timeoutMs } : {},
+        timeoutMs: request.timeoutMs ?? this.attemptTimeoutMs(request.role, failures, state2.attempts),
         attempt: state2.attempts,
         ...failures.length ? { priorFailure: { type: failures.at(-1).type, summary: failures.at(-1).summary } } : {}
       });
@@ -313019,6 +313049,7 @@ ${request.task}
 - Never modify an existing file before inspecting the relevant content.
 - Prefer targeted edits over rewriting whole files.
 - Verify paths rather than guessing.
+- Isolated worktrees contain only Git-tracked files: virtualenvs, node_modules, and other untracked artifacts are absent, so locate the host workspace interpreter by absolute path or install dependencies before running tests.
 - Diagnose a failed tool call before retrying with a changed approach.
 - Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.
 - Do not reveal or request chain-of-thought.
@@ -313187,7 +313218,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
       const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory));
-      const timeoutMs = request.timeoutMs ?? 10 * 6e4;
+      const timeoutMs = request.timeoutMs ?? defaultRoleTimeoutMs(request.role);
       let timer;
       const execution2 = (async () => {
         await session.prompt(prompt);

@@ -1024,3 +1024,54 @@ describe("shared assessment freshness", () => {
     expect(plan.experts.map((expert) => expert.model)).not.toContain("p/dead");
   });
 });
+
+describe("role-aware default timeouts", () => {
+  it("gives mutation roles a 30-minute default when the host forgets timeoutMs", async () => {
+    const runtime = new MockRuntime([model("p", "alive")], [
+      { status: "success", role: "implementation-worker", model: "p/alive", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    await service.delegate({ role: "implementation-worker", task: "Implement a small bounded feature", timeoutMs: 60_000 });
+    // Explicit host timeout wins untouched.
+    expect(runtime.requests[0]?.timeoutMs).toBe(60_000);
+
+    const forgetful = new MockRuntime([model("p", "alive")], [
+      { status: "success", role: "implementation-worker", model: "p/alive", summary: "ok" },
+    ]);
+    const service2 = new ExpertCouncilService(forgetful, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    await service2.delegate({ role: "implementation-worker", task: "Implement a small bounded feature" });
+    expect(forgetful.requests[0]?.timeoutMs).toBe(1_800_000);
+
+    const scout = new MockRuntime([model("p", "alive")], [
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    const service3 = new ExpertCouncilService(scout, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    await service3.delegate({ role: "scout", task: "Inspect a tiny file" });
+    expect(scout.requests[0]?.timeoutMs).toBe(600_000);
+  });
+
+  it("scales the retry budget after a timeout instead of re-running the same spec", async () => {
+    let attempts = 0;
+    const runtime = new MockRuntime(abortModels);
+    runtime.executeExpert = async (request) => {
+      runtime.requests.push(request);
+      attempts += 1;
+      if (attempts === 1) {
+        return {
+          status: "failed",
+          role: request.role,
+          model: request.model,
+          summary: "Expert execution timed out after 600000ms.",
+          executionMetadata: { failureType: "timeout", attempts: request.attempt },
+        };
+      }
+      return { status: "success", role: request.role, model: request.model, summary: "ok" };
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file" });
+    expect(result.status).toBe("success");
+    expect(runtime.requests[0]?.timeoutMs).toBe(600_000);
+    // Attempt 2 gets 1.5x the role default, proving the budget grows.
+    expect(runtime.requests[1]?.timeoutMs).toBe(900_000);
+  });
+});

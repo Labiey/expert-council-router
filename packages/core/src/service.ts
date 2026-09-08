@@ -17,7 +17,7 @@ import {
   withModelAvailabilityMarker,
   withModelStatus,
 } from "./model-assessment.js";
-import { listRoles } from "./roles.js";
+import { defaultRoleTimeoutMs, listRoles } from "./roles.js";
 import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy } from "./route-policy.js";
 import { rankModels, routePolicyExcludes } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
@@ -371,6 +371,22 @@ export class ExpertCouncilService implements ExpertCouncil {
     return this.startDelegation(request).result;
   }
 
+  /**
+   * Per-attempt execution budget. An explicit host timeout wins untouched.
+   * Without one, the role-aware default applies — and a timed-out attempt
+   * proves that budget was too small, so retries scale it up instead of
+   * re-running the same impossible specification.
+   */
+  private attemptTimeoutMs(role: DelegationRequest["role"], failures: Array<{ type: string }>, attempts: number): number {
+    const base = defaultRoleTimeoutMs(role);
+    const lastFailure = failures.at(-1)?.type;
+    if (lastFailure === "timeout") {
+      const scaled = Math.min(base * (1 + 0.5 * Math.max(0, attempts - 1)), 3_600_000);
+      return Math.round(scaled);
+    }
+    return base;
+  }
+
   private async runDelegation(
     request: DelegationRequest,
     state: ExecutionState,
@@ -493,7 +509,7 @@ export class ExpertCouncilService implements ExpertCouncil {
           : {}),
         readOnly: role.readOnly,
         ...(request.workspace ? { workspace: request.workspace } : {}),
-        ...(request.timeoutMs ? { timeoutMs: request.timeoutMs } : {}),
+        timeoutMs: request.timeoutMs ?? this.attemptTimeoutMs(request.role, failures, state.attempts),
         attempt: state.attempts,
         ...(failures.length ? { priorFailure: { type: failures.at(-1)!.type, summary: failures.at(-1)!.summary } } : {}),
       });

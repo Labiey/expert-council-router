@@ -81,3 +81,25 @@ export function getRole(role: ExpertRole): RoleDefinition {
 export function listRoles(): RoleDefinition[] {
   return Object.values(DEFAULT_ROLES).map((role) => ({ ...role, tools: [...role.tools], skills: [...role.skills] }));
 }
+
+/**
+ * Role-aware default execution budget. Hosts that forget to set an explicit
+ * `timeoutMs` should not silently get a one-size fallback: mutation roles run
+ * long, focused read-only work runs short. Escalation scales this up on
+ * timeout retries because a timed-out attempt proves the budget was too small.
+ */
+export function defaultRoleTimeoutMs(role: ExpertRole): number {
+  switch (role) {
+    case "implementation-worker":
+    case "debugger":
+      return 30 * 60_000;
+    case "verifier":
+    case "architecture-oracle":
+      return 20 * 60_000;
+    case "reviewer":
+    case "planner":
+      return 15 * 60_000;
+    default:
+      return 10 * 60_000;
+  }
+}
