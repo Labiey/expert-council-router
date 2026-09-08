@@ -2,6 +2,12 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.6.1 - 2026-09-09
+
+### Fixed
+
+- HTTP 429 / plan-quota exhaustion (including `insufficient_quota` and Chinese arrears wording) is now classified as `provider_error` instead of `unknown`, so the existing provider-wide quota-exhausted marker actually lands: one depleted weekly quota stops routing into every model of that token plan for the marker lifetime instead of burning attempts until the quota resets. (Missed the 0.6.0 publish — the fix landed after the tarball was cut.)
+
 ## 0.6.0 - 2026-09-09
 
 ### Breaking
