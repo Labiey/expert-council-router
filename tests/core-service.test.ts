@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  applyUsage,
   decideEscalation,
   evaluateModelAssessment,
   ExpertCouncilService,
   failureTypeForResult,
   inferFailureType,
+  instantiateLedger,
   MemoryTelemetryStore,
   observedAdjustment,
   resolveModelAssessment,
@@ -276,8 +278,8 @@ describe("retry and escalation", () => {
     const service = new ExpertCouncilService(runtime, {
       profiles: { models: profiles },
       billing: { providers: {
-        cheap: { billingType: "subscription", marginalCostClass: "very-low" },
-        quality: { billingType: "metered", marginalCostClass: "normal" },
+        cheap: { billingType: "subscription", costMultiplier: 0.1 },
+        quality: { billingType: "metered", costMultiplier: 1.0 },
       } },
       retry: { maxAttempts: 3, maxEscalations: 2, correctedRetriesPerModel: 1 },
     });
@@ -958,7 +960,7 @@ describe("quota-aware billing guidance", () => {
       asOf: "2026-09-03T00:00:00.000Z",
       sources: ["https://livebench.ai/"],
       models: Object.fromEntries(models.map((entry) => [`${entry.provider}/${entry.id}`, { coding: 8 }])),
-      billing: { sub: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" } },
+      billing: { sub: { billingType: "subscription", costMultiplier: 0.1 } },
     };
     const runtime = new MockRuntime(models);
     const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(assessment) });
@@ -966,7 +968,7 @@ describe("quota-aware billing guidance", () => {
     expect(inventory.warnings.join(" ")).toContain("subscription-billed but has no per-model cost classes");
 
     // Adding a model-level entry silences the warning.
-    assessment.billing["sub/one"] = { billingType: "subscription", marginalCostClass: "low", usagePreference: "consume-first" };
+    assessment.billing["sub/one"] = { billingType: "subscription", costMultiplier: 0.5 };
     const refreshed = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(assessment) });
     const updated = await refreshed.inspectResources();
     expect(updated.warnings.join(" ")).not.toContain("subscription-billed but has no per-model cost classes");
@@ -1134,5 +1136,125 @@ describe("429 quota exhaustion classification", () => {
     expect(saved.modelAvailability?.["plan/one"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
     expect(saved.modelAvailability?.["plan/two"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
     expect(saved.modelStatus?.["plan/two"]).toMatchObject({ state: "quota-exhausted" });
+  });
+});
+
+describe("provider usage ledger and caps", () => {
+  it("records weighted non-cache tokens times the attempt model's costMultiplier", async () => {
+    const recorded: Array<{ provider: string; tokens: number }> = [];
+    const runtime = new MockRuntime([model("p", "one")], [{
+      status: "success",
+      role: "scout",
+      model: "p/one",
+      summary: "ok",
+      executionMetadata: {
+        usage: { inputTokens: 1_000, outputTokens: 500, cacheReadTokens: 9_000, cacheWriteTokens: 1_000 },
+      },
+    }]);
+    const service = new ExpertCouncilService(runtime, {
+      billing: { providers: { p: { billingType: "metered", costMultiplier: 2.0 } } },
+    }, undefined, {
+      usageLedger: {
+        load: async () => instantiateLedger(),
+        record: async (provider, tokens, now) => {
+          recorded.push({ provider, tokens });
+          return applyUsage(instantiateLedger(), provider, tokens, now);
+        },
+      },
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(recorded).toEqual([{ provider: "p", tokens: 3_000 }]);
+  });
+
+  it("excludes a pre-breached provider's candidates and reports the reason", async () => {
+    const now = new Date();
+    const ledger = applyUsage(instantiateLedger(), "breached", 100, now);
+    const runtime = new MockRuntime([model("breached", "one"), model("ok", "one")], [
+      { status: "success", role: "scout", model: "ok/one", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      usageLedger: { load: async () => ledger, record: async (_provider, _tokens, _now) => ledger },
+      readProviderLimits: async () => ({ providers: {
+        breached: { dailyTokenCap: 100, weeklyTokenCap: 1_000 },
+        ok: { dailyTokenCap: 100, weeklyTokenCap: 1_000 },
+      } }),
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.model).toBe("ok/one");
+    expect(runtime.requests.map((request) => request.model)).toEqual(["ok/one"]);
+    expect(result.risks?.join(" ")).toContain("daily token cap reached");
+  });
+
+  it("excludes a provider whose maxConcurrency is saturated by a running execution", async () => {
+    const blocked = new Promise<never>(() => {});
+    const runtime = new MockRuntime([model("busy", "one"), model("free", "one")], [
+      blocked,
+      { status: "success", role: "scout", model: "free/one", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      usageLedger: {
+        load: async () => instantiateLedger(),
+        record: async (provider, tokens, now) => applyUsage(instantiateLedger(), provider, tokens, now),
+      },
+      readProviderLimits: async () => ({ providers: { busy: { maxConcurrency: 1 }, free: { maxConcurrency: 1 } } }),
+    });
+    const first = service.startDelegation({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    for (let index = 0; index < 200 && runtime.requests.length === 0; index += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(runtime.requests[0]?.model).toBe("busy/one");
+    const second = await service.delegate({ role: "scout", task: "Inspect another tiny file", timeoutMs: 60_000 });
+    expect(second.status).toBe("success");
+    expect(second.model).toBe("free/one");
+    expect(second.risks?.join(" ")).toContain("concurrency limit reached");
+    await service.abortExecution({ executionId: first.executionId, reason: "test cleanup" });
+    first.result.catch(() => undefined);
+  });
+
+  it("marks a provider on cap breach with the UTC reset as an explicit expiry", async () => {
+    const runtime = new MockRuntime([model("p", "one"), model("q", "one")], [{
+      status: "success",
+      role: "scout",
+      model: "p/one",
+      summary: "ok",
+      executionMetadata: { usage: { inputTokens: 100, outputTokens: 0 } },
+    }]);
+    let ledger = instantiateLedger();
+    const saved = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/one": { coding: 8 }, "q/one": { coding: 8 } },
+    };
+    const persistence = {
+      save: async () => {},
+      updateModelAssessment: async (
+        mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+      ) => {
+        const next = mutate(saved);
+        if (next) Object.assign(saved, next);
+      },
+    };
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: { version: 1, plans: [], executions: [], results: [], modelAssessment: saved },
+      persistence,
+      usageLedger: {
+        load: async () => ledger,
+        record: async (provider, tokens, now) => {
+          ledger = applyUsage(ledger, provider, tokens, now);
+          return ledger;
+        },
+      },
+      readProviderLimits: async () => ({ providers: {
+        p: { dailyTokenCap: 50, weeklyTokenCap: 1_000 },
+        q: { dailyTokenCap: 50, weeklyTokenCap: 1_000 },
+      } }),
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(saved.modelAvailability?.["p/one"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
+    expect(saved.modelAvailability?.["p/one"]?.expiresAt).toBeDefined();
+    expect(result.risks?.join(" ")).toContain("weighted token cap reached");
   });
 });

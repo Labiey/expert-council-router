@@ -21,9 +21,36 @@ import type {
   RoutePolicy,
 } from "./types.js";
 
-const COST_CLASS_SCORE = { "very-low": 10, low: 8, normal: 6, high: 3, scarce: 1 } as const;
 const BILLING_TYPE_BONUS = { free: 2, subscription: 1.5, metered: 0, quota: -1, unknown: -0.5 } as const;
-const PREFERENCE_BONUS = { "consume-first": 1, balanced: 0, "quality-sensitive": -0.1, "escalation-only": -2 } as const;
+
+/** Relative token-consumption weight for a billing entry; defaults to 1.0. */
+export function effectiveCostMultiplier(entry: BillingPolicyEntry): number {
+  const value = entry.costMultiplier;
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : 1;
+}
+
+/**
+ * Resolve the billing entry for one model using the same precedence routing
+ * applies: explicit billingProfile binding, then `provider/id`, then the
+ * provider-level entry, then the configured default.
+ */
+export function resolveBillingEntry(
+  config: CouncilConfig,
+  constraints: RoutingConstraints | undefined,
+  provider: string,
+  id: string,
+  billingProfile?: string,
+): BillingPolicyEntry {
+  const key = `${provider}/${id}`;
+  return (billingProfile
+    ? config.billing.providers[billingProfile] ?? constraints?.billingOverrides?.[billingProfile]
+    : undefined)
+    ?? config.billing.providers[key]
+    ?? constraints?.billingOverrides?.[key]
+    ?? config.billing.providers[provider]
+    ?? constraints?.billingOverrides?.[provider]
+    ?? getBillingEntry(config, provider, billingProfile);
+}
 
 function clampScore(value: number): number {
   if (!Number.isFinite(value)) return 0;
@@ -44,8 +71,7 @@ export function publishedApiCostScore(apiCost?: ApiCost): number | undefined {
 }
 
 export function billingCostScore(entry: BillingPolicyEntry, apiCost?: ApiCost, apiPriceWeight = 0.35): number {
-  const base = COST_CLASS_SCORE[entry.marginalCostClass ?? "normal"];
-  const policyScore = clampScore(base + BILLING_TYPE_BONUS[entry.billingType] + PREFERENCE_BONUS[entry.usagePreference ?? "balanced"]);
+  const policyScore = clampScore(10 / (1 + effectiveCostMultiplier(entry)) + BILLING_TYPE_BONUS[entry.billingType]);
   const publishedScore = publishedApiCostScore(apiCost);
   if (publishedScore === undefined || !["metered", "unknown"].includes(entry.billingType)) return policyScore;
   const weight = Number.isFinite(apiPriceWeight) ? Math.max(0, Math.min(1, apiPriceWeight)) : 0.35;
@@ -112,6 +138,8 @@ function hardConstraintFailures(
   const failures: string[] = [];
   if (!model.available) failures.push("model is not currently callable");
   if (profile.disabled || billing.disabled) failures.push("model or billing profile is disabled");
+  const providerExclusion = constraints?.providerExclusions?.[model.provider];
+  if (providerExclusion) failures.push(providerExclusion);
   if (profile.incompatibleRoles?.includes(role)) failures.push(`model is configured as incompatible with ${role}`);
   if (!profile.overrideUnavailableMarker) {
     const availability = constraints?.modelAvailability?.[`${model.provider}/${model.id}`];
@@ -129,9 +157,6 @@ function hardConstraintFailures(
   if (profile.toolReliability < minimumTool) failures.push(`tool reliability ${profile.toolReliability} is below ${minimumTool}`);
   const minimumContext = Math.max(definition.minimumContextWindow ?? 0, constraints?.minimumContextWindow ?? 0);
   if (minimumContext && (model.contextWindow ?? 0) < minimumContext) failures.push(`context window is below ${minimumContext}`);
-  if (billing.usagePreference === "escalation-only" && !constraints?.allowEscalationOnly) {
-    failures.push("billing preference is escalation-only");
-  }
   return failures;
 }
 
@@ -181,14 +206,8 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
     // Explicit billingProfile bindings win; then per-model entries (provider/id)
     // override the provider-level default — subscription token plans carry
     // periodic quotas with per-model burn rates.
-    const billing = (billingProfile
-      ? config.billing.providers[billingProfile] ?? constraints?.billingOverrides?.[billingProfile]
-      : undefined)
-      ?? config.billing.providers[key]
-      ?? constraints?.billingOverrides?.[key]
-      ?? config.billing.providers[model.provider]
-      ?? constraints?.billingOverrides?.[model.provider]
-      ?? getBillingEntry(config, model.provider, billingProfile);
+    const billing = resolveBillingEntry(config, constraints, model.provider, model.id, billingProfile);
+    const effectiveMultiplier = effectiveCostMultiplier(billing);
     const failures = hardConstraintFailures(model, role, profile, billing, config, constraints);
     if (failures.length) {
       rejected.push({ model: key, provider: model.provider, score: 0, reasons: [], rejected: failures });
@@ -222,7 +241,7 @@ export function rankModels(input: RankModelsInput): RankModelsResult {
       .sort((a, b) => b[1] - a[1])
       .slice(0, 3)
       .map(([dimension, contribution]) => `${dimension} contributed ${contribution.toFixed(2)}`);
-    reasons.push(`${billing.billingType}/${billing.marginalCostClass ?? "normal"} billing`);
+    reasons.push(`${billing.billingType} ×${effectiveMultiplier} billing`);
     const apiPriceScore = publishedApiCostScore(model.apiCost);
     if (apiPriceScore !== undefined && ["metered", "unknown"].includes(billing.billingType)) {
       reasons.push(`published API pricing contributed a ${apiPriceScore.toFixed(2)} cost score`);

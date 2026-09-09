@@ -3,18 +3,15 @@
     "providers": {
       "subscription-provider": {
         "billingType": "subscription",
-        "marginalCostClass": "very-low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 0.1
       },
       "subscription-provider/flagship-model": {
         "billingType": "subscription",
-        "marginalCostClass": "low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 2.0
       },
       "scarce-quota-provider": {
         "billingType": "quota",
-        "marginalCostClass": "scarce",
-        "usagePreference": "escalation-only"
+        "costMultiplier": 5.0
       }
     }
   },

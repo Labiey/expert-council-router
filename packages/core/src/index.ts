@@ -12,3 +12,4 @@ export * from "./service.js";
 export * from "./state-validation.js";
 export * from "./telemetry.js";
 export * from "./types.js";
+export * from "./usage-caps.js";

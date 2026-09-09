@@ -7,6 +7,7 @@ import { loadCouncilConfig } from "./config-loader.js";
 import { JsonlTelemetryStore } from "./file-telemetry.js";
 import { JsonModelAssessmentStore } from "./file-assessment.js";
 import { JsonRoutePolicyStore } from "./file-route-policy.js";
+import { JsonUsageLedgerStore, createProviderLimitsReader } from "./file-usage-ledger.js";
 import { JsonCouncilStateStore } from "./file-state.js";
 import { SplitCouncilStateStore } from "./persistent-state.js";
 import { PiExpertRuntime } from "./pi-runtime.js";
@@ -20,6 +21,7 @@ export interface CreateCouncilOptions {
   statePath?: string;
   modelAssessmentPath?: string;
   routePolicyPath?: string;
+  usageLedgerPath?: string;
   roleDirectory?: string;
   /** Host-provided SDK used by self-contained distributions such as the Codex plugin. */
   sdk?: PiSdkLike;
@@ -66,6 +68,7 @@ export function defaultCouncilStoragePaths(cwd: string, dataRoot = defaultCounci
     telemetryPath: path.join(path.resolve(dataRoot), "telemetry.jsonl"),
     modelAssessmentPath: path.join(path.resolve(dataRoot), "model-assessment.json"),
     routePolicyPath: path.join(path.resolve(dataRoot), "route-policy.json"),
+    usageLedgerPath: path.join(path.resolve(dataRoot), "usage-ledger.json"),
   };
 }
 
@@ -121,9 +124,17 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
       ?? defaults.routePolicyPath,
     "Route policy path",
   );
+  const usageLedgerPath = resolveOperatorPath(
+    cwd,
+    options.usageLedgerPath
+      ?? process.env.EXPERT_COUNCIL_USAGE_LEDGER
+      ?? defaults.usageLedgerPath,
+    "Usage ledger path",
+  );
   const stateStore = new JsonCouncilStateStore(statePath);
   const assessmentStore = new JsonModelAssessmentStore(modelAssessmentPath);
   const routePolicyStore = new JsonRoutePolicyStore(routePolicyPath);
+  const usageLedgerStore = new JsonUsageLedgerStore(usageLedgerPath);
   const persistence = new SplitCouncilStateStore(stateStore, assessmentStore);
   let initialState = await persistence.load();
   if (process.platform === "win32" && !initialState?.modelAssessment) {
@@ -154,5 +165,7 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
     persistence,
     readRoutePolicy: () => routePolicyStore.load(),
     routePolicyPath,
+    readProviderLimits: createProviderLimitsReader(routePolicyStore),
+    usageLedger: usageLedgerStore,
   });
 }

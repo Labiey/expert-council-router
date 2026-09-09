@@ -15,8 +15,6 @@ export const CAPABILITY_DIMENSIONS = [
 export type CapabilityDimension = (typeof CAPABILITY_DIMENSIONS)[number];
 export type CapabilityProfile = Partial<Record<CapabilityDimension, number | null>>;
 export type BillingType = "subscription" | "metered" | "quota" | "free" | "unknown";
-export type MarginalCostClass = "very-low" | "low" | "normal" | "high" | "scarce";
-export type UsagePreference = "consume-first" | "balanced" | "quality-sensitive" | "escalation-only";
 export type CostPolicy = "economy" | "balanced" | "speed" | "quality";
 export type ExpertRole =
   | "planner"
@@ -199,8 +197,11 @@ export interface ExpertCleanupResult {
 
 export interface BillingPolicyEntry {
   billingType: BillingType;
-  marginalCostClass?: MarginalCostClass;
-  usagePreference?: UsagePreference;
+  /**
+   * Relative token-consumption weight used for cost scoring and cap
+   * accounting. Default 1.0.
+   */
+  costMultiplier?: number;
   disabled?: boolean;
 }
 
@@ -234,6 +235,8 @@ export interface ModelAvailabilityObservation {
   callable: false;
   kind?: AvailabilityMarkerKind;
   observedAt: string;
+  /** Explicit UTC expiry; when present it overrides the default marker TTL. */
+  expiresAt?: string;
   reason: string;
   source: "runtime-failure";
 }
@@ -267,6 +270,8 @@ export interface RoutingConstraints {
   billingOverrides?: Record<string, BillingPolicyEntry>;
   /** Active runtime availability markers; marked models fail the routing hard constraints. */
   modelAvailability?: Record<string, ModelAvailabilityObservation>;
+  /** Provider-level routing exclusions (token-cap breach or concurrency limit), provider -> human reason. */
+  providerExclusions?: Record<string, string>;
 }
 
 export interface ModelAssessmentSnapshot {
@@ -466,6 +471,8 @@ export interface ResourceInventory {
   modelAssessment?: ModelAssessmentSnapshot;
   modelAssessmentStatus?: ModelAssessmentStatus;
   routePolicy: ResourceRoutePolicyView;
+  /** Per-provider caps, weighted usage, and in-flight counts; omitted when caps are unwired. */
+  providerLimits?: ProviderLimitsView[];
   warnings: string[];
 }
 
@@ -490,11 +497,69 @@ export interface RoutePolicyEntry {
   workspace?: string;
 }
 
+/** Optional per-provider daily/weekly token caps and concurrency limit. */
+export interface ProviderLimitsEntry {
+  /** Maximum simultaneous running executions for the provider; 0 means unlimited. */
+  maxConcurrency?: number;
+  /** Weighted tokens allowed per UTC calendar day. */
+  dailyTokenCap?: number;
+  /** Weighted tokens allowed per ISO week (Monday start, UTC). */
+  weeklyTokenCap?: number;
+}
+
+/** Effective per-provider limits with defaults applied. */
+export interface ProviderLimits {
+  maxConcurrency: number;
+  dailyTokenCap: number;
+  weeklyTokenCap: number;
+}
+
+/** Minimal document shape accepted by readProviderLimits; route-policy.json is a superset. */
+export interface ProviderLimitsDocument {
+  providers?: Record<string, ProviderLimitsEntry>;
+}
+
+/** Host-facing per-provider limit and usage snapshot. */
+export interface ProviderLimitsView {
+  provider: string;
+  maxConcurrency: number;
+  dailyTokenCap: number;
+  weeklyTokenCap: number;
+  /** Weighted tokens consumed during the current UTC day. */
+  usedToday: number;
+  /** Weighted tokens consumed during the current ISO week. */
+  usedWeek: number;
+  remainingDaily: number;
+  remainingWeekly: number;
+  /** Running executions currently assigned to this provider. */
+  inFlight: number;
+}
+
 /** Persisted route-policy document (route-policy.json). */
 export interface RoutePolicyDocument {
   version: 1;
   system?: RoutePolicyEntry;
   sessions?: Record<string, RoutePolicyEntry>;
+  /** Per-provider token caps and concurrency limits; user configuration, never pruned. */
+  providers?: Record<string, ProviderLimitsEntry>;
+}
+
+/** One UTC day or ISO-week usage bucket for a provider. */
+export interface UsageLedgerBucket {
+  key: string;
+  tokens: number;
+}
+
+/** Weighted token usage for a provider at day and week granularity. */
+export interface UsageLedgerProvider {
+  day: UsageLedgerBucket;
+  week: UsageLedgerBucket;
+}
+
+/** Persisted weighted token usage ledger (usage-ledger.json). */
+export interface UsageLedger {
+  providers: Record<string, UsageLedgerProvider>;
+  updatedAt: string;
 }
 
 /** Host-facing route-policy view returned by inspectResources. */
@@ -572,6 +637,16 @@ export interface CouncilStateOptions {
   readRoutePolicy?: () => Promise<RoutePolicyDocument | undefined>;
   /** Display path of route-policy.json surfaced to hosts through inspectResources. */
   routePolicyPath?: string;
+  /** Load per-provider token caps; absent disables cap enforcement. */
+  readProviderLimits?: () => Promise<ProviderLimitsDocument | undefined>;
+  /**
+   * Persisted weighted token usage ledger. When absent, cap accounting and
+   * concurrency limits are disabled and Core performs no I/O.
+   */
+  usageLedger?: {
+    load(): Promise<UsageLedger>;
+    record(provider: string, tokens: number, now: Date): Promise<UsageLedger>;
+  };
 }
 
 export interface ExpertCouncil {

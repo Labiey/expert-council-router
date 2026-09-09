@@ -6,15 +6,22 @@ import {
   classifyTask,
   ConfigValidationError,
   DEFAULT_CAPABILITY_PROFILE,
+  DEFAULT_DAILY_TOKEN_CAP,
+  DEFAULT_WEEKLY_TOKEN_CAP,
+  effectiveCostMultiplier,
   getRole,
   indicatesModelUnavailable,
+  LEGACY_COST_MULTIPLIERS,
   mergeModelProfiles,
   normalizePiModel,
   parseCouncilConfig,
   parseModelAssessmentSnapshot,
+  parseRoutePolicyDocument,
   preserveModelAvailability,
+  pruneRoutePolicyDocument,
   publishedApiCostScore,
   rankModels,
+  resolveProviderLimits,
   routePolicyExcludes,
   rolesForTask,
   withModelAvailabilityMarker,
@@ -77,9 +84,9 @@ describe("model normalization", () => {
 });
 
 describe("billing and deterministic role scoring", () => {
-  it("favors free and subscription marginal cost over metered scarce access", () => {
-    expect(billingCostScore({ billingType: "free", marginalCostClass: "very-low" })).toBeGreaterThan(
-      billingCostScore({ billingType: "metered", marginalCostClass: "scarce" }),
+  it("favors free and subscription access over metered scarce access", () => {
+    expect(billingCostScore({ billingType: "free", costMultiplier: 0.1 })).toBeGreaterThan(
+      billingCostScore({ billingType: "metered", costMultiplier: 5 }),
     );
   });
 
@@ -89,7 +96,7 @@ describe("billing and deterministic role scoring", () => {
       publishedApiCostScore({ inputPerMillion: 20, outputPerMillion: 60 })!,
     );
     const config = parseCouncilConfig({
-      billing: { providers: { metered: { billingType: "metered", marginalCostClass: "normal" } } },
+      billing: { providers: { metered: { billingType: "metered", costMultiplier: 1.0 } } },
       profiles: { models: {
         "metered/cheap": { coding: 8 },
         "metered/expensive": { coding: 8 },
@@ -108,7 +115,7 @@ describe("billing and deterministic role scoring", () => {
 
   it("keeps billing scores finite when a caller supplies a non-finite weight", () => {
     expect(billingCostScore(
-      { billingType: "metered", marginalCostClass: "normal" },
+      { billingType: "metered", costMultiplier: 1.0 },
       { inputPerMillion: 1, outputPerMillion: 2 },
       Number.NaN,
     )).toSatisfy(Number.isFinite);
@@ -128,10 +135,9 @@ describe("billing and deterministic role scoring", () => {
         billingOverrides: {
           "qwen-token-plan-cn": {
             billingType: "subscription",
-            marginalCostClass: "very-low",
-            usagePreference: "consume-first",
+            costMultiplier: 0.1,
           },
-          zai: { billingType: "metered", marginalCostClass: "normal" },
+          zai: { billingType: "metered", costMultiplier: 1.0 },
         },
       },
     });
@@ -140,16 +146,16 @@ describe("billing and deterministic role scoring", () => {
 
   it("keeps explicit user billing authoritative over a Main Agent assessment", () => {
     const config = parseCouncilConfig({
-      billing: { providers: { p: { billingType: "quota", marginalCostClass: "scarce" } } },
+      billing: { providers: { p: { billingType: "quota", costMultiplier: 5.0 } } },
     });
     expect(rankModels({
       models: [model("p", "m")],
       role: "scout",
       config,
       constraints: {
-        billingOverrides: { p: { billingType: "free", marginalCostClass: "very-low" } },
+        billingOverrides: { p: { billingType: "free", costMultiplier: 0.1 } },
       },
-    }).candidates[0]?.reasons).toContain("quota/scarce billing");
+    }).candidates[0]?.reasons).toContain("quota ×5 billing");
   });
 
   it("prefers a different reviewer provider and model family when quality is otherwise equal", () => {
@@ -204,8 +210,8 @@ describe("billing and deterministic role scoring", () => {
   it("lets a long-context subscription model win oracle work", () => {
     const config = parseCouncilConfig({
       billing: { providers: {
-        subscription: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" },
-        metered: { billingType: "metered", marginalCostClass: "normal" },
+        subscription: { billingType: "subscription", costMultiplier: 0.1 },
+        metered: { billingType: "metered", costMultiplier: 1.0 },
       } },
       profiles: { models: {
         "subscription/oracle": { architecture: 9, planning: 9, longContext: 10, review: 9 },
@@ -401,6 +407,39 @@ describe("runtime availability markers", () => {
     expect(Object.keys(activeModelAvailability(assessment, new Date("2026-09-04T13:00:01.000Z")))).toEqual([]);
   });
 
+  it("honors an explicit marker expiry instead of the fixed TTL", () => {
+    const assessment = {
+      asOf: "2026-09-03T00:00:00.000Z",
+      sources: ["https://livebench.ai/"],
+      models: { "p/capped": { coding: 7 } },
+      modelAvailability: {
+        "p/capped": {
+          ...marker,
+          observedAt: "2026-09-03T10:00:00.000Z",
+          expiresAt: "2026-09-03T11:00:00.000Z",
+        },
+      },
+    };
+    expect(Object.keys(activeModelAvailability(assessment, new Date("2026-09-03T10:59:00.000Z")))).toEqual(["p/capped"]);
+    expect(Object.keys(activeModelAvailability(assessment, new Date("2026-09-03T11:00:00.000Z")))).toEqual([]);
+    // Without an explicit expiry the marker survives to the conservative TTL.
+    const ttlOnly = {
+      ...assessment,
+      modelAvailability: { "p/capped": { ...marker, observedAt: "2026-09-03T10:00:00.000Z" } },
+    };
+    expect(Object.keys(activeModelAvailability(ttlOnly, new Date("2026-09-03T11:00:00.000Z")))).toEqual(["p/capped"]);
+    // withModelAvailabilityMarker persists the explicit expiry.
+    const marked = withModelAvailabilityMarker(
+      { asOf: "2026-09-03T00:00:00.000Z", sources: ["https://livebench.ai/"], models: {} },
+      "p/capped",
+      "cap reached",
+      "2026-09-03T10:00:00.000Z",
+      "quota-exhausted",
+      "2026-09-04T00:00:00.000Z",
+    );
+    expect(marked.modelAvailability?.["p/capped"]?.expiresAt).toBe("2026-09-04T00:00:00.000Z");
+  });
+
   it("merges markers and preserves them across a freshly submitted audit", () => {
     const saved = {
       asOf: "2026-09-03T09:00:00.000Z",
@@ -466,39 +505,128 @@ describe("per-model billing entries", () => {
   }
 
   it("lets a provider/id entry override the provider-level cost class", () => {
-    // Provider-level: everything very-low. Model-level: flagship burns quota faster.
-    // balanced preference keeps the raw class scores distinguishable (10 vs 9.5).
+    // Provider-level: everything plan-cheap. Model-level: flagship burns quota faster.
+    // balanced preference keeps the raw class scores distinguishable (10 vs 8.17).
     const ranked = rankedWith({
-      sub: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "balanced" },
-      "sub/flagship": { billingType: "subscription", marginalCostClass: "low", usagePreference: "balanced" },
+      sub: { billingType: "subscription", costMultiplier: 0.1 },
+      "sub/flagship": { billingType: "subscription", costMultiplier: 0.5 },
     });
     // Under economy weights the light model must outrank the flagship.
     expect(ranked.candidates[0]?.model).toBe("sub/flash");
     const flagship = ranked.candidates.find((candidate) => candidate.model === "sub/flagship");
-    expect(flagship?.reasons.join(" ")).toContain("subscription/low billing");
+    expect(flagship?.reasons.join(" ")).toContain("subscription ×0.5 billing");
   });
 
   it("prefers config provider entries over assessment overrides at the same level, then falls back per model", () => {
     // No provider-level key anywhere: each model resolves its own entry.
     const config = parseCouncilConfig({
-      billing: { providers: { "sub/flagship": { billingType: "subscription", marginalCostClass: "high", usagePreference: "consume-first" } } },
+      billing: { providers: { "sub/flagship": { billingType: "subscription", costMultiplier: 3.0 } } },
     });
     const ranked = rankedWith({}, config);
     const flagship = ranked.candidates.find((candidate) => candidate.model === "sub/flagship");
-    expect(flagship?.reasons.join(" ")).toContain("subscription/high billing");
+    expect(flagship?.reasons.join(" ")).toContain("subscription ×3 billing");
   });
 
   it("keeps billingProfile bindings ahead of model-level entries", () => {
     const config = parseCouncilConfig({
       billing: {
         providers: {
-          "bound-profile": { billingType: "subscription", marginalCostClass: "scarce", usagePreference: "consume-first" },
+          "bound-profile": { billingType: "subscription", costMultiplier: 5.0 },
         },
       },
       profiles: { models: { "sub/flagship": { billingProfile: "bound-profile" } } },
     });
-    const ranked = rankedWith({ "sub/flagship": { billingType: "subscription", marginalCostClass: "low", usagePreference: "consume-first" } }, config);
+    const ranked = rankedWith({ "sub/flagship": { billingType: "subscription", costMultiplier: 0.5 } }, config);
     const flagship = ranked.candidates.find((candidate) => candidate.model === "sub/flagship");
-    expect(flagship?.reasons.join(" ")).toContain("subscription/scarce billing");
+    expect(flagship?.reasons.join(" ")).toContain("subscription ×5 billing");
+  });
+});
+
+describe("billing cost multipliers", () => {
+  it("defaults to 1.0 and scores lower multipliers higher for cost-weighted roles", () => {
+    expect(effectiveCostMultiplier({ billingType: "metered" })).toBe(1);
+    const config = parseCouncilConfig({
+      profiles: { models: { "p/cheap": { coding: 7 }, "p/normal": { coding: 7 }, "p/pricy": { coding: 7 } } },
+    });
+    const ranked = rankModels({
+      models: [model("p", "pricy"), model("p", "normal"), model("p", "cheap")],
+      role: "scout",
+      config,
+      constraints: {
+        costPolicy: "economy",
+        billingOverrides: {
+          "p/cheap": { billingType: "subscription", costMultiplier: 0.1 },
+          "p/normal": { billingType: "subscription", costMultiplier: 1.0 },
+          "p/pricy": { billingType: "subscription", costMultiplier: 5.0 },
+        },
+      },
+    });
+    expect(ranked.candidates.map((candidate) => candidate.model)).toEqual(["p/cheap", "p/normal", "p/pricy"]);
+    expect(ranked.candidates.find((candidate) => candidate.model === "p/cheap")?.reasons.join(" "))
+      .toContain("subscription ×0.1 billing");
+  });
+
+  it("maps the legacy tier vocabulary to the documented multipliers", () => {
+    expect(LEGACY_COST_MULTIPLIERS).toEqual({ "very-low": 0.1, low: 0.5, normal: 1.0, high: 3.0, scarce: 5.0 });
+    const config = parseCouncilConfig({
+      billing: { providers: {
+        legacy: { billingType: "subscription", marginalCostClass: "high" },
+        plain: { billingType: "subscription" },
+      } },
+    });
+    expect(config.billing.providers.legacy?.costMultiplier).toBe(3.0);
+    expect(config.billing.providers.plain?.costMultiplier).toBeUndefined();
+  });
+
+  it("drops usagePreference and rejects or clamps out-of-range costMultiplier", () => {
+    const parsed = parseCouncilConfig({
+      billing: { providers: { p: { billingType: "metered", usagePreference: "escalation-only" } } },
+    });
+    expect(parsed.billing.providers.p).toEqual({ billingType: "metered" });
+    expect(() => parseCouncilConfig({ billing: { providers: { p: { billingType: "metered", costMultiplier: 0.001 } } } }))
+      .toThrow(ConfigValidationError);
+    expect(() => parseCouncilConfig({ billing: { providers: { p: { billingType: "metered", costMultiplier: 101 } } } }))
+      .toThrow(ConfigValidationError);
+    expect(parseCouncilConfig({ billing: { providers: { p: { billingType: "metered", costMultiplier: 0.01 } } } })
+      .billing.providers.p?.costMultiplier).toBe(0.01);
+    expect(parseCouncilConfig({ billing: { providers: { p: { billingType: "metered", costMultiplier: 100 } } } })
+      .billing.providers.p?.costMultiplier).toBe(100);
+  });
+});
+
+describe("route policy provider limits", () => {
+  it("round-trips a providers section through sanitize and prune", () => {
+    const document = parseRoutePolicyDocument({
+      version: 1,
+      system: { deny: ["q"] },
+      sessions: { stale: { deny: ["r"], updatedAt: "2020-01-01T00:00:00.000Z" } },
+      providers: {
+        p: { maxConcurrency: 2, dailyTokenCap: 1_000_000, weeklyTokenCap: 5_000_000 },
+        q: { maxConcurrency: 0 },
+        "\u0000": { dailyTokenCap: 10 },
+      },
+    });
+    expect(document.providers?.p).toEqual({ maxConcurrency: 2, dailyTokenCap: 1_000_000, weeklyTokenCap: 5_000_000 });
+    expect(document.providers?.q).toEqual({ maxConcurrency: 0 });
+    expect(Object.keys(document.providers ?? {})).toEqual(["p", "q"]);
+
+    const pruned = pruneRoutePolicyDocument(document, Date.now());
+    expect(pruned.providers).toEqual(document.providers);
+    expect(pruned.sessions?.stale).toBeUndefined();
+
+    const limits = resolveProviderLimits(document);
+    expect(limits.p).toEqual({ maxConcurrency: 2, dailyTokenCap: 1_000_000, weeklyTokenCap: 5_000_000 });
+    expect(limits.q).toEqual({
+      maxConcurrency: 0,
+      dailyTokenCap: DEFAULT_DAILY_TOKEN_CAP,
+      weeklyTokenCap: DEFAULT_WEEKLY_TOKEN_CAP,
+    });
+    expect(limits.missing).toBeUndefined();
+  });
+
+  it("rejects negative concurrency and non-positive caps", () => {
+    expect(() => parseRoutePolicyDocument({ version: 1, providers: { p: { maxConcurrency: -1 } } })).toThrow(ConfigValidationError);
+    expect(() => parseRoutePolicyDocument({ version: 1, providers: { p: { dailyTokenCap: 0 } } })).toThrow(ConfigValidationError);
+    expect(() => parseRoutePolicyDocument({ version: 1, providers: { p: { weeklyTokenCap: -5 } } })).toThrow(ConfigValidationError);
   });
 });

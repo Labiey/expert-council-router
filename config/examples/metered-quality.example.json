@@ -3,13 +3,11 @@
     "providers": {
       "economy-api": {
         "billingType": "metered",
-        "marginalCostClass": "low",
-        "usagePreference": "balanced"
+        "costMultiplier": 1.0
       },
       "premium-api": {
         "billingType": "metered",
-        "marginalCostClass": "high",
-        "usagePreference": "quality-sensitive"
+        "costMultiplier": 5.0
       }
     }
   },

@@ -100,7 +100,7 @@ describe("durable council state", () => {
         asOf: "2026-09-02T00:00:00.000Z",
         sources: ["https://livebench.ai/"],
         models: { "p/model": { coding: 8, toolReliability: 7 } },
-        billing: { p: { billingType: "metered" as const, marginalCostClass: "normal" as const } },
+        billing: { p: { billingType: "metered" as const, costMultiplier: 1.0 } },
       };
       await store.save(assessment);
       expect(await new JsonModelAssessmentStore(file).load()).toEqual(assessment);

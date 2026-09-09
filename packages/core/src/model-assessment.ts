@@ -38,8 +38,14 @@ export function activeModelAvailability(
   const active: Record<string, ModelAvailabilityObservation> = {};
   for (const [key, marker] of Object.entries(entries)) {
     const observedAtMs = Date.parse(marker.observedAt);
-    const ttl = markerTtlMs(marker.kind, ttlMs);
-    if (!Number.isFinite(observedAtMs) || now.getTime() - observedAtMs > ttl || now.getTime() < observedAtMs) continue;
+    if (!Number.isFinite(observedAtMs) || now.getTime() < observedAtMs) continue;
+    const explicitExpiryMs = marker.expiresAt ? Date.parse(marker.expiresAt) : Number.NaN;
+    if (Number.isFinite(explicitExpiryMs)) {
+      // Explicit expiry (e.g. a token-cap reset boundary) overrides the TTL.
+      if (now.getTime() >= explicitExpiryMs) continue;
+    } else if (now.getTime() - observedAtMs > markerTtlMs(marker.kind, ttlMs)) {
+      continue;
+    }
     active[key] = marker;
   }
   return active;
@@ -73,13 +79,20 @@ export function withModelAvailabilityMarker(
   reason: string,
   observedAt: string = new Date().toISOString(),
   kind: AvailabilityMarkerKind = "unavailable",
+  expiresAt?: string,
 ): ModelAssessmentSnapshot {
   const existing = assessment.modelAvailability?.[modelKey];
-  if (existing && Date.parse(existing.observedAt) >= Date.parse(observedAt) && existing.kind === kind) return assessment;
+  if (
+    existing &&
+    Date.parse(existing.observedAt) >= Date.parse(observedAt) &&
+    existing.kind === kind &&
+    existing.expiresAt === expiresAt
+  ) return assessment;
   const marker: ModelAvailabilityObservation = {
     callable: false,
     kind,
     observedAt,
+    ...(expiresAt ? { expiresAt } : {}),
     reason: reason.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, MAX_MODEL_AVAILABILITY_REASON_LENGTH) || "model call failed",
     source: "runtime-failure",
   };
@@ -229,7 +242,7 @@ export function evaluateModelAssessment(
           "Do not build or delegate a council yet.",
           "Use an already available web/research tool to audit only the models listed in researchModels; preserve current saved scores for other requiredModels entries and do not install a tool or package.",
           "Use current benchmark evidence for capabilities and provider documentation or runtime evidence for access/billing; never infer personal billing from published token prices.",
-          "For subscription or quota-bearing plans, add per-model billing entries with provider/id keys classifying marginalCostClass by quota burn rate: token plans carry periodic quotas, so flagship models are not as cheap as light ones.",
+          "For subscription or quota-bearing plans, add per-model billing entries with provider/id keys setting costMultiplier — a relative token-consumption weight: metered flash-class models ≈1.0, metered flagship full-size ≈5.0, token-plan flash-class ≈0.1, token-plan flagship ≈2.0. Provider daily/weekly caps consume model tokens × multiplier.",
           "Submit one complete modelAssessment covering every requiredModels entry, dated from the actual host clock, with 1 to 12 consolidated source URLs.",
         ],
   };

@@ -18,9 +18,10 @@ import {
   withModelStatus,
 } from "./model-assessment.js";
 import { listRoles } from "./roles.js";
-import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy } from "./route-policy.js";
-import { rankModels, routePolicyExcludes } from "./routing.js";
+import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy, resolveProviderLimits, DEFAULT_PROVIDER_LIMITS } from "./route-policy.js";
+import { effectiveCostMultiplier, rankModels, resolveBillingEntry, routePolicyExcludes } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
+import { detectBreach, instantiateLedger, providerUsage } from "./usage-caps.js";
 import type {
   BuildCouncilRequest,
   BillingPolicyEntry,
@@ -54,6 +55,10 @@ import type {
   RoutePolicyDocument,
   RoutePolicyEntry,
   AvailableModel,
+  AvailabilityMarkerKind,
+  ProviderLimits,
+  ProviderLimitsView,
+  UsageLedger,
 } from "./types.js";
 
 type ExecutionState = ExecutionStateSnapshot;
@@ -250,6 +255,9 @@ export class ExpertCouncilService implements ExpertCouncil {
       .map((provider) => `Provider ${provider} is subscription-billed but has no per-model cost classes: token plans carry periodic quotas with per-model burn rates, so add "${provider}/<model>" billing entries instead of one provider-level class.`);
     const systemEntry = this.routePolicyDoc?.system;
     const sessionEntry = this.routePolicyDoc?.sessions?.[sessionKey];
+    const providerLimits = this.stateOptions.usageLedger || this.stateOptions.readProviderLimits
+      ? await this.buildProviderLimitsView(providers)
+      : undefined;
     return {
       models,
       skills,
@@ -259,6 +267,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       runtimeCapabilities,
       ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
       modelAssessmentStatus: evaluateModelAssessment(models, this.modelAssessment),
+      ...(providerLimits ? { providerLimits } : {}),
       routePolicy: {
         sessionKey,
         effective: resolveEffectivePolicy(this.routePolicyDoc, sessionKey) ?? {},
@@ -302,13 +311,16 @@ export class ExpertCouncilService implements ExpertCouncil {
     const runtimeBillingPolicies = Object.fromEntries(
       Object.entries(runtimeBilling).map(([provider, discovery]) => [provider, discovery.policy]),
     );
+    const providerExclusions = await this.computeProviderExclusions(models);
     const constraints = constraintsWithAssessment(
-      request.constraints,
+      { ...request.constraints, ...(Object.keys(providerExclusions).length ? { providerExclusions } : {}) },
       this.modelAssessment,
       runtimeCapabilities,
       runtimeBillingPolicies,
     );
     const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates);
+    const providerExclusionWarnings = Object.values(providerExclusions).map((reason) => `Candidate excluded: ${reason}.`);
+    if (providerExclusionWarnings.length) plan.warnings = [...providerExclusionWarnings, ...plan.warnings];
     if (!request.constraints?.costPolicy) {
       plan.warnings = [
         "No costPolicy was supplied. Before the first council in a conversation, ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy and reuse the answer for later councils in this conversation.",
@@ -406,6 +418,14 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
     const plan = request.councilId ? this.plans.get(request.councilId) : undefined;
     const planWarnings: string[] = [];
+    const recordedExclusions = new Set<string>();
+    const noteProviderExclusions = (exclusions: Record<string, string>): void => {
+      for (const reason of Object.values(exclusions)) {
+        if (recordedExclusions.has(reason)) continue;
+        recordedExclusions.add(reason);
+        planWarnings.push(`Candidate excluded: ${reason}.`);
+      }
+    };
     if (request.councilId && !plan) {
       planWarnings.push(`Council plan ${request.councilId} is unavailable; routing used the current inventory.`);
     }
@@ -413,11 +433,18 @@ export class ExpertCouncilService implements ExpertCouncil {
       planWarnings.push(`Council plan ${plan.id} was built against a different model inventory; routing was refreshed.`);
     }
     const planned = plan?.experts.find((expert) => expert.role === request.role);
+    const initialExclusions = await this.computeProviderExclusions(models, state.id);
+    noteProviderExclusions(initialExclusions);
+    const routingConstraints = constraintsWithAssessment(
+      { ...request.constraints, ...(Object.keys(initialExclusions).length ? { providerExclusions: initialExclusions } : {}) },
+      this.modelAssessment,
+      runtimeCapabilities,
+    );
     const ranked = rankModels({
       models,
       role: request.role,
       config: this.config,
-      constraints: constraintsWithAssessment(request.constraints, this.modelAssessment, runtimeCapabilities),
+      constraints: routingConstraints,
       telemetry: aggregates,
     });
     if (planned) {
@@ -441,6 +468,7 @@ export class ExpertCouncilService implements ExpertCouncil {
 
     const failures: EscalationRequest["previousFailures"] = [];
     const unavailableMarked: string[] = [];
+    const capBreaches: string[] = [];
     let current = ranked.candidates[0]!;
     let retriesForCurrent = 0;
     let escalations = 0;
@@ -461,6 +489,29 @@ export class ExpertCouncilService implements ExpertCouncil {
           summary: `Execution aborted by the Main Agent before the next attempt${state.abortReason ? `. Reason: ${state.abortReason}` : ""}; completed work is preserved.`,
         };
         break;
+      }
+      // Re-check provider caps and concurrency before every attempt so a
+      // provider that breached a cap during this delegation is not retried.
+      const liveExclusions = await this.computeProviderExclusions(models, state.id);
+      noteProviderExclusions(liveExclusions);
+      ranked.candidates = ranked.candidates.filter(
+        (candidate) => !liveExclusions[parseModelKey(candidate.model).provider],
+      );
+      if (liveExclusions[parseModelKey(current.model).provider]) {
+        const replacement = ranked.candidates.find(
+          (candidate) => !failures.some((failure) => failure.model === candidate.model),
+        );
+        if (!replacement) {
+          lastResult = {
+            status: "failed",
+            role: request.role,
+            model: current.model,
+            summary: `Provider ${parseModelKey(current.model).provider} is unavailable: ${liveExclusions[parseModelKey(current.model).provider]}.`,
+          };
+          break;
+        }
+        current = replacement;
+        retriesForCurrent = 0;
       }
       state.attempts += 1;
       state.model = current.model;
@@ -523,6 +574,41 @@ export class ExpertCouncilService implements ExpertCouncil {
             const usageKey = key as keyof typeof cumulativeUsage;
             cumulativeUsage[usageKey] = (cumulativeUsage[usageKey] ?? 0) + value;
           }
+        }
+      }
+      if (this.stateOptions.usageLedger) {
+        // Weighted accounting: provider caps consume non-cache model tokens
+        // multiplied by the attempt model's billing costMultiplier.
+        const usageLedger = this.stateOptions.usageLedger;
+        try {
+          const provider = modelParts.provider;
+          const billingProfile = mergeModelProfiles(profile, routingConstraints.modelOverrides?.[current.model]).billingProfile;
+          const billing = resolveBillingEntry(this.config, routingConstraints, provider, modelParts.id, billingProfile);
+          const multiplier = effectiveCostMultiplier(billing);
+          const tokens = (attemptUsage?.inputTokens ?? 0) + (attemptUsage?.outputTokens ?? 0);
+          const weighted = Math.ceil(tokens * multiplier);
+          const now = new Date();
+          const ledger = await usageLedger.record(provider, weighted, now);
+          const limits = await this.providerLimitsFor(provider);
+          const breach = detectBreach(ledger, provider, limits, now);
+          if (breach.dailyBreached || breach.weeklyBreached) {
+            const scope = breach.weeklyBreached ? "weekly" : "daily";
+            const usage = providerUsage(ledger, provider, now);
+            const reason = `Provider ${provider} ${scope} weighted token cap reached (day ${usage.usedToday}/${limits.dailyTokenCap}, week ${usage.usedWeek}/${limits.weeklyTokenCap}); marked until the UTC reset at ${breach.nextReset.toISOString()}.`;
+            const siblings = models
+              .filter((model) => model.provider === provider)
+              .map((model) => `${model.provider}/${model.id}`);
+            await this.markModelAvailability(current.model, reason, siblings, {
+              expiresAt: breach.nextReset.toISOString(),
+              kind: "quota-exhausted",
+            });
+            capBreaches.push(reason);
+            ranked.candidates = ranked.candidates.filter(
+              (candidate) => parseModelKey(candidate.model).provider !== provider,
+            );
+          }
+        } catch {
+          // Usage accounting is best-effort; routing still records the attempt.
         }
       }
 
@@ -599,6 +685,9 @@ export class ExpertCouncilService implements ExpertCouncil {
       );
       result.risks = [...notes, ...(result.risks ?? [])].slice(0, 20);
     }
+    if (capBreaches.length) {
+      result.risks = [...capBreaches, ...(result.risks ?? [])].slice(0, 20);
+    }
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);
     if (result.status === "success") {
@@ -669,14 +758,102 @@ export class ExpertCouncilService implements ExpertCouncil {
     return models.filter((model) => !routePolicyExcludes(effective, `${model.provider}/${model.id}`));
   }
 
+  /**
+   * Provider-level routing exclusions from the persisted usage ledger and
+   * per-provider limits: a breached daily/weekly cap or a saturated
+   * concurrency limit removes every model of that provider from candidates.
+   */
+  private async computeProviderExclusions(models: AvailableModel[], excludeExecutionId?: string): Promise<Record<string, string>> {
+    const usageLedger = this.stateOptions.usageLedger;
+    if (!usageLedger) return {};
+    let ledger: UsageLedger;
+    try {
+      ledger = await usageLedger.load();
+    } catch {
+      return {};
+    }
+    const limits = resolveProviderLimits(await this.readProviderLimitsDocument());
+    const now = new Date();
+    const running = this.runningByProvider(excludeExecutionId);
+    const exclusions: Record<string, string> = {};
+    for (const provider of new Set(models.map((model) => model.provider))) {
+      const effective = limits[provider] ?? DEFAULT_PROVIDER_LIMITS;
+      const breach = detectBreach(ledger, provider, effective, now);
+      if (breach.dailyBreached || breach.weeklyBreached) {
+        const scope = breach.weeklyBreached ? "weekly" : "daily";
+        exclusions[provider] = `provider ${provider} ${scope} token cap reached; resets at ${breach.nextReset.toISOString()}`;
+        continue;
+      }
+      if (effective.maxConcurrency > 0) {
+        const inFlight = running.get(provider) ?? 0;
+        if (inFlight >= effective.maxConcurrency) {
+          exclusions[provider] = `provider ${provider} concurrency limit reached (${inFlight}/${effective.maxConcurrency} running)`;
+        }
+      }
+    }
+    return exclusions;
+  }
+
+  /** Count running executions per provider, ignoring the execution being planned. */
+  private runningByProvider(excludeExecutionId?: string): Map<string, number> {
+    const running = new Map<string, number>();
+    for (const execution of this.executions.values()) {
+      if (execution.id === excludeExecutionId) continue;
+      if (execution.status !== "running" || !execution.model) continue;
+      const provider = parseModelKey(execution.model).provider;
+      running.set(provider, (running.get(provider) ?? 0) + 1);
+    }
+    return running;
+  }
+
+  private async readProviderLimitsDocument() {
+    if (!this.stateOptions.readProviderLimits) return undefined;
+    return await this.stateOptions.readProviderLimits().catch(() => undefined);
+  }
+
+  private async providerLimitsFor(provider: string): Promise<ProviderLimits> {
+    const limits = resolveProviderLimits(await this.readProviderLimitsDocument());
+    return limits[provider] ?? DEFAULT_PROVIDER_LIMITS;
+  }
+
+  private async buildProviderLimitsView(providers: string[]): Promise<ProviderLimitsView[]> {
+    const usageLedger = this.stateOptions.usageLedger;
+    const ledger = usageLedger
+      ? await usageLedger.load().catch(() => instantiateLedger())
+      : instantiateLedger();
+    const limits = resolveProviderLimits(await this.readProviderLimitsDocument());
+    const now = new Date();
+    const running = this.runningByProvider();
+    return providers.map((provider) => {
+      const effective = limits[provider] ?? DEFAULT_PROVIDER_LIMITS;
+      const { usedToday, usedWeek } = providerUsage(ledger, provider, now);
+      return {
+        provider,
+        maxConcurrency: effective.maxConcurrency,
+        dailyTokenCap: effective.dailyTokenCap,
+        weeklyTokenCap: effective.weeklyTokenCap,
+        usedToday,
+        usedWeek,
+        remainingDaily: Math.max(0, effective.dailyTokenCap - usedToday),
+        remainingWeekly: Math.max(0, effective.weeklyTokenCap - usedWeek),
+        inFlight: running.get(provider) ?? 0,
+      };
+    });
+  }
+
   /** Mark provider-wide quota evidence: quota exhaustion applies to every model of the provider. */
-  private async markModelAvailability(modelKey: string, reason: string, providerSiblings: string[] = []): Promise<{ kind: "unavailable" | "quota-exhausted"; markedKeys: string[] }> {
+  private async markModelAvailability(
+    modelKey: string,
+    reason: string,
+    providerSiblings: string[] = [],
+    options: { expiresAt?: string; kind?: AvailabilityMarkerKind } = {},
+  ): Promise<{ kind: AvailabilityMarkerKind; markedKeys: string[] }> {
     const observedAt = new Date().toISOString();
-    const kind = classifyAvailabilityEvidence(reason) ?? "unavailable";
+    const kind = options.kind ?? classifyAvailabilityEvidence(reason) ?? "unavailable";
     const markedKeys: string[] = [];
     const markOne = (key: string) => {
       if (this.modelAssessment) {
-        this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, key, reason, observedAt, kind);
+        this.modelAssessment = withModelAvailabilityMarker(this.modelAssessment, key, reason, observedAt, kind, options.expiresAt);
         this.modelAssessment = withModelStatus(this.modelAssessment, key, kind, observedAt, reason);
       }
       markedKeys.push(key);
@@ -693,7 +870,7 @@ export class ExpertCouncilService implements ExpertCouncil {
         if (!current) return undefined;
         let next = current;
         for (const key of markedKeys) {
-          next = withModelAvailabilityMarker(next, key, reason, observedAt, kind);
+          next = withModelAvailabilityMarker(next, key, reason, observedAt, kind, options.expiresAt);
           next = withModelStatus(next, key, kind, observedAt, reason);
         }
         return next;

@@ -176,9 +176,9 @@ Pi 在每个会话内只构建一次这份清单，且提供商目录可能保�
 subscription  metered  quota  free  unknown
 ```
 
-边际成本和使用偏好是两个独立字段，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。Pi Runtime 适配器会把运行时明确报告的订阅或具名 Token Plan 目录识别为 `subscription`；否则，Pi 模型目录存在非零单价的 Provider 识别为 `metered`，没有可靠证据的保持 `unknown`。`expert_inspect` 会返回推断来源，显式用户配置始终具有最高优先级。同一按量 Provider 内的模型仍会通过 `routing.apiPriceWeight`（默认 `0.35`）比较具体单价；全零价格表按“未提供”处理，不会猜测为免费。
+边际成本以单一数值 `costMultiplier` 表示，因为公开 Token 单价无法表达订阅计划、固定额度、本地推理和促销额度。Pi Runtime 适配器会把运行时明确报告的订阅或具名 Token Plan 目录识别为 `subscription`；否则，Pi 模型目录存在非零单价的 Provider 识别为 `metered`，没有可靠证据的保持 `unknown`。`expert_inspect` 会返回推断来源，显式用户配置始终具有最高优先级。同一按量 Provider 内的模型仍会通过 `routing.apiPriceWeight`（默认 `0.35`）比较具体单价；全零价格表按“未提供”处理，不会猜测为免费。
 
-**按模型的计费条目。** 订阅 token plan 带有周期配额（常见为周限额）且各模型消耗倍率不同，单一 provider 级档位无法表达真实边际成本。为特定模型增加 `provider/id` 键即可覆盖 provider 默认值——路由先查显式 `billingProfile`，再查模型级条目，最后才是 provider 级。同样的键也可用于 `model-assessment.json` 的 billing 段与用户配置：
+**按模型的计费条目。** 订阅 token plan 带有周期配额（常见为周限额）且各模型消耗倍率不同，单一 provider 级权重无法表达真实边际成本。为特定模型增加 `provider/id` 键即可覆盖 provider 默认值——路由先查显式 `billingProfile`，再查模型级条目，最后才是 provider 级。同样的键也可用于 `model-assessment.json` 的 billing 段与用户配置：
 
 ```json
 {
@@ -186,23 +186,59 @@ subscription  metered  quota  free  unknown
     "providers": {
       "subscription-provider": {
         "billingType": "subscription",
-        "marginalCostClass": "very-low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 0.1
       },
       "subscription-provider/qwen3.8-max": {
         "billingType": "subscription",
-        "marginalCostClass": "low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 2.0
       },
       "scarce-provider": {
         "billingType": "quota",
-        "marginalCostClass": "scarce",
-        "usagePreference": "escalation-only"
+        "costMultiplier": 5.0
       }
     }
   }
 }
 ```
+
+### 计费倍率
+
+`costMultiplier` 是用于成本评分与 Provider 额度计账的相对 Token 消耗权重，省略时默认为 `1.0`，取值范围为 `0.01`–`100`。数值越低，在成本权重较高的角色中越经济；成本效率得分为 `10 / (1 + costMultiplier)`（在计费类型加成之前）。参考值：按量 flash 级 ≈`1.0`，按量旗舰全尺寸 ≈`5.0`，token plan flash 级 ≈`0.1`，token plan 旗舰 ≈`2.0`。
+
+已移除的档位词汇仍会被接受并确定性映射，旧配置继续可用：
+
+| 旧 `marginalCostClass` | `costMultiplier` |
+|---|---|
+| `very-low` | `0.1` |
+| `low` | `0.5` |
+| `normal` | `1.0` |
+| `high` | `3.0` |
+| `scarce` | `5.0` |
+
+旧的 `usagePreference` 字段会被忽略并丢弃，不再影响路由。
+
+### Provider 限额与并发
+
+`route-policy.json` 可在模型 allow/deny 策略旁携带可选的 `providers` 映射——allow/deny 语法见[路由策略文件](#路由策略文件)，本节不再重复：
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "qwen-token-plan-cn": { "maxConcurrency": 2, "dailyTokenCap": 5000000, "weeklyTokenCap": 40000000 },
+    "zai": { "maxConcurrency": 0 }
+  }
+}
+```
+
+- `maxConcurrency`（整数 ≥ 0）限制该 Provider 同时运行的执行数；`0` 或省略表示不限制。
+- `dailyTokenCap` 与 `weeklyTokenCap`（整数 > 0）限制每个 UTC 自然日与每个 ISO 周（周一为起点，UTC）的加权 Token 消耗。默认值为每日 `20,000,000`、每周 `150,000,000`。
+- 计账是加权的：每次尝试消耗该模型 `(inputTokens + outputTokens) × costMultiplier`；不计算缓存读写 Token。
+- 触顶会在持久化评估中标记该 Provider 的所有模型，直到下一个 UTC 重置边界——每日触顶为下一个 UTC 零点，每周触顶为下周一 `00:00` UTC——路由因此停止在已耗尽的 Provider 上浪费尝试，并在重置后自动重试。
+- 在途计数使用分配给该 Provider 的运行中执行；达到 `maxConcurrency` 的 Provider 在新候选中被排除，直到其中一个完成。
+- 未接入 usage ledger 时，额度与并发限制均禁用，Core 不进行任何 I/O。
+
+`expert_inspect` 会为每个 Provider 返回 `providerLimits`，包含 `maxConcurrency`、两项额度、加权 `usedToday`/`usedWeek`、`remainingDaily`/`remainingWeekly` 与 `inFlight`。
 
 `config/examples/` 提供以下示例：
 

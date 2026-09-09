@@ -90,6 +90,7 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
       ...(inventory.routePolicy?.session ? { session: inventory.routePolicy.session } : {}),
       ...(inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}),
     },
+    ...(inventory.providerLimits ? { providerLimits: inventory.providerLimits } : {}),
     warnings: inventory.warnings,
     detail: "compact" as const,
     fullDetailHint: "Call expert_inspect with detail='full' only when exact model metadata is required.",

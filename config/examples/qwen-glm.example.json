@@ -4,13 +4,11 @@
     "providers": {
       "qwen-token-plan-cn": {
         "billingType": "subscription",
-        "marginalCostClass": "very-low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 0.1
       },
       "zai": {
         "billingType": "metered",
-        "marginalCostClass": "normal",
-        "usagePreference": "quality-sensitive"
+        "costMultiplier": 1.0
       }
     }
   },

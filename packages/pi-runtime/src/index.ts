@@ -3,6 +3,7 @@ export * from "./factory.js";
 export * from "./file-assessment.js";
 export * from "./file-telemetry.js";
 export * from "./file-state.js";
+export * from "./file-usage-ledger.js";
 export * from "./pi-runtime.js";
 export * from "./pi-sdk.js";
 export * from "./persistent-state.js";

@@ -175,9 +175,9 @@ Supported billing types:
 subscription  metered  quota  free  unknown
 ```
 
-Marginal cost and usage preference are two independent fields because published token prices cannot express subscription plans, fixed quotas, local inference, or promotional credits. The Pi Runtime adapter classifies runtime-reported subscription access or named Token Plan catalogs as `subscription`; otherwise a provider whose Pi model catalog exposes non-zero prices is `metered`, and providers without reliable evidence stay `unknown`. `expert_inspect` returns the inference source, and explicit user configuration always has the highest priority. Models within the same metered provider are still compared on specific prices through `routing.apiPriceWeight` (default `0.35`); an all-zero price table is treated as "not provided", never guessed to be free.
+Marginal cost is expressed as a single numeric `costMultiplier` because published token prices cannot express subscription plans, fixed quotas, local inference, or promotional credits. The Pi Runtime adapter classifies runtime-reported subscription access or named Token Plan catalogs as `subscription`; otherwise a provider whose Pi model catalog exposes non-zero prices is `metered`, and providers without reliable evidence stay `unknown`. `expert_inspect` returns the inference source, and explicit user configuration always has the highest priority. Models within the same metered provider are still compared on specific prices through `routing.apiPriceWeight` (default `0.35`); an all-zero price table is treated as "not provided", never guessed to be free.
 
-**Per-model billing entries.** Subscription token plans carry periodic quotas (often weekly) with per-model burn rates, so one provider-level class cannot express the real marginal cost. Add `provider/id` keys to override the provider default for specific models — routing checks the explicit `billingProfile` first, then the model-level entry, then the provider-level entry. The same works in `model-assessment.json` billing and in user configuration:
+**Per-model billing entries.** Subscription token plans carry periodic quotas (often weekly) with per-model burn rates, so one provider-level weight cannot express the real marginal cost. Add `provider/id` keys to override the provider default for specific models — routing checks the explicit `billingProfile` first, then the model-level entry, then the provider-level entry. The same works in `model-assessment.json` billing and in user configuration:
 
 ```json
 {
@@ -185,23 +185,59 @@ Marginal cost and usage preference are two independent fields because published 
     "providers": {
       "subscription-provider": {
         "billingType": "subscription",
-        "marginalCostClass": "very-low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 0.1
       },
       "subscription-provider/qwen3.8-max": {
         "billingType": "subscription",
-        "marginalCostClass": "low",
-        "usagePreference": "consume-first"
+        "costMultiplier": 2.0
       },
       "scarce-provider": {
         "billingType": "quota",
-        "marginalCostClass": "scarce",
-        "usagePreference": "escalation-only"
+        "costMultiplier": 5.0
       }
     }
   }
 }
 ```
+
+### Billing multipliers
+
+`costMultiplier` is a relative token-consumption weight used for cost scoring and provider cap accounting. It defaults to `1.0` when omitted and must be within `0.01`–`100`. Lower is more cost-efficient for cost-weighted roles; the cost-efficiency score is `10 / (1 + costMultiplier)` before the billing-type bonus. Reference values: metered flash-class models ≈`1.0`, metered flagship full-size ≈`5.0`, token-plan flash-class ≈`0.1`, token-plan flagship ≈`2.0`.
+
+The removed tier vocabulary is still accepted and mapped deterministically so existing configuration keeps working:
+
+| Legacy `marginalCostClass` | `costMultiplier` |
+|---|---|
+| `very-low` | `0.1` |
+| `low` | `0.5` |
+| `normal` | `1.0` |
+| `high` | `3.0` |
+| `scarce` | `5.0` |
+
+The legacy `usagePreference` field is ignored and dropped; it no longer affects routing.
+
+### Provider limits & concurrency
+
+`route-policy.json` can carry an optional `providers` map next to the model allow/deny policy — see [Route policy file](#route-policy-file) for the allow/deny syntax, which this section does not repeat:
+
+```json
+{
+  "version": 1,
+  "providers": {
+    "qwen-token-plan-cn": { "maxConcurrency": 2, "dailyTokenCap": 5000000, "weeklyTokenCap": 40000000 },
+    "zai": { "maxConcurrency": 0 }
+  }
+}
+```
+
+- `maxConcurrency` (integer ≥ 0) caps simultaneous running executions for the provider; `0` or omitted means unlimited.
+- `dailyTokenCap` and `weeklyTokenCap` (integers > 0) cap weighted token consumption per UTC calendar day and per ISO week (Monday start, UTC). Defaults are `20,000,000` daily and `150,000,000` weekly.
+- Accounting is weighted: each completed attempt consumes `(inputTokens + outputTokens) × costMultiplier` for the attempt's model; cache read/write tokens are not counted.
+- Breaching a cap marks every model of the provider in the persisted assessment until the next UTC reset boundary — next UTC midnight for a daily breach, next Monday `00:00` UTC for a weekly breach — so routing stops burning attempts on the depleted provider and retries it automatically after the reset.
+- In-flight counting uses running executions assigned to the provider; a provider at `maxConcurrency` is excluded from new candidates until one finishes.
+- When no usage ledger is wired, caps and concurrency limits are disabled and Core performs no I/O.
+
+`expert_inspect` reports per-provider `providerLimits` with `maxConcurrency`, both caps, weighted `usedToday`/`usedWeek`, `remainingDaily`/`remainingWeekly`, and `inFlight`.
 
 `config/examples/` provides:
 

@@ -33,12 +33,36 @@ export const expertRoleSchema = z.enum([
   "verifier",
 ]);
 
-export const billingEntrySchema = z.object({
+/**
+ * Deterministic mapping of the removed tier vocabulary to numeric token
+ * multipliers, kept so existing configuration files keep working.
+ */
+export const LEGACY_COST_MULTIPLIERS = {
+  "very-low": 0.1,
+  low: 0.5,
+  normal: 1.0,
+  high: 3.0,
+  scarce: 5.0,
+} as const;
+
+const billingEntryObjectSchema = z.object({
   billingType: z.enum(["subscription", "metered", "quota", "free", "unknown"]),
-  marginalCostClass: z.enum(["very-low", "low", "normal", "high", "scarce"]).optional(),
-  usagePreference: z.enum(["consume-first", "balanced", "quality-sensitive", "escalation-only"]).optional(),
+  costMultiplier: z.number().min(0.01).max(100).optional(),
   disabled: z.boolean().optional(),
 });
+
+export const billingEntrySchema = z.preprocess((input) => {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const rest = { ...(input as Record<string, unknown>) };
+  const legacy = rest.marginalCostClass;
+  delete rest.marginalCostClass;
+  // usagePreference is silently dropped; it no longer has a routing meaning.
+  delete rest.usagePreference;
+  if (rest.costMultiplier === undefined && typeof legacy === "string" && legacy in LEGACY_COST_MULTIPLIERS) {
+    rest.costMultiplier = LEGACY_COST_MULTIPLIERS[legacy as keyof typeof LEGACY_COST_MULTIPLIERS];
+  }
+  return rest;
+}, billingEntryObjectSchema);
 
 export const modelProfileSchema = z.object({
   ...capabilityFields,
@@ -58,6 +82,7 @@ export const modelAvailabilityObservationSchema = z.object({
   callable: z.literal(false),
   kind: z.enum(["unavailable", "quota-exhausted"]).optional(),
   observedAt: z.string().datetime({ offset: true }),
+  expiresAt: z.string().datetime({ offset: true }).optional(),
   reason: z.string().min(1).max(500),
   source: z.literal("runtime-failure"),
 });
@@ -282,9 +307,8 @@ export function mergeModelProfiles(...profiles: Array<ModelProfile | undefined>)
 export function getBillingEntry(config: CouncilConfig, provider: string, billingProfile?: string): BillingPolicyEntry {
   const key = billingProfile ?? provider;
   return config.billing.providers[key] ?? {
-    billingType: "unknown",
-    marginalCostClass: "normal",
-    usagePreference: "balanced",
+    billingType: "metered",
+    costMultiplier: 1.0,
   };
 }
 

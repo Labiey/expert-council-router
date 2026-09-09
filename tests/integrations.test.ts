@@ -179,7 +179,7 @@ describe("MCP semantic surface", () => {
       asOf: "2026-09-01T00:00:00.000Z",
       sources: ["https://livebench.ai/"],
       models: { "p/model": { coding: 8, speed: 7 } },
-      billing: { p: { billingType: "subscription", marginalCostClass: "very-low" } },
+      billing: { p: { billingType: "subscription", costMultiplier: 0.1 } },
     }).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_build.modelAssessment.safeParse({
       asOf: "2026-09-01T00:00:00.000Z",

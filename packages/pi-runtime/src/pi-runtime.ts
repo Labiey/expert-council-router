@@ -46,27 +46,27 @@ export function inferPiProviderBilling(
 ): RuntimeBillingDiscovery {
   if (runtimeSubscription) {
     return {
-      policy: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" },
+      policy: { billingType: "subscription", costMultiplier: 0.1 },
       source: "pi-runtime",
       reason: "Pi reports that the authenticated provider uses subscription access.",
     };
   }
   if (/(?:^|-)token-plan(?:-|$)/i.test(provider)) {
     return {
-      policy: { billingType: "subscription", marginalCostClass: "very-low", usagePreference: "consume-first" },
+      policy: { billingType: "subscription", costMultiplier: 0.1 },
       source: "pi-provider-catalog",
       reason: `Pi provider ${provider} is a named Token Plan access catalog.`,
     };
   }
   if (hasPublishedMeteredPrice) {
     return {
-      policy: { billingType: "metered", marginalCostClass: "normal", usagePreference: "quality-sensitive" },
+      policy: { billingType: "metered", costMultiplier: 1.0 },
       source: "pi-model-catalog",
       reason: `Pi exposes non-zero per-token catalog prices for provider ${provider} and does not report subscription access.`,
     };
   }
   return {
-    policy: { billingType: "unknown", marginalCostClass: "normal", usagePreference: "balanced" },
+    policy: { billingType: "unknown" },
     source: "unverified",
     reason: "Pi confirms authentication but does not expose a reliable billing/access classification for this provider.",
   };

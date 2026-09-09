@@ -115,14 +115,53 @@ describe("route policy persistence", () => {
   });
 });
 
+describe("usage ledger persistence", () => {
+  it("creates usage-ledger.json lazily, accumulates weighted tokens, and reloads external edits", async () => {
+    const { mkdtemp, readFile, rm, writeFile } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { JsonUsageLedgerStore, createProviderLimitsReader } = await import("../packages/pi-runtime/src/file-usage-ledger.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ec-usage-ledger-"));
+    const filePath = path.join(dir, "usage-ledger.json");
+    try {
+      const store = new JsonUsageLedgerStore(filePath);
+      expect(await store.load()).toEqual({ providers: {}, updatedAt: "1970-01-01T00:00:00.000Z" });
+      const now = new Date("2026-09-05T10:00:00.000Z");
+      await store.record("p", 300, now);
+      await store.record("p", 200, now);
+      const ledger = await store.load();
+      expect(ledger.providers.p).toEqual({
+        day: { key: "2026-09-05", tokens: 500 },
+        week: { key: "2026-W36", tokens: 500 },
+      });
+      const onDisk = JSON.parse(await readFile(filePath, "utf8"));
+      expect(onDisk.providers.p.week.tokens).toBe(500);
+
+      await writeFile(filePath, `${JSON.stringify({
+        providers: { q: { day: { key: "2026-09-05", tokens: 7 }, week: { key: "2026-W36", tokens: 7 } } },
+        updatedAt: now.toISOString(),
+      })}\n`, "utf8");
+      const fresh = new JsonUsageLedgerStore(filePath);
+      expect((await fresh.load()).providers.q?.day.tokens).toBe(7);
+
+      const reader = createProviderLimitsReader({
+        load: async () => ({ version: 1 as const, providers: { p: { maxConcurrency: 1 } } }),
+      });
+      expect(await reader()).toEqual({ version: 1, providers: { p: { maxConcurrency: 1 } } });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Pi runtime adapter", () => {
   it("recognizes named Pi plan catalogs without treating authentication alone as billing evidence", () => {
     expect(inferPiProviderBilling("qwen-token-plan-cn")).toMatchObject({
-      policy: { billingType: "subscription", marginalCostClass: "very-low" },
+      policy: { billingType: "subscription", costMultiplier: 0.1 },
       source: "pi-provider-catalog",
     });
     expect(inferPiProviderBilling("zai", false, true)).toMatchObject({
-      policy: { billingType: "metered", marginalCostClass: "normal" },
+      policy: { billingType: "metered", costMultiplier: 1.0 },
       source: "pi-model-catalog",
     });
     expect(inferPiProviderBilling("custom-api")).toMatchObject({
