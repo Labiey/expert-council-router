@@ -2,6 +2,20 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.0 - 2026-09-09
+
+### Breaking
+
+- Billing profiles replace the `marginalCostClass` tier with a numeric `costMultiplier` (0.01–100, default 1.0): a relative token-consumption weight used for cost scoring and cap accounting. Legacy tiers map deterministically on load (very-low→0.1, low→0.5, normal→1.0, high→3.0, scarce→5.0); `usagePreference` is removed entirely.
+- The build-first question is no longer only economy/balanced/speed: `expert_build` without parameters returns a composition menu (up to 3 saved compositions + an auto option) when compositions are wired.
+
+### Added
+
+- **Provider token caps**: per-provider `dailyTokenCap` (default 20M) and `weeklyTokenCap` (default 150M) in `route-policy.json`'s `providers` map. Weighted consumption (expert usage tokens × the model's `costMultiplier`, cache excluded) accumulates in a persisted `usage-ledger.json` after every expert attempt. Breaching a cap marks the provider's models quota-exhausted until the UTC reset boundary (next midnight / next Monday).
+- **Provider concurrency limits**: `maxConcurrency` per provider (default 0 = unlimited); delegation excludes providers whose in-flight expert count has reached the limit.
+- **Persistent council compositions**: `council-compositions.json` in the shared data directory stores named role→models rosters (multiple models per role allowed). Sessions bind to a composition (30-day pruning, resume-stable); routing stays inside the bound pools with route-policy deny always winning. `expert_delegate` accepts an optional per-assignment `model` pin from the role's pool, enabling single or concurrent multi-model dispatch. Agents create/modify compositions by editing the file (path surfaced via `expert_inspect`).
+- README sections for daily/weekly caps, route-policy allow/deny, billing multipliers, and council compositions.
+
 ## 0.6.1 - 2026-09-09
 
 ### Fixed
