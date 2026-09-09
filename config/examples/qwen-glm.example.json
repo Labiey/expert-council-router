@@ -28,5 +28,14 @@
         "autonomousExecution": 9
       }
     }
+  },
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "auto",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000
+    }
   }
 }

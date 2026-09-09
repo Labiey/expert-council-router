@@ -15,6 +15,11 @@
       }
     }
   },
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "none"
+    }
+  },
   "routing": {
     "maxExperts": 4
   }

@@ -706,7 +706,7 @@ Replace `vX.Y.Z` with the intended release. Users who deliberately track the def
 ### Behavior highlights
 
 - The bundled `.mcp.json` raises the host tool-call ceiling to 3660 seconds so a single bounded `expert_wait` can block until completion; the Skill still requires explicit per-operation deadlines rather than treating that ceiling as a default budget.
-- On the first council of a conversation the Main Agent establishes exactly one cost policy with you (economy, balanced, or speed); until then `expert_build` and `expert_delegate` responses carry reminders to ask.
+- On the first build of a conversation with neither `composition` nor `costPolicy`, `expert_build` returns a composition menu (up to three saved rosters plus an `auto` option); choosing `auto` establishes the cost policy (economy, balanced, or speed) for the session. Until a menu choice is made, `expert_build` responses keep asking.
 - Writable experts mutate inside a detached Git worktree under the trusted workspace; changes come back for Main Agent review and are never auto-merged.
 
 ### Removal
