@@ -312650,7 +312650,12 @@ var councilPlan = external_exports.object({
   warnings: external_exports.array(boundedText(2e3)).max(100),
   costPolicy: costPolicy.optional(),
   inventoryFingerprint: boundedText(1e6).optional(),
-  composition: boundedText(80).optional()
+  composition: boundedText(80).optional(),
+  compositionMenu: external_exports.array(external_exports.object({
+    name: boundedText(80),
+    rolesSummary: external_exports.record(external_exports.string(), external_exports.number().int().min(0)).optional(),
+    description: boundedText(500).optional()
+  }).strict()).max(8).optional()
 }).strict();
 var attempt2 = external_exports.object({
   attempt: external_exports.number().int().min(1).max(100),

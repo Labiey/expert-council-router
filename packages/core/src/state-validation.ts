@@ -59,6 +59,16 @@ const councilPlan = z.object({
   costPolicy: costPolicy.optional(),
   inventoryFingerprint: boundedText(1_000_000).optional(),
   composition: boundedText(80).optional(),
+  compositionMenu: z
+    .array(
+      z.object({
+        name: boundedText(80),
+        rolesSummary: z.record(z.string(), z.number().int().min(0)).optional(),
+        description: boundedText(500).optional(),
+      }).strict(),
+    )
+    .max(8)
+    .optional(),
 }).strict();
 
 const attempt = z.object({
