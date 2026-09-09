@@ -514,6 +514,8 @@ export interface ResourceInventory {
   routePolicy: ResourceRoutePolicyView;
   /** Saved council compositions and the session binding; omitted when the feature is unwired. */
   compositions?: ResourceCompositionsView;
+  /** Operator configuration file location and the effective provisioning mode; helps hosts edit the file on request. */
+  operatorConfig?: { path?: string; provisioningMode: string };
   /** Per-provider caps, weighted usage, and in-flight counts; omitted when caps are unwired. */
   providerLimits?: ProviderLimitsView[];
   warnings: string[];
@@ -727,6 +729,8 @@ export interface CouncilStateOptions {
   readCompositions?: () => Promise<CompositionDocument | undefined>;
   /** Display path of council-compositions.json surfaced to hosts through inspectResources. */
   compositionsPath?: string;
+  /** Display path of the operator council-config.json surfaced to hosts through inspectResources. */
+  operatorConfigPath?: string;
   /**
    * Persist session -> composition bindings. Absent disables binding; builds and
    * delegations still honor the document's existing sessions map.

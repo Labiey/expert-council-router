@@ -72,12 +72,16 @@ export function defaultCouncilStoragePaths(cwd: string, dataRoot = defaultCounci
     routePolicyPath: path.join(path.resolve(dataRoot), "route-policy.json"),
     usageLedgerPath: path.join(path.resolve(dataRoot), "usage-ledger.json"),
     councilCompositionsPath: path.join(path.resolve(dataRoot), "council-compositions.json"),
+    councilConfigPath: path.join(path.resolve(dataRoot), "council-config.json"),
   };
 }
 
 export async function createExpertCouncil(options: CreateCouncilOptions = {}): Promise<ExpertCouncil> {
   const cwd = path.resolve(options.cwd ?? process.cwd());
-  const loadedConfig = await loadCouncilConfig(options.configPath);
+  const defaults = defaultCouncilStoragePaths(cwd);
+  const loaded = await loadCouncilConfig(options.configPath, defaults.councilConfigPath);
+  const loadedConfig = loaded.config;
+  const operatorConfigPath = loaded.sourcePath;
   const trustedWorkspaceRoots = options.trustedWorkspaceRoots?.map((root) => resolveOperatorPath(
     cwd,
     root,
@@ -102,7 +106,6 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
     ...(options.sdk ? { sdk: options.sdk } : {}),
     ...(options.sdkPackageName ? { packageName: options.sdkPackageName } : {}),
   });
-  const defaults = defaultCouncilStoragePaths(cwd);
   const telemetryPath = resolveOperatorPath(
     cwd,
     options.telemetryPath ?? process.env.EXPERT_COUNCIL_TELEMETRY ?? defaults.telemetryPath,
@@ -181,5 +184,6 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
     compositionsStore,
     readProviderLimits: createProviderLimitsReader(routePolicyStore),
     usageLedger: usageLedgerStore,
+    operatorConfigPath,
   });
 }

@@ -311326,6 +311326,7 @@ function presentResourceInventory(inventory, detail2 = "compact") {
       ...inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}
     },
     ...inventory.compositions ? { compositions: inventory.compositions } : {},
+    ...inventory.operatorConfig ? { operatorConfig: inventory.operatorConfig } : {},
     ...inventory.providerLimits ? { providerLimits: inventory.providerLimits } : {},
     warnings: inventory.warnings,
     detail: "compact",
@@ -311787,6 +311788,10 @@ var ExpertCouncilService = class {
         ...this.stateOptions.routePolicyPath ? { sourcePath: this.stateOptions.routePolicyPath } : {}
       },
       ...compositions ? { compositions } : {},
+      operatorConfig: {
+        ...this.stateOptions.operatorConfigPath ? { path: this.stateOptions.operatorConfigPath } : {},
+        provisioningMode: this.config.security.workspaceProvisioning.mode
+      },
       warnings: [
         ...this.routePolicyWarning ? [this.routePolicyWarning] : [],
         ...this.compositionsWarning ? [this.compositionsWarning] : [],
@@ -312738,19 +312743,14 @@ function parseCouncilStateSnapshot(input2) {
 // packages/pi-runtime/dist/config-loader.js
 import { readFile as readFile6, realpath as realpath3 } from "node:fs/promises";
 import path18 from "node:path";
-async function loadCouncilConfig(filePath) {
-  const selected = filePath ?? process.env.EXPERT_COUNCIL_CONFIG;
-  if (!selected)
-    return parseCouncilConfig({});
-  if (selected.length > 32768 || selected.includes("\0")) {
-    throw new Error("Expert Council config path must be at most 32768 characters without NUL bytes.");
-  }
-  const resolved = path18.resolve(selected);
+async function readConfigFile(resolved) {
   let text;
   try {
     text = await readFile6(await realpath3(resolved), "utf8");
   } catch (error61) {
-    throw new Error(`Unable to read Expert Council config at ${resolved}: ${error61 instanceof Error ? error61.message : String(error61)}`);
+    const wrapped = new Error(`Unable to read Expert Council config at ${resolved}: ${error61 instanceof Error ? error61.message : String(error61)}`);
+    wrapped.code = error61.code;
+    throw wrapped;
   }
   try {
     return parseCouncilConfig(JSON.parse(text));
@@ -312759,6 +312759,27 @@ async function loadCouncilConfig(filePath) {
       throw new Error(`Invalid JSON in Expert Council config ${resolved}: ${error61.message}`);
     throw error61;
   }
+}
+async function loadCouncilConfig(filePath, defaultPath) {
+  const selected = filePath ?? process.env.EXPERT_COUNCIL_CONFIG;
+  if (selected) {
+    if (selected.length > 32768 || selected.includes("\0")) {
+      throw new Error("Expert Council config path must be at most 32768 characters without NUL bytes.");
+    }
+    return { config: await readConfigFile(path18.resolve(selected)), sourcePath: path18.resolve(selected), source: "explicit" };
+  }
+  if (defaultPath) {
+    const resolved = path18.resolve(defaultPath);
+    try {
+      return { config: await readConfigFile(resolved), sourcePath: resolved, source: "default-file" };
+    } catch (error61) {
+      const code = error61.code;
+      if (code === "ENOENT")
+        return { config: parseCouncilConfig({}), source: "none" };
+      throw error61;
+    }
+  }
+  return { config: parseCouncilConfig({}), source: "none" };
 }
 
 // packages/pi-runtime/dist/factory.js
@@ -314576,12 +314597,16 @@ function defaultCouncilStoragePaths(cwd, dataRoot = defaultCouncilDataRoot()) {
     modelAssessmentPath: path27.join(path27.resolve(dataRoot), "model-assessment.json"),
     routePolicyPath: path27.join(path27.resolve(dataRoot), "route-policy.json"),
     usageLedgerPath: path27.join(path27.resolve(dataRoot), "usage-ledger.json"),
-    councilCompositionsPath: path27.join(path27.resolve(dataRoot), "council-compositions.json")
+    councilCompositionsPath: path27.join(path27.resolve(dataRoot), "council-compositions.json"),
+    councilConfigPath: path27.join(path27.resolve(dataRoot), "council-config.json")
   };
 }
 async function createExpertCouncil(options = {}) {
   const cwd = path27.resolve(options.cwd ?? process.cwd());
-  const loadedConfig = await loadCouncilConfig(options.configPath);
+  const defaults4 = defaultCouncilStoragePaths(cwd);
+  const loaded = await loadCouncilConfig(options.configPath, defaults4.councilConfigPath);
+  const loadedConfig = loaded.config;
+  const operatorConfigPath = loaded.sourcePath;
   const trustedWorkspaceRoots = options.trustedWorkspaceRoots?.map((root) => resolveOperatorPath(cwd, root, "Trusted workspace root"));
   const config2 = trustedWorkspaceRoots?.length && loadedConfig.security.allowedWorkspaceRoots.length === 0 ? {
     ...loadedConfig,
@@ -314598,7 +314623,6 @@ async function createExpertCouncil(options = {}) {
     ...options.sdk ? { sdk: options.sdk } : {},
     ...options.sdkPackageName ? { packageName: options.sdkPackageName } : {}
   });
-  const defaults4 = defaultCouncilStoragePaths(cwd);
   const telemetryPath = resolveOperatorPath(cwd, options.telemetryPath ?? process.env.EXPERT_COUNCIL_TELEMETRY ?? defaults4.telemetryPath, "Telemetry path");
   const statePath = resolveOperatorPath(cwd, options.statePath ?? process.env.EXPERT_COUNCIL_STATE ?? defaults4.statePath, "State path");
   const modelAssessmentPath = resolveOperatorPath(cwd, options.modelAssessmentPath ?? process.env.EXPERT_COUNCIL_MODEL_ASSESSMENT ?? defaults4.modelAssessmentPath, "Model assessment path");
@@ -314641,7 +314665,8 @@ async function createExpertCouncil(options = {}) {
     compositionsPath,
     compositionsStore,
     readProviderLimits: createProviderLimitsReader(routePolicyStore),
-    usageLedger: usageLedgerStore
+    usageLedger: usageLedgerStore,
+    operatorConfigPath
   });
 }
 

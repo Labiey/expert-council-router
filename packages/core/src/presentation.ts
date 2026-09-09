@@ -94,6 +94,7 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
       ...(inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}),
     },
     ...(inventory.compositions ? { compositions: inventory.compositions } : {}),
+    ...(inventory.operatorConfig ? { operatorConfig: inventory.operatorConfig } : {}),
     ...(inventory.providerLimits ? { providerLimits: inventory.providerLimits } : {}),
     warnings: inventory.warnings,
     detail: "compact" as const,

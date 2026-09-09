@@ -319,6 +319,10 @@ export class ExpertCouncilService implements ExpertCouncil {
         ...(this.stateOptions.routePolicyPath ? { sourcePath: this.stateOptions.routePolicyPath } : {}),
       },
       ...(compositions ? { compositions } : {}),
+      operatorConfig: {
+        ...(this.stateOptions.operatorConfigPath ? { path: this.stateOptions.operatorConfigPath } : {}),
+        provisioningMode: this.config.security.workspaceProvisioning.mode,
+      },
       warnings: [
         ...(this.routePolicyWarning ? [this.routePolicyWarning] : []),
         ...(this.compositionsWarning ? [this.compositionsWarning] : []),

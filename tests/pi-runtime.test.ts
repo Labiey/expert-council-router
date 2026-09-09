@@ -1,8 +1,10 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCouncilConfig } from "../packages/core/src/index.js";
+import { loadCouncilConfig } from "../packages/pi-runtime/src/config-loader.js";
 import {
   applyVerificationGate,
   defaultCouncilDataRoot,
@@ -812,5 +814,36 @@ describe("worktree provisioning", () => {
     });
     expect(passed.status).toBe("success");
     expect(passed.executionMetadata?.failureType).toBeUndefined();
+  });
+});
+
+describe("council-config default path", () => {
+  it("falls back to the data-directory council-config.json without any environment variable", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-config-default-"));
+    const savedEnv = process.env.EXPERT_COUNCIL_CONFIG;
+    delete process.env.EXPERT_COUNCIL_CONFIG;
+    try {
+      const missing = await loadCouncilConfig(undefined, path.join(dir, "council-config.json"));
+      expect(missing.source).toBe("none");
+      expect(missing.sourcePath).toBeUndefined();
+      expect(missing.config.security.workspaceProvisioning.mode).toBe("none");
+
+      const configPath = path.join(dir, "council-config.json");
+      await writeFile(configPath, JSON.stringify({ security: { workspaceProvisioning: { mode: "auto" } } }));
+      const present = await loadCouncilConfig(undefined, configPath);
+      expect(present.source).toBe("default-file");
+      expect(present.sourcePath).toBe(configPath);
+      expect(present.config.security.workspaceProvisioning.mode).toBe("auto");
+
+      // Malformed JSON in the default file still fails loudly (operator typo).
+      await writeFile(configPath, "{ not json");
+      await expect(loadCouncilConfig(undefined, configPath)).rejects.toThrow(/Invalid JSON/);
+
+      // An explicit path that does not exist remains a hard error.
+      await expect(loadCouncilConfig(path.join(dir, "absent.json"))).rejects.toThrow(/Unable to read/);
+    } finally {
+      if (savedEnv !== undefined) process.env.EXPERT_COUNCIL_CONFIG = savedEnv;
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

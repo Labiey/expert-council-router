@@ -234,6 +234,8 @@ Mutation worktrees start from committed `HEAD` and therefore contain no untracke
 }
 ```
 
+This configuration lives in `council-config.json` inside the shared data directory (the same folder as `model-assessment.json`). The file is optional and discovered by default — no environment variable is required: if it exists it is read, if not everything stays at the defaults. `expert_inspect` returns its location under `operatorConfig` so the Main Agent can edit it on the user's behalf (changes apply after the host session restarts). An explicit `configPath` option or `EXPERT_COUNCIL_CONFIG` environment variable still takes precedence and must point at an existing file.
+
 - `mode` is `none` (default, never provision), `auto` (detect the committed lockfile and install), or `custom` (run `command` verbatim as an argv array).
 - `auto` runs `pnpm install --frozen-lockfile --prefer-offline`, `npm ci --prefer-offline --no-audit --no-fund`, or `bun install --frozen-lockfile`, always appending `--ignore-scripts`; `uv.lock`, `requirements.txt`, `Cargo.toml`, and `go.mod` are reported as skipped because no supported provisioning exists for those ecosystems.
 - Only mutation worktrees are provisioned; read-only roles run in the main workspace and are never provisioned.
