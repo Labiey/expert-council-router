@@ -2,6 +2,12 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.4 - 2026-09-09
+
+### Added
+
+- **Optional-by-default operator config**: `council-config.json` is now discovered in the shared data directory without any environment variable — present it is read, absent everything stays at the defaults. An explicit `configPath` option or `EXPERT_COUNCIL_CONFIG` still takes precedence (and must exist). `expert_inspect` surfaces the file location and the effective provisioning mode under `operatorConfig` so the Main Agent can edit it on the user's behalf; changes apply after the host session restarts.
+
 ## 0.7.3 - 2026-09-09
 
 ### Fixed

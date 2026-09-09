@@ -18,7 +18,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.7.3）已包含：
+当前版本（0.7.4）已包含：
 
 - 与宿主无关的 Core：配置校验、模型归一化、计费策略、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
@@ -101,7 +101,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.3 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -246,6 +246,28 @@ subscription  metered  quota  free  unknown
 - `subscription-heavy.example.json`：优先消耗订阅资源，保护稀缺额度。
 - `metered-quality.example.json`：区分经济型与高质量按量 API。
 - `qwen-glm.example.json`：明确标记为假设性用户偏好的示例，不代表客观评测结论。
+
+### 工作树供给与验证门
+
+变更型工作树从已提交的 `HEAD` 创建，天然不含未追踪的本地产物。运行时可在专家开工前用仓库自身提交的锁文件为其安装依赖；该功能默认关闭：
+
+```json
+{
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "auto",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000
+    }
+  }
+}
+```
+
+该配置保存在共享数据目录（与 `model-assessment.json` 同一层）的 `council-config.json` 中。文件可选且默认自动发现——不需要任何环境变量：存在则读取，不存在则全部走默认。`expert_inspect` 会在 `operatorConfig` 下返回其路径，主代理可按用户需求代为编辑（修改在宿主会话重启后生效）。显式的 `configPath` 选项或 `EXPERT_COUNCIL_CONFIG` 环境变量仍优先，且必须指向已存在的文件。
+
+供给完成后验证门自动运行仓库的 typecheck 与测试命令；门失败会把本已成功的结果降级为 `partial`（`failureType: "test_failure"`），从而触发既有修正重试路径。
 
 ### 能力画像
 
@@ -579,7 +601,7 @@ packages/codex-integration/plugin/expert-council/
 `v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.3 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -605,7 +627,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.3 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
