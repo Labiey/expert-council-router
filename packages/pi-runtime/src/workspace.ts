@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import type { Stats } from "node:fs";
-import { chmod, lstat, mkdir, readFile, realpath, stat } from "node:fs/promises";
+import { chmod, lstat, mkdir, readFile, realpath, rm as rmPath, stat } from "node:fs/promises";
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -696,7 +696,16 @@ export class WorkspaceBoundary {
           await git(gitRoot, ["worktree", "remove", "--force", worktree], this.config.workspaceProvisioning.removalTimeoutMs);
           removed.push(worktree);
         } catch (error) {
-          failures.push(`${worktree}: ${error instanceof Error ? error.message : String(error)}`);
+          // Provisioned worktrees hold deep node_modules trees that exceed
+          // Windows MAX_PATH, which git cannot delete. Node's fs (libuv)
+          // handles long paths, so fall back to a direct recursive removal
+          // and let `git worktree prune` clear the stale metadata.
+          try {
+            await rmPath(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+            removed.push(worktree);
+          } catch (removeError) {
+            failures.push(`${worktree}: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+          }
         }
       }
       await git(gitRoot, ["worktree", "prune"]);

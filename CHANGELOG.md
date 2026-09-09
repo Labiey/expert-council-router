@@ -2,6 +2,13 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.3 - 2026-09-09
+
+### Fixed
+
+- **Abort during workspace preparation**: the execution entry is now pre-registered before worktree creation and provisioning, so an `expert_abort` arriving during those (potentially minutes-long) phases is honored after setup instead of answered `not-found`. Progress snapshots and abort are safe against the not-yet-created session.
+- **Windows long-path cleanup**: `git worktree remove --force` cannot delete provisioned worktrees whose nested node_modules exceed Windows MAX_PATH ("Filename too long"). Cleanup now falls back to a libuv long-path recursive removal followed by `git worktree prune`.
+
 ## 0.7.2 - 2026-09-09
 
 ### Fixed

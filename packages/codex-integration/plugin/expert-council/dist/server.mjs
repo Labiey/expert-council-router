@@ -313350,7 +313350,7 @@ async function loadPiSdk() {
 // packages/pi-runtime/dist/workspace.js
 import { execFile as execFile3 } from "node:child_process";
 import { createHash as createHash2, randomUUID as randomUUID13 } from "node:crypto";
-import { chmod as chmod4, lstat as lstat2, mkdir as mkdir4, readFile as readFile14, realpath as realpath5, stat as stat10 } from "node:fs/promises";
+import { chmod as chmod4, lstat as lstat2, mkdir as mkdir4, readFile as readFile14, realpath as realpath5, rm as rmPath, stat as stat10 } from "node:fs/promises";
 import { tmpdir as tmpdir8, userInfo } from "node:os";
 import path25 from "node:path";
 import { promisify as promisify3 } from "node:util";
@@ -313899,7 +313899,12 @@ var WorkspaceBoundary = class {
           await git(gitRoot, ["worktree", "remove", "--force", worktree], this.config.workspaceProvisioning.removalTimeoutMs);
           removed.push(worktree);
         } catch (error61) {
-          failures.push(`${worktree}: ${error61 instanceof Error ? error61.message : String(error61)}`);
+          try {
+            await rmPath(worktree, { recursive: true, force: true, maxRetries: 3, retryDelay: 500 });
+            removed.push(worktree);
+          } catch (removeError) {
+            failures.push(`${worktree}: ${removeError instanceof Error ? removeError.message : String(removeError)}`);
+          }
         }
       }
       await git(gitRoot, ["worktree", "prune"]);
@@ -314308,6 +314313,16 @@ var PiExpertRuntime = class _PiExpertRuntime {
     let session;
     let entry;
     try {
+      entry = {
+        session: void 0,
+        startedAt: started,
+        workspace: void 0,
+        role: request.role,
+        model: request.model,
+        abortRequested: false,
+        timedOut: false
+      };
+      this.activeSessions.set(executionKey, entry);
       const available = await this.listAvailableModels();
       const [provider, ...idParts] = request.model.split("/");
       const id = idParts.join("/");
@@ -314335,16 +314350,10 @@ var PiExpertRuntime = class _PiExpertRuntime {
         ...this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}
       });
       session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
-      entry = {
-        session,
-        startedAt: started,
-        workspace,
-        role: request.role,
-        model: request.model,
-        abortRequested: false,
-        timedOut: false
-      };
-      this.activeSessions.set(executionKey, entry);
+      Object.assign(entry, { session, workspace });
+      if (entry.abortRequested) {
+        return await this.buildAbortedResult(entry, request, started);
+      }
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
@@ -314449,7 +314458,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       return { executionId: request.executionId, status: "not-found" };
     entry.abortRequested = true;
     entry.reason = request.reason;
-    const aborting = entry.session.abort?.();
+    const aborting = entry.session?.abort?.();
     void aborting?.catch(() => void 0);
     entry.forceSettle?.();
     const progress = await this.inspectEntry(request.executionId, entry).catch(() => void 0);
@@ -314462,6 +314471,18 @@ var PiExpertRuntime = class _PiExpertRuntime {
     return await this.inspectEntry(executionId2, entry);
   }
   async inspectEntry(executionId2, entry) {
+    if (!entry.session) {
+      return {
+        executionId: executionId2,
+        status: "running",
+        role: entry.role,
+        model: entry.model,
+        startedAt: new Date(entry.startedAt).toISOString(),
+        elapsedMs: Date.now() - entry.startedAt,
+        messageCount: 0,
+        filesChangedSoFar: []
+      };
+    }
     const messages = entry.session.messages ?? entry.session.state?.messages ?? [];
     const text = finalAssistantText(entry.session);
     let filesChangedSoFar = [];
@@ -314735,7 +314756,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.2" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.3" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

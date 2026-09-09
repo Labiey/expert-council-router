@@ -530,6 +530,19 @@ export class PiExpertRuntime implements ExpertRuntime {
     let session: PiSessionLike | undefined;
     let entry: ActiveExpertSession | undefined;
     try {
+      // Pre-register the entry so a Main-Agent abort during workspace
+      // preparation or provisioning (which can take minutes) is observed
+      // instead of answered "not-found".
+      entry = {
+        session: undefined as unknown as PiSessionLike,
+        startedAt: started,
+        workspace: undefined as unknown as PreparedWorkspace,
+        role: request.role,
+        model: request.model,
+        abortRequested: false,
+        timedOut: false,
+      };
+      this.activeSessions.set(executionKey, entry);
       const available = await this.listAvailableModels();
       const [provider, ...idParts] = request.model.split("/");
       const id = idParts.join("/");
@@ -560,16 +573,13 @@ export class PiExpertRuntime implements ExpertRuntime {
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
       });
       session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
-      entry = {
-        session,
-        startedAt: started,
-        workspace,
-        role: request.role,
-        model: request.model,
-        abortRequested: false,
-        timedOut: false,
-      };
-      this.activeSessions.set(executionKey, entry);
+      // Fill the pre-registered entry in place: abortExecution may hold this
+      // exact object reference and setting a fresh one could drop its flag.
+      Object.assign(entry, { session, workspace });
+      // The abort may have arrived while preparing/provisioning the workspace.
+      if (entry.abortRequested) {
+        return await this.buildAbortedResult(entry, request, started);
+      }
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
@@ -686,7 +696,9 @@ export class PiExpertRuntime implements ExpertRuntime {
     if (!entry) return { executionId: request.executionId, status: "not-found" };
     entry.abortRequested = true;
     entry.reason = request.reason;
-    const aborting = entry.session.abort?.();
+    // A pre-registered entry has no session yet (still preparing/provisioning);
+    // the flag alone makes executeExpert return an aborted result after setup.
+    const aborting = entry.session?.abort?.();
     void aborting?.catch(() => undefined);
     // A Pi session may never settle its prompt promise after abort(); force
     // the execution race to settle so executeExpert emits the aborted result
@@ -703,6 +715,20 @@ export class PiExpertRuntime implements ExpertRuntime {
   }
 
   private async inspectEntry(executionId: string, entry: ActiveExpertSession): Promise<ExecutionProgress> {
+    // A pre-registered entry has no session until workspace preparation and
+    // provisioning finish; report an empty progress snapshot for that phase.
+    if (!entry.session) {
+      return {
+        executionId,
+        status: "running",
+        role: entry.role,
+        model: entry.model,
+        startedAt: new Date(entry.startedAt).toISOString(),
+        elapsedMs: Date.now() - entry.startedAt,
+        messageCount: 0,
+        filesChangedSoFar: [],
+      };
+    }
     const messages = entry.session.messages ?? entry.session.state?.messages ?? [];
     const text = finalAssistantText(entry.session);
     let filesChangedSoFar: string[] = [];
