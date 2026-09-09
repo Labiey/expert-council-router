@@ -334,6 +334,15 @@ describe("configuration", () => {
     expect(parseCouncilConfig({ profiles: { models: { "p/m": { coding: null } } } }).profiles.models["p/m"]?.coding).toBeNull();
   });
 
+  it("accepts a partial preferredReasoningByRole without requiring every expert role key", () => {
+    // Zod 4: z.record(z.enum(...)) demands ALL enum keys; the profile contract
+    // is partial, so parseCouncilConfig must accept a single-role map.
+    const parsed = parseCouncilConfig({
+      profiles: { models: { "p/m": { preferredReasoningByRole: { reviewer: "high" } } } },
+    });
+    expect(parsed.profiles.models["p/m"]?.preferredReasoningByRole).toEqual({ reviewer: "high" });
+  });
+
   it("returns actionable paths for invalid values", () => {
     expect(() => parseCouncilConfig({ routing: { maxExperts: 99 } })).toThrow(ConfigValidationError);
     try {

@@ -416,7 +416,7 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_cleanup",
     label: "Expert Cleanup",
-    description: "Remove every retry/escalation worktree for an execution after its result has been integrated or rejected.",
+    description: "Remove every retry/escalation worktree for an execution after its result has been integrated or rejected. Integrate changes from the result's filesChanged list (it already includes untracked new files) — never from `git diff HEAD` alone.",
     parameters: Type.Object({
       executionId: ExecutionIdentifier,
     }),

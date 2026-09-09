@@ -68,7 +68,7 @@ export const modelProfileSchema = z.object({
   ...capabilityFields,
   disabled: z.boolean().optional(),
   billingProfile: z.string().min(1).optional(),
-  preferredReasoningByRole: z.record(expertRoleSchema, z.string().min(1).nullable()).optional(),
+  preferredReasoningByRole: z.partialRecord(expertRoleSchema, z.string().min(1).nullable()).optional(),
   incompatibleRoles: z.array(expertRoleSchema).optional(),
   overrideUnavailableMarker: z.boolean().optional(),
 });

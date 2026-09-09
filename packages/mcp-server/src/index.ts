@@ -368,7 +368,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_cleanup",
     {
       title: "Clean Up Expert Workspace",
-      description: "Remove every retry/escalation worktree for an execution after its result has been integrated or rejected.",
+      description: "Remove every retry/escalation worktree for an execution after its result has been integrated or rejected. Integrate changes from the result's filesChanged list (it already includes untracked new files) — never from `git diff HEAD` alone.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_cleanup,
       annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     },
