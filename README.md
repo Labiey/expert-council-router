@@ -216,6 +216,45 @@ The removed tier vocabulary is still accepted and mapped deterministically so ex
 
 The legacy `usagePreference` field is ignored and dropped; it no longer affects routing.
 
+### Operator config (`council-config.json`)
+
+`council-config.json` is the operator configuration file. It is optional and discovered by default in the shared data directory (the same folder as `model-assessment.json` and `route-policy.json`) — no environment variable is required. Resolution order:
+
+1. `configPath` option or `EXPERT_COUNCIL_CONFIG` environment variable — highest precedence, and the file **must** exist;
+2. `<data directory>/council-config.json` — read when present, silently skipped when absent;
+3. otherwise everything runs on built-in defaults (`workspaceProvisioning.mode = "none"`).
+
+The file accepts the full operator schema: `security`, `billing`, `profiles`, and `routing`. Typical example:
+
+```json
+{
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "auto",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000,
+      "verifyCommand": ["npm", "run", "typecheck"]
+    },
+    "worktreeRetentionMs": 86400000
+  },
+  "routing": {
+    "maxExperts": 4
+  }
+}
+```
+
+Field notes:
+
+- `security.workspaceProvisioning.mode` — `"none"` (default, no installs), `"auto"` (lockfile-detected install per ecosystem), or `"custom"` (runs `command` verbatim).
+- `security.workspaceProvisioning.verifyCommand` — a single command as a flat argv array, run after a provisioned mutation expert finishes instead of the default typecheck-then-test pair.
+- `security.workspaceProvisioning.scrubEnv` — when `true` (default), provisioning and verification children receive an allowlisted environment only; `~/.npmrc` registry tokens can still reach the child (documented residual).
+- `security.worktreeRetentionMs` — how long provisioned worktrees are retained for review before the retention prune (default 24h).
+- `billing` / `profiles` / `routing` — the same schemas as `model-assessment.json` billing entries, model capability profiles, and role weights.
+
+**Main-Agent editing contract**: `expert_inspect` returns the file location and the effective provisioning mode under `operatorConfig`. When the user asks to change provisioning behavior, the Main Agent edits the file directly and tells the user a host session restart is required for the change to apply. A malformed JSON or invalid enum is a hard error at startup (an operator typo never silently disables a security setting).
+
 ### Worktree provisioning
 
 Mutation worktrees start from committed `HEAD` and therefore contain no untracked local artifacts. The runtime can provision them from the repository's own committed lockfile before the expert runs; it is opt-in and inert by default:

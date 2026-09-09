@@ -247,6 +247,44 @@ subscription  metered  quota  free  unknown
 - `metered-quality.example.json`：区分经济型与高质量按量 API。
 - `qwen-glm.example.json`：明确标记为假设性用户偏好的示例，不代表客观评测结论。
 
+### 运营者配置（council-config.json）
+
+`council-config.json` 是运营者配置文件。它可选且默认在共享数据目录（与 `model-assessment.json`、`route-policy.json` 同层）自动发现——不需要任何环境变量。解析顺序：
+
+1. `configPath` 选项或 `EXPERT_COUNCIL_CONFIG` 环境变量——最高优先，且文件**必须**存在；
+2. `<数据目录>/council-config.json`——存在则读取，不存在则静默跳过；
+3. 否则全部走内置默认（`workspaceProvisioning.mode = "none"`）。
+
+文件接受完整的运营者 schema：`security`、`billing`、`profiles`、`routing`。典型示例：
+
+```json
+{
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "auto",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000
+    },
+    "worktreeRetentionMs": 86400000
+  },
+  "routing": {
+    "maxExperts": 4
+  }
+}
+```
+
+字段说明：
+
+- `security.workspaceProvisioning.mode`——`"none"`（默认，不安装）、`"auto"`（按锁文件探测生态自动安装）或 `"custom"`（原样运行 `command`）。
+- `security.workspaceProvisioning.verifyCommand`——供给后的变更型专家完工时运行的 `[可执行文件, 参数...]` 扁平序列（默认：先 typecheck 后 test）。
+- `security.workspaceProvisioning.scrubEnv`——为 `true`（默认）时，供给与验证子进程只收到白名单环境；`~/.npmrc` 的 registry 令牌仍可能到达子进程（已记录的残余风险）。
+- `security.worktreeRetentionMs`——供给后的工作树保留多久供审查（默认 24h）。
+- `billing` / `profiles` / `routing`——与 `model-assessment.json` 计费条目、模型能力画像、角色权重相同的 schema。
+
+**主代理编辑契约**：`expert_inspect` 在 `operatorConfig` 下返回文件位置与生效的供给模式。当用户要求调整供给行为时，主代理直接编辑该文件，并告知用户需要重启宿主会话才能生效。JSON 格式错误或非法枚举会在启动时硬报错（运营者笔误绝不会静默关闭安全设置）。
+
 ### 工作树供给与验证门
 
 变更型工作树从已提交的 `HEAD` 创建，天然不含未追踪的本地产物。运行时可在专家开工前用仓库自身提交的锁文件为其安装依赖；该功能默认关闭：
