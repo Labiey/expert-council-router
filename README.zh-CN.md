@@ -265,7 +265,8 @@ subscription  metered  quota  free  unknown
       "timeoutMs": 600000,
       "maxConcurrent": 1,
       "scrubEnv": true,
-      "removalTimeoutMs": 300000
+      "removalTimeoutMs": 300000,
+      "verifyCommand": ["npm", "run", "typecheck"]
     },
     "worktreeRetentionMs": 86400000
   },
@@ -278,7 +279,7 @@ subscription  metered  quota  free  unknown
 字段说明：
 
 - `security.workspaceProvisioning.mode`——`"none"`（默认，不安装）、`"auto"`（按锁文件探测生态自动安装）或 `"custom"`（原样运行 `command`）。
-- `security.workspaceProvisioning.verifyCommand`——供给后的变更型专家完工时运行的 `[可执行文件, 参数...]` 扁平序列（默认：先 typecheck 后 test）。
+- `security.workspaceProvisioning.verifyCommand`——单条命令的扁平 argv 数组，供给后的变更型专家完工时以它替代默认的「先 typecheck 后 test」。
 - `security.workspaceProvisioning.scrubEnv`——为 `true`（默认）时，供给与验证子进程只收到白名单环境；`~/.npmrc` 的 registry 令牌仍可能到达子进程（已记录的残余风险）。
 - `security.worktreeRetentionMs`——供给后的工作树保留多久供审查（默认 24h）。
 - `billing` / `profiles` / `routing`——与 `model-assessment.json` 计费条目、模型能力画像、角色权重相同的 schema。
