@@ -147,17 +147,32 @@ export interface BoundedCommandOutcome {
 
 export type BoundedCommandRunner = (argv: string[], options: BoundedCommandOptions) => Promise<BoundedCommandOutcome>;
 
+/**
+ * Windows resolves npm/pnpm through .cmd shims that execFile cannot launch
+ * directly; modern Node also refuses .bat/.cmd children without a shell.
+ * Route those commands through cmd.exe while keeping every other argv
+ * element intact (all argv entries are operator/runtime owned).
+ */
+export function resolvePlatformCommand(file: string): { file: string; shell: boolean } {
+  if (process.platform === "win32" && /^(npm|pnpm|yarn)$/i.test(file)) {
+    return { file: `${file}.cmd`, shell: true };
+  }
+  return { file, shell: false };
+}
+
 /** Run a single argv command without a shell, bounded by timeout and output size. */
 export async function runBoundedCommand(argv: string[], options: BoundedCommandOptions): Promise<BoundedCommandOutcome> {
   const [file, ...args] = argv;
   if (!file) return { exitCode: 1, stdout: "", stderr: "", timedOut: false, error: "Empty command argv." };
+  const resolved = resolvePlatformCommand(file);
   try {
-    const result = await execFileAsync(file, args, {
+    const result = await execFileAsync(resolved.file, args, {
       cwd: options.cwd,
       timeout: options.timeoutMs,
       windowsHide: true,
       maxBuffer: 4 * 1024 * 1024,
       env: options.env,
+      shell: resolved.shell,
     });
     return {
       exitCode: 0,

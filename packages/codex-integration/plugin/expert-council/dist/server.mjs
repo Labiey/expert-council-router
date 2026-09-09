@@ -313419,17 +313419,25 @@ function scrubProvisioningEnv(source = process.env) {
   }
   return scrubbed;
 }
+function resolvePlatformCommand(file2) {
+  if (process.platform === "win32" && /^(npm|pnpm|yarn)$/i.test(file2)) {
+    return { file: `${file2}.cmd`, shell: true };
+  }
+  return { file: file2, shell: false };
+}
 async function runBoundedCommand(argv, options) {
   const [file2, ...args] = argv;
   if (!file2)
     return { exitCode: 1, stdout: "", stderr: "", timedOut: false, error: "Empty command argv." };
+  const resolved = resolvePlatformCommand(file2);
   try {
-    const result = await execFileAsync3(file2, args, {
+    const result = await execFileAsync3(resolved.file, args, {
       cwd: options.cwd,
       timeout: options.timeoutMs,
       windowsHide: true,
       maxBuffer: 4 * 1024 * 1024,
-      env: options.env
+      env: options.env,
+      shell: resolved.shell
     });
     return {
       exitCode: 0,
