@@ -351,6 +351,24 @@ describe("configuration", () => {
       expect((error as Error).message).toContain("routing.maxExperts");
     }
   });
+
+  it("defaults worktree provisioning to inert in both default sites", () => {
+    const defaults = {
+      mode: "none",
+      timeoutMs: 600_000,
+      maxConcurrent: 1,
+      scrubEnv: true,
+      removalTimeoutMs: 300_000,
+    };
+    expect(parseCouncilConfig({}).security.workspaceProvisioning).toEqual(defaults);
+    expect(parseCouncilConfig({ security: { workspaceStrategy: "auto" } }).security.workspaceProvisioning).toEqual(defaults);
+    expect(parseCouncilConfig({ security: { workspaceProvisioning: {} } }).security.workspaceProvisioning).toEqual(defaults);
+    const optedIn = parseCouncilConfig({
+      security: { workspaceProvisioning: { mode: "auto", maxConcurrent: 2, scrubEnv: false } },
+    });
+    expect(optedIn.security.workspaceProvisioning).toMatchObject({ mode: "auto", maxConcurrent: 2, scrubEnv: false });
+    expect(() => parseCouncilConfig({ security: { workspaceProvisioning: { timeoutMs: 1_000 } } })).toThrow(ConfigValidationError);
+  });
 });
 
 describe("runtime availability markers", () => {

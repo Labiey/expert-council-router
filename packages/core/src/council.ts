@@ -178,6 +178,12 @@ export function buildCouncilPlan(
     warnings.unshift("Source workspace has uncommitted changes; mutation worktrees start from committed HEAD and will not include them.");
   }
 
+  if (config.security.workspaceProvisioning.mode === "none" && experts.some((expert) => !expert.readOnly)) {
+    warnings.push(
+      "Mutation experts run in isolated worktrees that are not provisioned (security.workspaceProvisioning.mode=none); they must not install dependencies. Set security.workspaceProvisioning.mode=auto to provision from the repository lockfile.",
+    );
+  }
+
   return {
     id: `council_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
     taskClass,

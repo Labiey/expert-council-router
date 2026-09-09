@@ -310110,13 +310110,35 @@ var councilConfigSchema = external_exports.object({
     allowInPlaceMutations: external_exports.boolean().default(false),
     allowedWorkspaceRoots: external_exports.array(external_exports.string().min(1)).default([]),
     trustedSkills: external_exports.array(external_exports.string().min(1)).default([]),
-    worktreeRetentionMs: external_exports.number().int().min(6e4).max(30 * 24 * 60 * 6e4).default(24 * 60 * 6e4)
+    worktreeRetentionMs: external_exports.number().int().min(6e4).max(30 * 24 * 60 * 6e4).default(24 * 60 * 6e4),
+    workspaceProvisioning: external_exports.object({
+      mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
+      timeoutMs: external_exports.number().int().min(3e4).max(18e5).default(6e5),
+      maxConcurrent: external_exports.number().int().min(1).max(4).default(1),
+      command: external_exports.array(external_exports.string().min(1).max(500)).max(12).optional(),
+      verifyCommand: external_exports.array(external_exports.string().min(1).max(500)).max(12).optional(),
+      scrubEnv: external_exports.boolean().default(true),
+      removalTimeoutMs: external_exports.number().int().min(3e4).max(18e5).default(3e5)
+    }).default({
+      mode: "none",
+      timeoutMs: 6e5,
+      maxConcurrent: 1,
+      scrubEnv: true,
+      removalTimeoutMs: 3e5
+    })
   }).default({
     workspaceStrategy: "auto",
     allowInPlaceMutations: false,
     allowedWorkspaceRoots: [],
     trustedSkills: [],
-    worktreeRetentionMs: 24 * 60 * 6e4
+    worktreeRetentionMs: 24 * 60 * 6e4,
+    workspaceProvisioning: {
+      mode: "none",
+      timeoutMs: 6e5,
+      maxConcurrent: 1,
+      scrubEnv: true,
+      removalTimeoutMs: 3e5
+    }
   })
 });
 var ConfigValidationError = class extends Error {
@@ -310862,6 +310884,9 @@ function buildCouncilPlan(request, models, config2, telemetry = [], composition)
   if (request.constraints?.runtimeCapabilities?.sourceWorkspaceDirty && experts.some((expert) => !expert.readOnly)) {
     warnings.unshift("Source workspace has uncommitted changes; mutation worktrees start from committed HEAD and will not include them.");
   }
+  if (config2.security.workspaceProvisioning.mode === "none" && experts.some((expert) => !expert.readOnly)) {
+    warnings.push("Mutation experts run in isolated worktrees that are not provisioned (security.workspaceProvisioning.mode=none); they must not install dependencies. Set security.workspaceProvisioning.mode=auto to provision from the repository lockfile.");
+  }
   return {
     id: `council_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`,
     taskClass: taskClass2,
@@ -311267,6 +311292,7 @@ function presentResourceInventory(inventory, detail2 = "compact") {
       mutation: inventory.runtimeCapabilities.mutation,
       workspaceIsolation: inventory.runtimeCapabilities.workspaceIsolation,
       ...inventory.runtimeCapabilities.sourceWorkspaceDirty !== void 0 ? { sourceWorkspaceDirty: inventory.runtimeCapabilities.sourceWorkspaceDirty } : {},
+      ...inventory.runtimeCapabilities.workspaceProvisioning ? { workspaceProvisioning: inventory.runtimeCapabilities.workspaceProvisioning } : {},
       limitations: inventory.runtimeCapabilities.limitations
     },
     modelAssessment: inventory.modelAssessmentStatus?.status === "required" ? {
@@ -311589,6 +311615,13 @@ function approximateUsage(result) {
 }
 function boundedFailureSummary(value3) {
   return value3.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 500);
+}
+function priorFailureSummary(summary, correctedInstruction) {
+  if (!correctedInstruction)
+    return boundedFailureSummary(summary);
+  const instruction = boundedFailureSummary(correctedInstruction);
+  const head = boundedFailureSummary(summary).slice(0, Math.max(0, 500 - instruction.length - 3));
+  return `${head} | ${instruction}`;
 }
 function constraintsWithAssessment(constraints, assessment, runtimeCapabilities, runtimeBilling = {}) {
   const audited = assessment?.models ?? {};
@@ -311983,6 +312016,7 @@ var ExpertCouncilService = class {
     let retriesForCurrent = 0;
     let escalations = 0;
     let lastResult;
+    let correctedInstruction;
     let currentTimeoutMs = request.timeoutMs;
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
@@ -312044,7 +312078,12 @@ var ExpertCouncilService = class {
         ...request.workspace ? { workspace: request.workspace } : {},
         timeoutMs: currentTimeoutMs,
         attempt: state2.attempts,
-        ...failures.length ? { priorFailure: { type: failures.at(-1).type, summary: failures.at(-1).summary } } : {}
+        ...failures.length ? {
+          priorFailure: {
+            type: failures.at(-1).type,
+            summary: priorFailureSummary(failures.at(-1).summary, correctedInstruction)
+          }
+        } : {}
       });
       attemptSnapshot.status = lastResult.status;
       Object.assign(attemptSnapshot, { finishedAt: (/* @__PURE__ */ new Date()).toISOString() });
@@ -312116,6 +312155,7 @@ var ExpertCouncilService = class {
         }
       }
       const decision = decideEscalation({ role: request.role, task: request.task, currentModel: current.model, previousFailures: failures }, ranked.candidates, this.config.retry.correctedRetriesPerModel);
+      correctedInstruction = decision.correctedInstruction;
       if (decision.action === "retry" && retriesForCurrent < this.config.retry.correctedRetriesPerModel) {
         retriesForCurrent += 1;
         continue;
@@ -312658,7 +312698,19 @@ var expertResult = external_exports.object({
     workspace: boundedText(32768).optional(),
     isolated: external_exports.boolean().optional(),
     escalationCount: external_exports.number().int().min(0).max(100).optional(),
-    unavailableModels: external_exports.array(identifier).max(8).optional()
+    unavailableModels: external_exports.array(identifier).max(8).optional(),
+    provisioning: external_exports.object({
+      status: external_exports.enum(["ready", "skipped", "failed"]),
+      packageManager: identifier.optional(),
+      command: boundedText(8e3).optional(),
+      durationMs: external_exports.number().finite().min(0).optional(),
+      detail: boundedText(8e3).optional()
+    }).strict().optional(),
+    verification: external_exports.array(external_exports.object({
+      command: boundedText(1e3).optional(),
+      status: external_exports.enum(["passed", "failed", "not-run"]),
+      summary: boundedText(2e3).optional()
+    }).strict()).max(20).optional()
   }).strict().optional()
 }).strict();
 var councilStateSnapshotSchema = external_exports.object({
@@ -313337,6 +313389,211 @@ function worktreeNameEpochMs(worktree) {
   const epoch = Number(match2[1]);
   return Number.isSafeInteger(epoch) && epoch > 0 ? epoch : void 0;
 }
+function worktreeMatchesExecutionId(worktree, executionId2) {
+  return path25.basename(worktree).endsWith(`-${executionId2.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
+}
+var PROVISIONING_ENV_ALLOWLIST = /* @__PURE__ */ new Set([
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TEMP",
+  "TMP",
+  "SYSTEMROOT",
+  "SYSTEMDRIVE",
+  "COMSPEC",
+  "PROGRAMFILES",
+  "PROGRAMDATA",
+  "NPM_CONFIG_REGISTRY",
+  "NPM_CONFIG_CACHE"
+]);
+function scrubProvisioningEnv(source = process.env) {
+  const scrubbed = {};
+  for (const [key, value3] of Object.entries(source)) {
+    if (typeof value3 !== "string")
+      continue;
+    const upper = key.toUpperCase();
+    if (PROVISIONING_ENV_ALLOWLIST.has(upper) || upper.startsWith("GIT_"))
+      scrubbed[key] = value3;
+  }
+  return scrubbed;
+}
+async function runBoundedCommand(argv, options) {
+  const [file2, ...args] = argv;
+  if (!file2)
+    return { exitCode: 1, stdout: "", stderr: "", timedOut: false, error: "Empty command argv." };
+  try {
+    const result = await execFileAsync3(file2, args, {
+      cwd: options.cwd,
+      timeout: options.timeoutMs,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024,
+      env: options.env
+    });
+    return {
+      exitCode: 0,
+      stdout: typeof result.stdout === "string" ? result.stdout : "",
+      stderr: typeof result.stderr === "string" ? result.stderr : "",
+      timedOut: false
+    };
+  } catch (error61) {
+    const failure = error61;
+    return {
+      exitCode: typeof failure.code === "number" ? failure.code : 1,
+      stdout: typeof failure.stdout === "string" ? failure.stdout : "",
+      stderr: typeof failure.stderr === "string" ? failure.stderr : "",
+      timedOut: failure.killed === true || failure.signal === "SIGTERM" || failure.code === "ETIMEDOUT",
+      error: failure.message
+    };
+  }
+}
+function tailCommandOutput(value3, maximum) {
+  const sanitized = value3.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim();
+  return sanitized.length > maximum ? sanitized.slice(sanitized.length - maximum) : sanitized;
+}
+function withIgnoreScripts(argv) {
+  return argv.includes("--ignore-scripts") ? argv : [...argv, "--ignore-scripts"];
+}
+function safePackageManager(value3) {
+  if (!value3)
+    return void 0;
+  const sanitized = value3.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, 200);
+  return sanitized || void 0;
+}
+function safeCommandLabel(argv) {
+  return argv.join(" ").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").slice(0, 8e3);
+}
+async function pathExists2(target) {
+  try {
+    await stat10(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function detectProvisioningPlan(root, config2) {
+  if (config2.mode === "custom") {
+    if (!config2.command?.length) {
+      return { detail: "security.workspaceProvisioning.mode=custom requires a non-empty command." };
+    }
+    return { packageManager: config2.command[0], argv: [...config2.command] };
+  }
+  if (await pathExists2(path25.join(root, "pnpm-lock.yaml"))) {
+    return {
+      packageManager: "pnpm",
+      argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"])
+    };
+  }
+  if (await pathExists2(path25.join(root, "package-lock.json"))) {
+    return {
+      packageManager: "npm",
+      argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"])
+    };
+  }
+  if (await pathExists2(path25.join(root, "bun.lock")) || await pathExists2(path25.join(root, "bun.lockb"))) {
+    return { packageManager: "bun", argv: ["bun", "install", "--frozen-lockfile"] };
+  }
+  if (await pathExists2(path25.join(root, "uv.lock")) || await pathExists2(path25.join(root, "requirements.txt")) || await pathExists2(path25.join(root, "Cargo.toml")) || await pathExists2(path25.join(root, "go.mod"))) {
+    return { detail: "no supported provisioning for this ecosystem" };
+  }
+  return { detail: "no supported provisioning for this ecosystem" };
+}
+var ProvisioningSemaphore = class {
+  limit;
+  active = 0;
+  waiting = [];
+  constructor(limit3) {
+    this.limit = limit3;
+  }
+  async acquire() {
+    if (this.active < this.limit) {
+      this.active += 1;
+      return;
+    }
+    await new Promise((resolve17) => {
+      this.waiting.push(resolve17);
+    });
+    this.active += 1;
+  }
+  release() {
+    this.active = Math.max(0, this.active - 1);
+    this.waiting.shift()?.();
+  }
+};
+var activeProvisioningSemaphore;
+function provisioningSemaphore(limit3) {
+  if (!activeProvisioningSemaphore || activeProvisioningSemaphore.limit !== limit3) {
+    activeProvisioningSemaphore = new ProvisioningSemaphore(limit3);
+  }
+  return activeProvisioningSemaphore;
+}
+async function isAlreadyProvisioned(root, packageManager) {
+  return packageManager === "npm" || packageManager === "pnpm" || packageManager === "bun" ? pathExists2(path25.join(root, "node_modules")) : false;
+}
+async function provisionWorkspace(root, config2, options = {}) {
+  const started = Date.now();
+  if (config2.mode === "none") {
+    return { status: "skipped", detail: "security.workspaceProvisioning.mode is none." };
+  }
+  const plan = await detectProvisioningPlan(root, config2);
+  const packageManager = safePackageManager(plan.packageManager);
+  if (!plan.argv) {
+    return {
+      status: "skipped",
+      ...packageManager ? { packageManager } : {},
+      detail: plan.detail ?? "no supported provisioning for this ecosystem",
+      durationMs: Date.now() - started
+    };
+  }
+  const commandLabel = safeCommandLabel(plan.argv);
+  if (options.reused && (config2.mode === "custom" || await isAlreadyProvisioned(root, plan.packageManager))) {
+    return {
+      status: "ready",
+      ...packageManager ? { packageManager } : {},
+      command: commandLabel,
+      durationMs: Date.now() - started,
+      detail: "Reused a worktree already provisioned for this execution."
+    };
+  }
+  const runner = options.runner ?? runBoundedCommand;
+  const env2 = config2.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  const semaphore = provisioningSemaphore(config2.maxConcurrent);
+  await semaphore.acquire();
+  let outcome;
+  try {
+    outcome = await runner(plan.argv, { cwd: root, timeoutMs: config2.timeoutMs, env: env2 });
+  } catch (error61) {
+    outcome = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      error: error61 instanceof Error ? error61.message : String(error61)
+    };
+  } finally {
+    semaphore.release();
+  }
+  const durationMs = Date.now() - started;
+  if (outcome.exitCode === 0 && !outcome.timedOut) {
+    return {
+      status: "ready",
+      ...packageManager ? { packageManager } : {},
+      command: commandLabel,
+      durationMs,
+      detail: `Provisioned with ${plan.argv[0]}.`
+    };
+  }
+  const tail = tailCommandOutput(outcome.stderr || outcome.stdout, 4 * 1024);
+  const detail2 = `Provisioning failed${outcome.timedOut ? " (timed out)" : ` with exit code ${outcome.exitCode}`}${outcome.error ? `: ${outcome.error}` : ""}${tail ? `: ${tail}` : ""}`;
+  return {
+    status: "failed",
+    ...packageManager ? { packageManager } : {},
+    command: commandLabel,
+    durationMs,
+    detail: detail2.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").slice(0, 8e3)
+  };
+}
 var WorkspaceBoundary = class {
   defaultWorkspace;
   config;
@@ -313391,7 +313648,7 @@ var WorkspaceBoundary = class {
         const creationMs = worktreeNameEpochMs(worktree) ?? info.mtimeMs;
         if (Date.now() - creationMs < this.config.worktreeRetentionMs)
           continue;
-        await git(resolvedGitRoot, ["worktree", "remove", "--force", worktree], 3e4);
+        await git(resolvedGitRoot, ["worktree", "remove", "--force", worktree], this.config.workspaceProvisioning.removalTimeoutMs);
         removed.push(worktree);
       } catch (error61) {
         if (error61.code !== "ENOENT")
@@ -313457,20 +313714,75 @@ var WorkspaceBoundary = class {
     }
     return resolved;
   }
+  /** Find a worktree created for this execution id so a retry can reuse its provisioned state. */
+  async findReusableWorktree(gitRoot, worktreeBase, executionId2) {
+    for (const listed of await this.listedWorktrees(gitRoot)) {
+      try {
+        const resolved = await canonical(listed);
+        if (resolved !== worktreeBase && isWithin3(worktreeBase, resolved) && worktreeMatchesExecutionId(resolved, executionId2)) {
+          return resolved;
+        }
+      } catch (error61) {
+        if (error61.code !== "ENOENT")
+          throw error61;
+      }
+    }
+    return void 0;
+  }
+  /** Re-run the full containment/ownership/registration validation for a worktree path. */
+  async validateWorktree(gitRoot, worktreeBase, candidate2) {
+    const created = await canonical(candidate2);
+    if (!isWithin3(worktreeBase, created))
+      throw new Error("Created worktree escaped the private worktree base.");
+    const createdInfo = await stat10(created);
+    assertOwnedAndPrivate(createdInfo, `Worktree ${created}`);
+    await chmod4(created, 448).catch((chmodError) => {
+      if (process.platform !== "win32")
+        throw chmodError;
+    });
+    const marker = await lstat2(path25.join(created, ".git"));
+    if (!marker.isFile())
+      throw new Error("Created worktree has an invalid .git registration marker.");
+    const markerText = (await readFile14(path25.join(created, ".git"), "utf8")).trim();
+    const gitDirValue = /^gitdir:\s*(.+)$/i.exec(markerText)?.[1];
+    if (!gitDirValue)
+      throw new Error("Created worktree .git registration is malformed.");
+    const registeredGitDir = await canonical(path25.isAbsolute(gitDirValue) ? gitDirValue : path25.resolve(created, gitDirValue));
+    const commonDirValue = await git(gitRoot, ["rev-parse", "--git-common-dir"]);
+    const commonDir = await canonical(path25.isAbsolute(commonDirValue) ? commonDirValue : path25.resolve(gitRoot, commonDirValue));
+    const worktreeRegistrations = await canonical(path25.join(commonDir, "worktrees"));
+    if (!isWithin3(worktreeRegistrations, registeredGitDir)) {
+      throw new Error("Created worktree registration is outside this repository's Git metadata.");
+    }
+    assertOwnedAndPrivate(await stat10(commonDir), "Repository Git metadata");
+    return created;
+  }
   async prepare(candidate2, readOnly, executionId2) {
     validateExecutionId(executionId2);
     const cwd = await this.assertAllowed(candidate2 ?? this.defaultWorkspace);
     if (readOnly || this.config.workspaceStrategy === "read-only") {
       if (!readOnly)
         throw new Error("Mutation role was denied because workspaceStrategy is read-only.");
-      return { cwd, root: cwd, isolated: false, strategy: "read-only" };
+      return {
+        cwd,
+        root: cwd,
+        isolated: false,
+        strategy: "read-only",
+        provisioning: { status: "skipped", detail: "Read-only roles run in the main workspace; no provisioning is performed." }
+      };
     }
     const strategy = this.config.workspaceStrategy;
     if (strategy === "bounded-in-place") {
       if (!this.config.allowInPlaceMutations) {
         throw new Error("bounded-in-place mutation requires security.allowInPlaceMutations=true.");
       }
-      return { cwd, root: cwd, isolated: false, strategy: "bounded-in-place" };
+      return {
+        cwd,
+        root: cwd,
+        isolated: false,
+        strategy: "bounded-in-place",
+        provisioning: { status: "skipped", detail: "bounded-in-place workspaces are not provisioned." }
+      };
     }
     let cleanupGitRoot;
     let cleanupWorktree;
@@ -313480,50 +313792,53 @@ var WorkspaceBoundary = class {
       const relativeCwd = path25.relative(gitRoot, cwd);
       const worktreeBase = await this.secureWorktreeBase();
       await this.pruneExpired(gitRoot);
-      const safeName = path25.basename(gitRoot).replace(/[^a-zA-Z0-9._-]/g, "-");
-      const worktree = path25.join(worktreeBase, `${safeName}-${Date.now()}-${randomUUID13()}-${executionId2.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
-      await git(gitRoot, ["worktree", "add", "--detach", worktree, "HEAD"], 3e4);
-      cleanupWorktree = worktree;
-      const created = await canonical(worktree);
-      if (!isWithin3(worktreeBase, created))
-        throw new Error("Created worktree escaped the private worktree base.");
-      const createdInfo = await stat10(created);
-      assertOwnedAndPrivate(createdInfo, `Worktree ${created}`);
-      await chmod4(created, 448).catch((chmodError) => {
-        if (process.platform !== "win32")
-          throw chmodError;
-      });
-      const marker = await lstat2(path25.join(created, ".git"));
-      if (!marker.isFile())
-        throw new Error("Created worktree has an invalid .git registration marker.");
-      const markerText = (await readFile14(path25.join(created, ".git"), "utf8")).trim();
-      const gitDirValue = /^gitdir:\s*(.+)$/i.exec(markerText)?.[1];
-      if (!gitDirValue)
-        throw new Error("Created worktree .git registration is malformed.");
-      const registeredGitDir = await canonical(path25.isAbsolute(gitDirValue) ? gitDirValue : path25.resolve(created, gitDirValue));
-      const commonDirValue = await git(gitRoot, ["rev-parse", "--git-common-dir"]);
-      const commonDir = await canonical(path25.isAbsolute(commonDirValue) ? commonDirValue : path25.resolve(gitRoot, commonDirValue));
-      const worktreeRegistrations = await canonical(path25.join(commonDir, "worktrees"));
-      if (!isWithin3(worktreeRegistrations, registeredGitDir)) {
-        throw new Error("Created worktree registration is outside this repository's Git metadata.");
+      const reusable = await this.findReusableWorktree(gitRoot, worktreeBase, executionId2);
+      let reused = false;
+      let worktree;
+      if (reusable) {
+        reused = true;
+        worktree = reusable;
+      } else {
+        const safeName = path25.basename(gitRoot).replace(/[^a-zA-Z0-9._-]/g, "-");
+        worktree = path25.join(worktreeBase, `${safeName}-${Date.now()}-${randomUUID13()}-${executionId2.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
+        await git(gitRoot, ["worktree", "add", "--detach", worktree, "HEAD"], 3e4);
       }
-      assertOwnedAndPrivate(await stat10(commonDir), "Repository Git metadata");
+      cleanupWorktree = worktree;
+      const created = await this.validateWorktree(gitRoot, worktreeBase, worktree);
+      cleanupWorktree = created;
+      if (reused) {
+        await git(created, ["reset", "--hard", "HEAD"], this.config.workspaceProvisioning.removalTimeoutMs);
+        await git(created, ["clean", "-fdxq", "-e", "node_modules"], this.config.workspaceProvisioning.removalTimeoutMs);
+      }
+      const provisioning = await provisionWorkspace(created, this.config.workspaceProvisioning, { reused });
+      const limitations = [];
+      if (provisioning.status === "failed") {
+        limitations.push(`Worktree provisioning failed: ${provisioning.detail ?? "unknown error"}. Dependencies are not installed; do not attempt an install.`.slice(0, 2e3));
+      }
       return {
         cwd: path25.join(created, relativeCwd),
         root: created,
         isolated: true,
         strategy: "git-worktree",
-        sourceRoot: gitRoot
+        sourceRoot: gitRoot,
+        provisioning,
+        ...limitations.length ? { limitations } : {}
       };
     } catch (error61) {
       if (cleanupGitRoot && cleanupWorktree) {
-        await git(cleanupGitRoot, ["worktree", "remove", "--force", cleanupWorktree], 3e4).catch(() => void 0);
+        await git(cleanupGitRoot, ["worktree", "remove", "--force", cleanupWorktree], this.config.workspaceProvisioning.removalTimeoutMs).catch(() => void 0);
         await git(cleanupGitRoot, ["worktree", "prune"]).catch(() => void 0);
       }
       if (strategy === "git-worktree" || !this.config.allowInPlaceMutations) {
         throw new Error(`Unable to create an isolated Git worktree; in-place mutation is disabled. Retry with workspace set to the target project's Git repository root inside the allowed roots, or enable security.workspaceStrategy=bounded-in-place with security.allowInPlaceMutations=true explicitly. ${error61 instanceof Error ? error61.message : String(error61)}`);
       }
-      return { cwd, root: cwd, isolated: false, strategy: "bounded-in-place" };
+      return {
+        cwd,
+        root: cwd,
+        isolated: false,
+        strategy: "bounded-in-place",
+        provisioning: { status: "skipped", detail: "bounded-in-place workspaces are not provisioned." }
+      };
     }
   }
   async changedFiles(workspace) {
@@ -313545,12 +313860,11 @@ var WorkspaceBoundary = class {
     try {
       const gitRoot = await this.defaultGitRoot(this.defaultWorkspace);
       const base = await this.secureWorktreeBase();
-      const suffix = `-${executionId2.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
       const worktrees = [];
       for (const listed of await this.listedWorktrees(gitRoot)) {
         try {
           const resolved = await canonical(listed);
-          if (resolved !== base && isWithin3(base, resolved) && path25.basename(resolved).endsWith(suffix)) {
+          if (resolved !== base && isWithin3(base, resolved) && worktreeMatchesExecutionId(resolved, executionId2)) {
             assertOwnedAndPrivate(await stat10(resolved), `Worktree ${resolved}`);
             worktrees.push(resolved);
           }
@@ -313568,7 +313882,7 @@ var WorkspaceBoundary = class {
       const failures = [];
       for (const worktree of worktrees) {
         try {
-          await git(gitRoot, ["worktree", "remove", "--force", worktree], 3e4);
+          await git(gitRoot, ["worktree", "remove", "--force", worktree], this.config.workspaceProvisioning.removalTimeoutMs);
           removed.push(worktree);
         } catch (error61) {
           failures.push(`${worktree}: ${error61 instanceof Error ? error61.message : String(error61)}`);
@@ -313748,7 +314062,7 @@ function safeText(value3, maximum) {
   const sanitized = value3.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F]/g, "").replace(/[\u202A-\u202E\u2066-\u2069]/g, "").trim();
   return sanitized ? sanitized.slice(0, maximum) : void 0;
 }
-function normalizeResult(parsed, request, rawText, changedFiles, workspace, usage2) {
+function normalizeResult(parsed, request, rawText, changedFiles, workspace, usage2, verification) {
   const status = parsed?.status === "success" || parsed?.status === "partial" || parsed?.status === "failed" ? parsed.status : "partial";
   const tests = Array.isArray(parsed?.tests) ? parsed.tests.slice(0, 20).flatMap((test) => {
     if (!test || typeof test !== "object")
@@ -313781,9 +314095,48 @@ function normalizeResult(parsed, request, rawText, changedFiles, workspace, usag
       attempts: request.attempt,
       workspace: workspace.root,
       isolated: workspace.isolated,
+      provisioning: workspace.provisioning,
+      ...verification?.length ? { verification } : {},
       ...inferredFailureType ? { failureType: inferredFailureType } : {},
       ...usage2 ? { usage: usage2 } : {}
     }
+  };
+}
+function planVerification(config2) {
+  if (config2.verifyCommand?.length) {
+    return [{ command: [...config2.verifyCommand], label: config2.verifyCommand.join(" ") }];
+  }
+  return [
+    { command: ["npm", "run", "typecheck"], label: "npm run typecheck" },
+    { command: ["npm", "test"], label: "npm test" }
+  ];
+}
+async function runVerification(workspace, config2, runner = runBoundedCommand) {
+  const entries = [];
+  const env2 = config2.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  for (const step of planVerification(config2)) {
+    const outcome = await runner(step.command, { cwd: workspace.root, timeoutMs: config2.timeoutMs, env: env2 });
+    const passed = outcome.exitCode === 0 && !outcome.timedOut;
+    const tail = tailCommandOutput(outcome.stderr || outcome.stdout, 2e3);
+    const summary = passed ? "exit code 0" : `exit code ${outcome.exitCode}${outcome.timedOut ? " (timed out)" : ""}${tail ? `: ${tail}` : ""}`;
+    entries.push({
+      command: step.label.slice(0, 1e3),
+      status: passed ? "passed" : "failed",
+      summary: summary.slice(0, 2e3)
+    });
+  }
+  return entries;
+}
+function applyVerificationGate(result) {
+  const verification = result.executionMetadata?.verification;
+  if (!verification?.some((entry) => entry.status === "failed"))
+    return result;
+  if (result.status !== "success")
+    return result;
+  return {
+    ...result,
+    status: "partial",
+    executionMetadata: { ...result.executionMetadata, failureType: "test_failure" }
   };
 }
 async function rolePrompt(role2, roleDirectory) {
@@ -313791,7 +314144,13 @@ async function rolePrompt(role2, roleDirectory) {
     return readFile15(path26.resolve(roleDirectory, `${role2}.md`), "utf8");
   return readFile15(new URL(`./roles/${role2}.md`, import.meta.url), "utf8");
 }
-function executionPrompt(request, roleInstructions) {
+function dependencyGuidance(provisioning) {
+  if (provisioning?.status === "ready") {
+    return `The runtime provisioned this worktree (${provisioning.packageManager ?? "package manager"}); dependencies are installed. Self-verify with the repository's typecheck command and then its test command, and report both in \`tests\`. Do NOT run a package-manager install, and do NOT run a build/release/pack script \u2014 in this repository a build regenerates Git-tracked artifacts and would pollute the diff you hand back.`;
+  }
+  return "Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent \u2014 account for this before planning commands. Dependencies are NOT installed; report `tests` entries as not-run with the reason instead of attempting an install.";
+}
+function executionPrompt(request, roleInstructions, provisioning) {
   return `${roleInstructions}
 
 ## Bounded assignment
@@ -313803,7 +314162,7 @@ ${request.task}
 - Never modify an existing file before inspecting the relevant content.
 - Prefer targeted edits over rewriting whole files.
 - Verify paths rather than guessing.
-- Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent \u2014 account for this before planning commands.
+- ${dependencyGuidance(provisioning)}
 - If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.
 - Diagnose a failed tool call before retrying with a changed approach.
 - Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.
@@ -313907,6 +314266,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
   }
   async getCapabilities(cwd = this.options.cwd) {
     const workspace = await this.boundary.mutationCapability(cwd);
+    const provisioningMode = this.options.config.security.workspaceProvisioning.mode;
     return {
       hostType: `pi:${this.packageName}`,
       modelDiscovery: true,
@@ -313916,11 +314276,13 @@ var PiExpertRuntime = class _PiExpertRuntime {
       mutation: workspace.mutation,
       workspaceIsolation: workspace.workspaceIsolation,
       ...workspace.sourceWorkspaceDirty !== void 0 ? { sourceWorkspaceDirty: workspace.sourceWorkspaceDirty } : {},
+      workspaceProvisioning: { mode: provisioningMode },
       supportedTools: process.platform === "win32" ? ["read", "grep", "find", "ls", "edit", "write", "powershell"] : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : [],
         ...workspace.limitations,
+        provisioningMode === "none" ? "Mutation worktrees are not provisioned (security.workspaceProvisioning.mode=none); experts must not install dependencies." : `Mutation worktrees are provisioned from the repository lockfile (security.workspaceProvisioning.mode=${provisioningMode}); read-only workspaces are never provisioned.`,
         ...workspace.workspaceIsolation === "git-worktree" ? [`Mutation worktrees are retained for review until expert_cleanup is called or the ${this.options.config.security.worktreeRetentionMs}ms retention window expires.`] : []
       ]
     };
@@ -313972,7 +314334,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
-      const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory));
+      const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory), workspace.provisioning);
       const timeoutMs = request.timeoutMs;
       let timer;
       const execution2 = (async () => {
@@ -314020,18 +314382,27 @@ var PiExpertRuntime = class _PiExpertRuntime {
           role: request.role,
           model: request.model,
           summary: safeText(sessionError, 4e3) ?? "Expert session failed.",
+          ...workspace.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {},
           executionMetadata: {
             attempts: request.attempt,
             workspace: workspace.root,
             isolated: workspace.isolated,
+            provisioning: workspace.provisioning,
             failureType: inferFailureType(sessionError),
             durationMs: Date.now() - started,
             ...usage2 ? { usage: usage2 } : {}
           }
         };
       }
+      let verification;
+      if (workspace.strategy === "git-worktree" && !effectiveReadOnly && workspace.provisioning.status === "ready") {
+        verification = await runVerification(workspace, this.options.config.security.workspaceProvisioning);
+      }
       const changedFiles = await this.boundary.changedFiles(workspace);
-      const result = normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session));
+      let result = applyVerificationGate(normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session), verification));
+      if (workspace.limitations?.length) {
+        result = { ...result, risks: [...workspace.limitations, ...result.risks ?? []].slice(0, 20) };
+      }
       result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
       return result;
     } catch (error61) {
@@ -314040,11 +314411,12 @@ var PiExpertRuntime = class _PiExpertRuntime {
         role: request.role,
         model: request.model,
         summary: safeText(error61 instanceof Error ? error61.message : String(error61), 4e3) ?? "Expert execution failed.",
+        ...workspace?.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {},
         executionMetadata: {
           attempts: request.attempt,
           failureType: inferFailureType(error61),
           durationMs: Date.now() - started,
-          ...workspace ? { workspace: workspace.root, isolated: workspace.isolated } : {}
+          ...workspace ? { workspace: workspace.root, isolated: workspace.isolated, provisioning: workspace.provisioning } : {}
         }
       };
     } finally {
@@ -314120,6 +314492,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
         attempts: request.attempt,
         workspace: entry.workspace.root,
         isolated: entry.workspace.isolated,
+        provisioning: entry.workspace.provisioning,
         failureType: "aborted",
         durationMs: Date.now() - started,
         ...usage2 ? { usage: usage2 } : {}
@@ -314348,7 +314721,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.0" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.1" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

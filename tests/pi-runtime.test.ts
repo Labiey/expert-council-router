@@ -1,14 +1,22 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseCouncilConfig } from "../packages/core/src/index.js";
 import {
+  applyVerificationGate,
   defaultCouncilDataRoot,
   defaultCouncilStoragePaths,
+  detectProvisioningPlan,
   inferPiProviderBilling,
   PiExpertRuntime,
+  planVerification,
+  provisionWorkspace,
+  scrubProvisioningEnv,
   validatePiSdk,
-  type PiSdkLike,
+  worktreeMatchesExecutionId,
   worktreeNameEpochMs,
+  type PiSdkLike,
 } from "../packages/pi-runtime/src/index.js";
 
 const roleDirectory = path.resolve("packages/core/src/roles/prompts");
@@ -656,5 +664,153 @@ describe("council compositions persistence", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("worktree provisioning", () => {
+  async function provisioningConfig(workspaceProvisioning: Record<string, unknown>) {
+    return parseCouncilConfig({ security: { workspaceProvisioning } }).security.workspaceProvisioning;
+  }
+
+  it("derives install argv from the repository lockfile", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ec-provision-detect-"));
+    try {
+      const auto = await provisioningConfig({ mode: "auto" });
+      await writeFile(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n", "utf8");
+      await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
+        packageManager: "pnpm",
+        argv: ["pnpm", "install", "--frozen-lockfile", "--prefer-offline", "--ignore-scripts"],
+      });
+      await rm(path.join(root, "pnpm-lock.yaml"));
+      await writeFile(path.join(root, "package-lock.json"), "{}\n", "utf8");
+      await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
+        packageManager: "npm",
+        argv: ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund", "--ignore-scripts"],
+      });
+      await rm(path.join(root, "package-lock.json"));
+      await writeFile(path.join(root, "bun.lockb"), "binary\n", "utf8");
+      await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
+        packageManager: "bun",
+        argv: ["bun", "install", "--frozen-lockfile"],
+      });
+      await rm(path.join(root, "bun.lockb"));
+      await writeFile(path.join(root, "uv.lock"), "", "utf8");
+      await expect(detectProvisioningPlan(root, auto)).resolves.toMatchObject({
+        detail: "no supported provisioning for this ecosystem",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a custom argv verbatim and reports unsupported ecosystems as skipped", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ec-provision-custom-"));
+    try {
+      const custom = await provisioningConfig({ mode: "custom", command: ["npm", "install", "--ignore-scripts", "--omit=dev"] });
+      await expect(detectProvisioningPlan(root, custom)).resolves.toEqual({
+        packageManager: "npm",
+        argv: ["npm", "install", "--ignore-scripts", "--omit=dev"],
+      });
+      const emptyCustom = await provisioningConfig({ mode: "custom" });
+      await expect(detectProvisioningPlan(root, emptyCustom)).resolves.toMatchObject({
+        detail: expect.stringContaining("non-empty command"),
+      });
+      const auto = await provisioningConfig({ mode: "auto" });
+      await expect(provisionWorkspace(root, auto)).resolves.toMatchObject({ status: "skipped" });
+      const none = await provisioningConfig({});
+      await expect(provisionWorkspace(root, none)).resolves.toMatchObject({
+        status: "skipped",
+        detail: "security.workspaceProvisioning.mode is none.",
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("scrubs the child environment down to a fixed allowlist", () => {
+    const scrubbed = scrubProvisioningEnv({
+      PATH: "/usr/bin",
+      HOME: "/home/tester",
+      GIT_AUTHOR_NAME: "Tester",
+      npm_config_registry: "https://registry.example",
+      NPM_CONFIG_CACHE: "/tmp/cache",
+      OPENAI_API_KEY: "sk-secret",
+      GITHUB_TOKEN: "ghp-secret",
+      AWS_SECRET_ACCESS_KEY: "aws-secret",
+      EXPERT_COUNCIL_CONFIG: "/tmp/secret-config.json",
+    });
+    expect(scrubbed.PATH).toBe("/usr/bin");
+    expect(scrubbed.HOME).toBe("/home/tester");
+    expect(scrubbed.GIT_AUTHOR_NAME).toBe("Tester");
+    expect(scrubbed.npm_config_registry).toBe("https://registry.example");
+    expect(scrubbed.OPENAI_API_KEY).toBeUndefined();
+    expect(scrubbed.GITHUB_TOKEN).toBeUndefined();
+    expect(scrubbed.AWS_SECRET_ACCESS_KEY).toBeUndefined();
+    expect(scrubbed.EXPERT_COUNCIL_CONFIG).toBeUndefined();
+  });
+
+  it("matches reusable worktrees by execution-id suffix", () => {
+    expect(worktreeMatchesExecutionId("/base/repo-1788-abc-exec_x9", "exec_x9")).toBe(true);
+    expect(worktreeMatchesExecutionId("/base/repo-1788-abc-other", "exec_x9")).toBe(false);
+    expect(worktreeMatchesExecutionId("/base/repo-1788-abc-exec_x9-other", "exec_x9")).toBe(false);
+  });
+
+  it("degrades to a failed status instead of throwing when provisioning fails", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ec-provision-fail-"));
+    try {
+      await writeFile(path.join(root, "package-lock.json"), "{}\n", "utf8");
+      const auto = await provisioningConfig({ mode: "auto" });
+      const failed = await provisionWorkspace(root, auto, {
+        runner: async () => ({ exitCode: 1, stdout: "installing\n", stderr: "registry unreachable", timedOut: false }),
+      });
+      expect(failed).toMatchObject({ status: "failed", packageManager: "npm" });
+      expect(failed.detail).toContain("registry unreachable");
+      const threw = await provisionWorkspace(root, auto, {
+        runner: async () => { throw new Error("spawn ENOENT"); },
+      });
+      expect(threw).toMatchObject({ status: "failed" });
+      expect(threw.detail).toContain("spawn ENOENT");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the configured removal timeout and verification argv", async () => {
+    const config = parseCouncilConfig({
+      security: { workspaceProvisioning: { removalTimeoutMs: 120_000, verifyCommand: ["npm", "run", "typecheck"] } },
+    });
+    expect(config.security.workspaceProvisioning.removalTimeoutMs).toBe(120_000);
+    expect(planVerification(config.security.workspaceProvisioning)).toEqual([
+      { command: ["npm", "run", "typecheck"], label: "npm run typecheck" },
+    ]);
+    const defaults = parseCouncilConfig({}).security.workspaceProvisioning;
+    expect(planVerification(defaults)).toEqual([
+      { command: ["npm", "run", "typecheck"], label: "npm run typecheck" },
+      { command: ["npm", "test"], label: "npm test" },
+    ]);
+  });
+
+  it("downgrades a verified success to partial with a test_failure", () => {
+    const downgraded = applyVerificationGate({
+      status: "success",
+      role: "implementation-worker",
+      model: "p/one",
+      summary: "implemented",
+      executionMetadata: {
+        provisioning: { status: "ready", packageManager: "npm" },
+        verification: [{ command: "npm test", status: "failed", summary: "exit code 1" }],
+      },
+    });
+    expect(downgraded.status).toBe("partial");
+    expect(downgraded.executionMetadata?.failureType).toBe("test_failure");
+    const passed = applyVerificationGate({
+      status: "success",
+      role: "implementation-worker",
+      model: "p/one",
+      summary: "implemented",
+      executionMetadata: { verification: [{ command: "npm test", status: "passed", summary: "exit code 0" }] },
+    });
+    expect(passed.status).toBe("success");
+    expect(passed.executionMetadata?.failureType).toBeUndefined();
   });
 });

@@ -11,6 +11,7 @@ import {
   JsonModelAssessmentStore,
   SplitCouncilStateStore,
   WorkspaceBoundary,
+  provisionWorkspace,
 } from "../packages/pi-runtime/src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -33,13 +34,17 @@ describe("workspace isolation", () => {
       isolated.push(prepared.root);
       expect(prepared.isolated).toBe(true);
       expect(prepared.root).not.toBe(repo);
+      expect(prepared.provisioning).toMatchObject({ status: "skipped" });
       await writeFile(path.join(prepared.cwd, "file.txt"), "after\n", "utf8");
       expect(await boundary.changedFiles(prepared)).toEqual(["file.txt"]);
-      isolated.push((await boundary.prepare(repo, false, executionId)).root);
-      isolated.push((await boundary.prepare(repo, false, executionId)).root);
+      // A retry with the same execution id reuses the worktree and resets it to
+      // the committed HEAD instead of paying for a fresh checkout again.
+      const reused = await boundary.prepare(repo, false, executionId);
+      expect(reused.root).toBe(prepared.root);
+      expect(await boundary.changedFiles(reused)).toEqual([]);
       const restartedBoundary = new WorkspaceBoundary(repo, config.security);
       const cleanup = await restartedBoundary.cleanupExecution(executionId);
-      expect(cleanup).toMatchObject({ status: "cleaned", removedCount: 3 });
+      expect(cleanup).toMatchObject({ status: "cleaned", removedCount: 1 });
       expect(cleanup.workspaces).toEqual(expect.arrayContaining(isolated));
       for (const worktree of isolated) await expect(access(worktree)).rejects.toThrow();
       isolated.length = 0;
@@ -61,6 +66,36 @@ describe("workspace isolation", () => {
       expect(capability.limitations.join(" ")).toContain("allowInPlaceMutations=true");
     } finally {
       await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("never passes credential environment variables to the provisioning child", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "expert-council-provision-env-"));
+    const captured: NodeJS.ProcessEnv[] = [];
+    const previousSecret = process.env.EXPERT_COUNCIL_TEST_SECRET;
+    const previousToken = process.env.GITHUB_TOKEN;
+    process.env.EXPERT_COUNCIL_TEST_SECRET = "super-secret-value";
+    process.env.GITHUB_TOKEN = "ghp_must_not_leak";
+    try {
+      await writeFile(path.join(root, "package-lock.json"), "{}\n", "utf8");
+      const config = parseCouncilConfig({ security: { workspaceProvisioning: { mode: "auto" } } });
+      const outcome = await provisionWorkspace(root, config.security.workspaceProvisioning, {
+        runner: async (_argv, options) => {
+          captured.push(options.env);
+          return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+        },
+      });
+      expect(outcome).toMatchObject({ status: "ready", packageManager: "npm" });
+      expect(captured).toHaveLength(1);
+      expect(captured[0]?.EXPERT_COUNCIL_TEST_SECRET).toBeUndefined();
+      expect(captured[0]?.GITHUB_TOKEN).toBeUndefined();
+      expect(Object.keys(captured[0] ?? {}).map((key) => key.toUpperCase())).toContain("PATH");
+    } finally {
+      if (previousSecret === undefined) delete process.env.EXPERT_COUNCIL_TEST_SECRET;
+      else process.env.EXPERT_COUNCIL_TEST_SECRET = previousSecret;
+      if (previousToken === undefined) delete process.env.GITHUB_TOKEN;
+      else process.env.GITHUB_TOKEN = previousToken;
+      await rm(root, { recursive: true, force: true });
     }
   });
 
@@ -203,6 +238,44 @@ describe("durable council state", () => {
               attempts: 1,
               failureType: "provider_error" as const,
               unavailableModels: ["p/dead"],
+            },
+          },
+        }],
+      };
+      await store.save(snapshot);
+      expect(await store.load()).toEqual(snapshot);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("round-trips provisioning and verification metadata through the strict state schema", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "expert-council-state-provisioning-"));
+    const file = path.join(directory, "state.json");
+    try {
+      const store = new JsonCouncilStateStore(file);
+      const snapshot = {
+        version: 1 as const,
+        plans: [],
+        executions: [],
+        results: [{
+          executionId: "exec_provision",
+          result: {
+            status: "partial" as const,
+            role: "implementation-worker" as const,
+            model: "p/one",
+            summary: "implemented",
+            executionMetadata: {
+              attempts: 1,
+              failureType: "test_failure" as const,
+              provisioning: {
+                status: "ready" as const,
+                packageManager: "npm",
+                command: "npm ci --prefer-offline --no-audit --no-fund --ignore-scripts",
+                durationMs: 1_200,
+                detail: "Provisioned with npm.",
+              },
+              verification: [{ command: "npm test", status: "failed" as const, summary: "exit code 1" }],
             },
           },
         }],

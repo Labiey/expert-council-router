@@ -5,9 +5,17 @@ import { chmod, lstat, mkdir, readFile, realpath, stat } from "node:fs/promises"
 import { tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { CouncilConfig } from "@expert-council/core";
+import type { CouncilConfig, WorkspaceProvisioningConfig } from "@expert-council/core";
 
 const execFileAsync = promisify(execFile);
+
+export interface WorkspaceProvisioningStatus {
+  status: "ready" | "skipped" | "failed";
+  packageManager?: string;
+  command?: string;
+  durationMs?: number;
+  detail?: string;
+}
 
 export interface PreparedWorkspace {
   cwd: string;
@@ -15,6 +23,10 @@ export interface PreparedWorkspace {
   isolated: boolean;
   strategy: "read-only" | "git-worktree" | "bounded-in-place";
   sourceRoot?: string;
+  /** Result of runtime provisioning for this attempt. */
+  provisioning: WorkspaceProvisioningStatus;
+  /** Per-execution degradation notes, e.g. a provisioning failure. */
+  limitations?: string[];
 }
 
 export interface WorkspaceCleanupResult {
@@ -81,6 +93,277 @@ export function worktreeNameEpochMs(worktree: string): number | undefined {
   return Number.isSafeInteger(epoch) && epoch > 0 ? epoch : undefined;
 }
 
+/** Suffix used to match a worktree to its execution id (shared with cleanup). */
+export function worktreeMatchesExecutionId(worktree: string, executionId: string): boolean {
+  return path.basename(worktree).endsWith(`-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`);
+}
+
+const PROVISIONING_ENV_ALLOWLIST = new Set([
+  "PATH",
+  "HOME",
+  "USERPROFILE",
+  "APPDATA",
+  "LOCALAPPDATA",
+  "TEMP",
+  "TMP",
+  "SYSTEMROOT",
+  "SYSTEMDRIVE",
+  "COMSPEC",
+  "PROGRAMFILES",
+  "PROGRAMDATA",
+  "NPM_CONFIG_REGISTRY",
+  "NPM_CONFIG_CACHE",
+]);
+
+/**
+ * Child environments for provisioning and verification are allowlisted: only
+ * runtime plumbing and the registry/cache locations npm-family tools need are
+ * forwarded. Credentials (API tokens, cloud keys, git credentials) are dropped
+ * because they are not in the allowlist.
+ */
+export function scrubProvisioningEnv(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const scrubbed: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (typeof value !== "string") continue;
+    const upper = key.toUpperCase();
+    if (PROVISIONING_ENV_ALLOWLIST.has(upper) || upper.startsWith("GIT_")) scrubbed[key] = value;
+  }
+  return scrubbed;
+}
+
+export interface BoundedCommandOptions {
+  cwd: string;
+  timeoutMs: number;
+  env: NodeJS.ProcessEnv;
+}
+
+export interface BoundedCommandOutcome {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  error?: string;
+}
+
+export type BoundedCommandRunner = (argv: string[], options: BoundedCommandOptions) => Promise<BoundedCommandOutcome>;
+
+/** Run a single argv command without a shell, bounded by timeout and output size. */
+export async function runBoundedCommand(argv: string[], options: BoundedCommandOptions): Promise<BoundedCommandOutcome> {
+  const [file, ...args] = argv;
+  if (!file) return { exitCode: 1, stdout: "", stderr: "", timedOut: false, error: "Empty command argv." };
+  try {
+    const result = await execFileAsync(file, args, {
+      cwd: options.cwd,
+      timeout: options.timeoutMs,
+      windowsHide: true,
+      maxBuffer: 4 * 1024 * 1024,
+      env: options.env,
+    });
+    return {
+      exitCode: 0,
+      stdout: typeof result.stdout === "string" ? result.stdout : "",
+      stderr: typeof result.stderr === "string" ? result.stderr : "",
+      timedOut: false,
+    };
+  } catch (error) {
+    const failure = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string; killed?: boolean; signal?: string };
+    return {
+      exitCode: typeof failure.code === "number" ? failure.code : 1,
+      stdout: typeof failure.stdout === "string" ? failure.stdout : "",
+      stderr: typeof failure.stderr === "string" ? failure.stderr : "",
+      timedOut: failure.killed === true || failure.signal === "SIGTERM" || failure.code === "ETIMEDOUT",
+      error: failure.message,
+    };
+  }
+}
+
+/** Keep only the tail of a child's output, sanitized of control characters. */
+export function tailCommandOutput(value: string, maximum: number): string {
+  const sanitized = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim();
+  return sanitized.length > maximum ? sanitized.slice(sanitized.length - maximum) : sanitized;
+}
+
+export interface ProvisioningPlan {
+  packageManager?: string;
+  argv?: string[];
+  detail?: string;
+}
+
+function withIgnoreScripts(argv: string[]): string[] {
+  return argv.includes("--ignore-scripts") ? argv : [...argv, "--ignore-scripts"];
+}
+
+/** Bound a package-manager label to the persisted identifier limits. */
+function safePackageManager(value?: string): string | undefined {
+  if (!value) return undefined;
+  const sanitized = value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, "").slice(0, 200);
+  return sanitized || undefined;
+}
+
+/** Bound a command label to the persisted executionMetadata limits. */
+function safeCommandLabel(argv: string[]): string {
+  return argv.join(" ").replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").slice(0, 8_000);
+}
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Detect how a worktree should be provisioned from its own committed lockfile.
+ * Only ecosystems with a deterministic lockfile are supported; everything else
+ * is reported as skipped so the expert degrades to the absent-dependencies path.
+ */
+export async function detectProvisioningPlan(
+  root: string,
+  config: WorkspaceProvisioningConfig,
+): Promise<ProvisioningPlan> {
+  if (config.mode === "custom") {
+    if (!config.command?.length) {
+      return { detail: "security.workspaceProvisioning.mode=custom requires a non-empty command." };
+    }
+    return { packageManager: config.command[0], argv: [...config.command] };
+  }
+  if (await pathExists(path.join(root, "pnpm-lock.yaml"))) {
+    return {
+      packageManager: "pnpm",
+      argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]),
+    };
+  }
+  if (await pathExists(path.join(root, "package-lock.json"))) {
+    return {
+      packageManager: "npm",
+      argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]),
+    };
+  }
+  if (await pathExists(path.join(root, "bun.lock")) || await pathExists(path.join(root, "bun.lockb"))) {
+    return { packageManager: "bun", argv: ["bun", "install", "--frozen-lockfile"] };
+  }
+  if (
+    await pathExists(path.join(root, "uv.lock")) ||
+    await pathExists(path.join(root, "requirements.txt")) ||
+    await pathExists(path.join(root, "Cargo.toml")) ||
+    await pathExists(path.join(root, "go.mod"))
+  ) {
+    return { detail: "no supported provisioning for this ecosystem" };
+  }
+  return { detail: "no supported provisioning for this ecosystem" };
+}
+
+class ProvisioningSemaphore {
+  private active = 0;
+  private readonly waiting: Array<() => void> = [];
+  constructor(readonly limit: number) {}
+  async acquire(): Promise<void> {
+    if (this.active < this.limit) {
+      this.active += 1;
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      this.waiting.push(resolve);
+    });
+    this.active += 1;
+  }
+  release(): void {
+    this.active = Math.max(0, this.active - 1);
+    this.waiting.shift()?.();
+  }
+}
+
+let activeProvisioningSemaphore: ProvisioningSemaphore | undefined;
+
+function provisioningSemaphore(limit: number): ProvisioningSemaphore {
+  if (!activeProvisioningSemaphore || activeProvisioningSemaphore.limit !== limit) {
+    activeProvisioningSemaphore = new ProvisioningSemaphore(limit);
+  }
+  return activeProvisioningSemaphore;
+}
+
+async function isAlreadyProvisioned(root: string, packageManager?: string): Promise<boolean> {
+  return packageManager === "npm" || packageManager === "pnpm" || packageManager === "bun"
+    ? pathExists(path.join(root, "node_modules"))
+    : false;
+}
+
+/**
+ * Provision a worktree from its committed lockfile. Never throws: failures are
+ * recorded so the caller can continue with today's unprovisioned behavior.
+ */
+export async function provisionWorkspace(
+  root: string,
+  config: WorkspaceProvisioningConfig,
+  options: { runner?: BoundedCommandRunner; reused?: boolean } = {},
+): Promise<WorkspaceProvisioningStatus> {
+  const started = Date.now();
+  if (config.mode === "none") {
+    return { status: "skipped", detail: "security.workspaceProvisioning.mode is none." };
+  }
+  const plan = await detectProvisioningPlan(root, config);
+  const packageManager = safePackageManager(plan.packageManager);
+  if (!plan.argv) {
+    return {
+      status: "skipped",
+      ...(packageManager ? { packageManager } : {}),
+      detail: plan.detail ?? "no supported provisioning for this ecosystem",
+      durationMs: Date.now() - started,
+    };
+  }
+  const commandLabel = safeCommandLabel(plan.argv);
+  if (options.reused && (config.mode === "custom" || await isAlreadyProvisioned(root, plan.packageManager))) {
+    return {
+      status: "ready",
+      ...(packageManager ? { packageManager } : {}),
+      command: commandLabel,
+      durationMs: Date.now() - started,
+      detail: "Reused a worktree already provisioned for this execution.",
+    };
+  }
+  const runner = options.runner ?? runBoundedCommand;
+  const env = config.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  const semaphore = provisioningSemaphore(config.maxConcurrent);
+  await semaphore.acquire();
+  let outcome: BoundedCommandOutcome;
+  try {
+    outcome = await runner(plan.argv, { cwd: root, timeoutMs: config.timeoutMs, env });
+  } catch (error) {
+    outcome = {
+      exitCode: 1,
+      stdout: "",
+      stderr: "",
+      timedOut: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    semaphore.release();
+  }
+  const durationMs = Date.now() - started;
+  if (outcome.exitCode === 0 && !outcome.timedOut) {
+    return {
+      status: "ready",
+      ...(packageManager ? { packageManager } : {}),
+      command: commandLabel,
+      durationMs,
+      detail: `Provisioned with ${plan.argv[0]}.`,
+    };
+  }
+  const tail = tailCommandOutput(outcome.stderr || outcome.stdout, 4 * 1024);
+  const detail = `Provisioning failed${outcome.timedOut ? " (timed out)" : ` with exit code ${outcome.exitCode}`}${
+    outcome.error ? `: ${outcome.error}` : ""
+  }${tail ? `: ${tail}` : ""}`;
+  return {
+    status: "failed",
+    ...(packageManager ? { packageManager } : {}),
+    command: commandLabel,
+    durationMs,
+    detail: detail.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").slice(0, 8_000),
+  };
+}
+
 export class WorkspaceBoundary {
   constructor(
     private readonly defaultWorkspace: string,
@@ -138,7 +421,7 @@ export class WorkspaceBoundary {
         assertOwnedAndPrivate(info, `Worktree ${worktree}`);
         const creationMs = worktreeNameEpochMs(worktree) ?? info.mtimeMs;
         if (Date.now() - creationMs < this.config.worktreeRetentionMs) continue;
-        await git(resolvedGitRoot, ["worktree", "remove", "--force", worktree], 30_000);
+        await git(resolvedGitRoot, ["worktree", "remove", "--force", worktree], this.config.workspaceProvisioning.removalTimeoutMs);
         removed.push(worktree);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
@@ -212,12 +495,62 @@ export class WorkspaceBoundary {
     return resolved;
   }
 
+  /** Find a worktree created for this execution id so a retry can reuse its provisioned state. */
+  private async findReusableWorktree(gitRoot: string, worktreeBase: string, executionId: string): Promise<string | undefined> {
+    for (const listed of await this.listedWorktrees(gitRoot)) {
+      try {
+        const resolved = await canonical(listed);
+        if (
+          resolved !== worktreeBase &&
+          isWithin(worktreeBase, resolved) &&
+          worktreeMatchesExecutionId(resolved, executionId)
+        ) {
+          return resolved;
+        }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
+    return undefined;
+  }
+
+  /** Re-run the full containment/ownership/registration validation for a worktree path. */
+  private async validateWorktree(gitRoot: string, worktreeBase: string, candidate: string): Promise<string> {
+    const created = await canonical(candidate);
+    if (!isWithin(worktreeBase, created)) throw new Error("Created worktree escaped the private worktree base.");
+    const createdInfo = await stat(created);
+    assertOwnedAndPrivate(createdInfo, `Worktree ${created}`);
+    await chmod(created, 0o700).catch((chmodError: NodeJS.ErrnoException) => {
+      if (process.platform !== "win32") throw chmodError;
+    });
+    const marker = await lstat(path.join(created, ".git"));
+    if (!marker.isFile()) throw new Error("Created worktree has an invalid .git registration marker.");
+    const markerText = (await readFile(path.join(created, ".git"), "utf8")).trim();
+    const gitDirValue = /^gitdir:\s*(.+)$/i.exec(markerText)?.[1];
+    if (!gitDirValue) throw new Error("Created worktree .git registration is malformed.");
+    const registeredGitDir = await canonical(path.isAbsolute(gitDirValue) ? gitDirValue : path.resolve(created, gitDirValue));
+    const commonDirValue = await git(gitRoot, ["rev-parse", "--git-common-dir"]);
+    const commonDir = await canonical(path.isAbsolute(commonDirValue) ? commonDirValue : path.resolve(gitRoot, commonDirValue));
+    const worktreeRegistrations = await canonical(path.join(commonDir, "worktrees"));
+    if (!isWithin(worktreeRegistrations, registeredGitDir)) {
+      throw new Error("Created worktree registration is outside this repository's Git metadata.");
+    }
+    assertOwnedAndPrivate(await stat(commonDir), "Repository Git metadata");
+    return created;
+  }
+
   async prepare(candidate: string | undefined, readOnly: boolean, executionId: string): Promise<PreparedWorkspace> {
     validateExecutionId(executionId);
     const cwd = await this.assertAllowed(candidate ?? this.defaultWorkspace);
     if (readOnly || this.config.workspaceStrategy === "read-only") {
       if (!readOnly) throw new Error("Mutation role was denied because workspaceStrategy is read-only.");
-      return { cwd, root: cwd, isolated: false, strategy: "read-only" };
+      return {
+        cwd,
+        root: cwd,
+        isolated: false,
+        strategy: "read-only",
+        provisioning: { status: "skipped", detail: "Read-only roles run in the main workspace; no provisioning is performed." },
+      };
     }
 
     const strategy = this.config.workspaceStrategy;
@@ -225,7 +558,13 @@ export class WorkspaceBoundary {
       if (!this.config.allowInPlaceMutations) {
         throw new Error("bounded-in-place mutation requires security.allowInPlaceMutations=true.");
       }
-      return { cwd, root: cwd, isolated: false, strategy: "bounded-in-place" };
+      return {
+        cwd,
+        root: cwd,
+        isolated: false,
+        strategy: "bounded-in-place",
+        provisioning: { status: "skipped", detail: "bounded-in-place workspaces are not provisioned." },
+      };
     }
 
     let cleanupGitRoot: string | undefined;
@@ -236,43 +575,48 @@ export class WorkspaceBoundary {
       const relativeCwd = path.relative(gitRoot, cwd);
       const worktreeBase = await this.secureWorktreeBase();
       await this.pruneExpired(gitRoot);
-      const safeName = path.basename(gitRoot).replace(/[^a-zA-Z0-9._-]/g, "-");
-      const worktree = path.join(
-        worktreeBase,
-        `${safeName}-${Date.now()}-${randomUUID()}-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
-      );
-      await git(gitRoot, ["worktree", "add", "--detach", worktree, "HEAD"], 30_000);
-      cleanupWorktree = worktree;
-      const created = await canonical(worktree);
-      if (!isWithin(worktreeBase, created)) throw new Error("Created worktree escaped the private worktree base.");
-      const createdInfo = await stat(created);
-      assertOwnedAndPrivate(createdInfo, `Worktree ${created}`);
-      await chmod(created, 0o700).catch((chmodError: NodeJS.ErrnoException) => {
-        if (process.platform !== "win32") throw chmodError;
-      });
-      const marker = await lstat(path.join(created, ".git"));
-      if (!marker.isFile()) throw new Error("Created worktree has an invalid .git registration marker.");
-      const markerText = (await readFile(path.join(created, ".git"), "utf8")).trim();
-      const gitDirValue = /^gitdir:\s*(.+)$/i.exec(markerText)?.[1];
-      if (!gitDirValue) throw new Error("Created worktree .git registration is malformed.");
-      const registeredGitDir = await canonical(path.isAbsolute(gitDirValue) ? gitDirValue : path.resolve(created, gitDirValue));
-      const commonDirValue = await git(gitRoot, ["rev-parse", "--git-common-dir"]);
-      const commonDir = await canonical(path.isAbsolute(commonDirValue) ? commonDirValue : path.resolve(gitRoot, commonDirValue));
-      const worktreeRegistrations = await canonical(path.join(commonDir, "worktrees"));
-      if (!isWithin(worktreeRegistrations, registeredGitDir)) {
-        throw new Error("Created worktree registration is outside this repository's Git metadata.");
+      const reusable = await this.findReusableWorktree(gitRoot, worktreeBase, executionId);
+      let reused = false;
+      let worktree: string;
+      if (reusable) {
+        reused = true;
+        worktree = reusable;
+      } else {
+        const safeName = path.basename(gitRoot).replace(/[^a-zA-Z0-9._-]/g, "-");
+        worktree = path.join(
+          worktreeBase,
+          `${safeName}-${Date.now()}-${randomUUID()}-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`,
+        );
+        await git(gitRoot, ["worktree", "add", "--detach", worktree, "HEAD"], 30_000);
       }
-      assertOwnedAndPrivate(await stat(commonDir), "Repository Git metadata");
+      cleanupWorktree = worktree;
+      const created = await this.validateWorktree(gitRoot, worktreeBase, worktree);
+      cleanupWorktree = created;
+      if (reused) {
+        // Re-establish the documented clean-slate-from-HEAD guarantee before the
+        // retry runs, while preserving the node_modules paid for by provisioning.
+        await git(created, ["reset", "--hard", "HEAD"], this.config.workspaceProvisioning.removalTimeoutMs);
+        await git(created, ["clean", "-fdxq", "-e", "node_modules"], this.config.workspaceProvisioning.removalTimeoutMs);
+      }
+      const provisioning = await provisionWorkspace(created, this.config.workspaceProvisioning, { reused });
+      const limitations: string[] = [];
+      if (provisioning.status === "failed") {
+        limitations.push(
+          `Worktree provisioning failed: ${provisioning.detail ?? "unknown error"}. Dependencies are not installed; do not attempt an install.`.slice(0, 2_000),
+        );
+      }
       return {
         cwd: path.join(created, relativeCwd),
         root: created,
         isolated: true,
         strategy: "git-worktree",
         sourceRoot: gitRoot,
+        provisioning,
+        ...(limitations.length ? { limitations } : {}),
       };
     } catch (error) {
       if (cleanupGitRoot && cleanupWorktree) {
-        await git(cleanupGitRoot, ["worktree", "remove", "--force", cleanupWorktree], 30_000).catch(() => undefined);
+        await git(cleanupGitRoot, ["worktree", "remove", "--force", cleanupWorktree], this.config.workspaceProvisioning.removalTimeoutMs).catch(() => undefined);
         await git(cleanupGitRoot, ["worktree", "prune"]).catch(() => undefined);
       }
       if (strategy === "git-worktree" || !this.config.allowInPlaceMutations) {
@@ -280,7 +624,13 @@ export class WorkspaceBoundary {
           `Unable to create an isolated Git worktree; in-place mutation is disabled. Retry with workspace set to the target project's Git repository root inside the allowed roots, or enable security.workspaceStrategy=bounded-in-place with security.allowInPlaceMutations=true explicitly. ${error instanceof Error ? error.message : String(error)}`,
         );
       }
-      return { cwd, root: cwd, isolated: false, strategy: "bounded-in-place" };
+      return {
+        cwd,
+        root: cwd,
+        isolated: false,
+        strategy: "bounded-in-place",
+        provisioning: { status: "skipped", detail: "bounded-in-place workspaces are not provisioned." },
+      };
     }
   }
 
@@ -307,12 +657,11 @@ export class WorkspaceBoundary {
     try {
       const gitRoot = await this.defaultGitRoot(this.defaultWorkspace);
       const base = await this.secureWorktreeBase();
-      const suffix = `-${executionId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
       const worktrees: string[] = [];
       for (const listed of await this.listedWorktrees(gitRoot)) {
         try {
           const resolved = await canonical(listed);
-          if (resolved !== base && isWithin(base, resolved) && path.basename(resolved).endsWith(suffix)) {
+          if (resolved !== base && isWithin(base, resolved) && worktreeMatchesExecutionId(resolved, executionId)) {
             assertOwnedAndPrivate(await stat(resolved), `Worktree ${resolved}`);
             worktrees.push(resolved);
           }
@@ -329,7 +678,7 @@ export class WorkspaceBoundary {
       const failures: string[] = [];
       for (const worktree of worktrees) {
         try {
-          await git(gitRoot, ["worktree", "remove", "--force", worktree], 30_000);
+          await git(gitRoot, ["worktree", "remove", "--force", worktree], this.config.workspaceProvisioning.removalTimeoutMs);
           removed.push(worktree);
         } catch (error) {
           failures.push(`${worktree}: ${error instanceof Error ? error.message : String(error)}`);

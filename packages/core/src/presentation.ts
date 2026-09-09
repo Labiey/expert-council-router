@@ -54,6 +54,9 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
       ...(inventory.runtimeCapabilities.sourceWorkspaceDirty !== undefined
         ? { sourceWorkspaceDirty: inventory.runtimeCapabilities.sourceWorkspaceDirty }
         : {}),
+      ...(inventory.runtimeCapabilities.workspaceProvisioning
+        ? { workspaceProvisioning: inventory.runtimeCapabilities.workspaceProvisioning }
+        : {}),
       limitations: inventory.runtimeCapabilities.limitations,
     },
     modelAssessment: inventory.modelAssessmentStatus?.status === "required"

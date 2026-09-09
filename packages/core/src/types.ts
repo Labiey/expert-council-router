@@ -70,6 +70,22 @@ export interface SkillInfo {
   source?: string;
 }
 
+export interface WorkspaceProvisioningConfig {
+  mode: "auto" | "none" | "custom";
+  /** Per-command deadline for provisioning and verification children. */
+  timeoutMs: number;
+  /** Maximum simultaneous provisioning child processes; defaults to 1. */
+  maxConcurrent: number;
+  /** Explicit argv used verbatim when mode is "custom". */
+  command?: string[];
+  /** Explicit verification argv; when omitted the runtime runs typecheck then tests. */
+  verifyCommand?: string[];
+  /** Restrict the child environment to a fixed allowlist. */
+  scrubEnv: boolean;
+  /** Deadline for worktree removal (`git worktree remove`). */
+  removalTimeoutMs: number;
+}
+
 export interface RuntimeCapabilities {
   hostType: string;
   modelDiscovery: boolean;
@@ -79,6 +95,8 @@ export interface RuntimeCapabilities {
   mutation: boolean;
   workspaceIsolation: "git-worktree" | "bounded-workspace" | "none";
   sourceWorkspaceDirty?: boolean;
+  /** Active worktree provisioning mode, surfaced so hosts can warn before delegation. */
+  workspaceProvisioning?: { mode: string };
   supportedTools: string[];
   limitations: string[];
 }
@@ -126,6 +144,16 @@ export interface ExpertResult {
     escalationCount?: number;
     /** Models whose runtime failure marked them unavailable in the persisted model assessment during this execution. */
     unavailableModels?: string[];
+    /** Outcome of runtime worktree provisioning for this attempt. */
+    provisioning?: {
+      status: "ready" | "skipped" | "failed";
+      packageManager?: string;
+      command?: string;
+      durationMs?: number;
+      detail?: string;
+    };
+    /** Runtime verification gate entries (typecheck/test), populated only for provisioned mutation worktrees. */
+    verification?: Array<{ command?: string; status: "passed" | "failed" | "not-run"; summary?: string }>;
   };
 }
 

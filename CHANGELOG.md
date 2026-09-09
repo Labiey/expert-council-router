@@ -2,6 +2,18 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.1 - 2026-09-09
+
+### Added
+
+- **Runtime worktree auto-provisioning** (opt-in via `security.workspaceProvisioning.mode`, default `"none"`): when a mutation expert is dispatched, the runtime detects the repository lockfile (pnpm/npm/bun) and installs pinned dependencies inside the fresh worktree with `--ignore-scripts` and an allowlist-scrubbed child environment. Worktrees are reused per execution id (clean-slate `git reset --hard` + `git clean` on retry) and provisioning is serialized by a semaphore; failures degrade to the previous behavior instead of aborting the delegation. Worktree-removal timeouts are configurable (`removalTimeoutMs`, default 300s) since deleting a provisioned tree is slow.
+- **Runtime verification gate**: after a provisioned mutation expert finishes, the runtime runs the repository's typecheck then tests (configurable via `verifyCommand`). Failures downgrade a `"success"` result to `"partial"` with failureType `test_failure`, engaging the existing corrected-retry escalation at zero Main Agent cost. Retry guidance (`correctedInstruction`) is now actually delivered to retried attempts — it was generated but never consumed.
+
+### Fixed
+
+- `preferredReasoningByRole` accepted only full-role maps: `z.record(z.enum(...))` requires every key under zod 4; the profile contract is partial, so it now uses `z.partialRecord` (same trap previously fixed in compositions).
+- Integration contract: hosts must integrate worktree results from `filesChanged` (which already includes untracked new files), never from `git diff HEAD` alone — codified in SKILL.md and the `expert_result`/`expert_cleanup` tool descriptions.
+
 ## 0.7.0 - 2026-09-09
 
 ### Breaking

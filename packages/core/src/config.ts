@@ -223,6 +223,23 @@ export const councilConfigSchema = z.object({
       allowedWorkspaceRoots: z.array(z.string().min(1)).default([]),
       trustedSkills: z.array(z.string().min(1)).default([]),
       worktreeRetentionMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
+      workspaceProvisioning: z
+        .object({
+          mode: z.enum(["auto", "none", "custom"]).default("none"),
+          timeoutMs: z.number().int().min(30_000).max(1_800_000).default(600_000),
+          maxConcurrent: z.number().int().min(1).max(4).default(1),
+          command: z.array(z.string().min(1).max(500)).max(12).optional(),
+          verifyCommand: z.array(z.string().min(1).max(500)).max(12).optional(),
+          scrubEnv: z.boolean().default(true),
+          removalTimeoutMs: z.number().int().min(30_000).max(1_800_000).default(300_000),
+        })
+        .default({
+          mode: "none",
+          timeoutMs: 600_000,
+          maxConcurrent: 1,
+          scrubEnv: true,
+          removalTimeoutMs: 300_000,
+        }),
     })
     .default({
       workspaceStrategy: "auto",
@@ -230,6 +247,13 @@ export const councilConfigSchema = z.object({
       allowedWorkspaceRoots: [],
       trustedSkills: [],
       worktreeRetentionMs: 24 * 60 * 60_000,
+      workspaceProvisioning: {
+        mode: "none",
+        timeoutMs: 600_000,
+        maxConcurrent: 1,
+        scrubEnv: true,
+        removalTimeoutMs: 300_000,
+      },
     }),
 });
 

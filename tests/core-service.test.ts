@@ -14,6 +14,7 @@ import {
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
 import type { CompositionDocument, CouncilStateOptions, CouncilStateSnapshot, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
+import { applyVerificationGate } from "../packages/pi-runtime/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
 const profiles = {
@@ -1429,5 +1430,36 @@ describe("provider usage ledger and caps", () => {
     expect(saved.modelAvailability?.["p/one"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
     expect(saved.modelAvailability?.["p/one"]?.expiresAt).toBeDefined();
     expect(result.risks?.join(" ")).toContain("weighted token cap reached");
+  });
+});
+
+describe("worktree verification gate", () => {
+  it("downgrades a verified success to partial and feeds the correction into the retry", async () => {
+    const models = [model("p", "one")];
+    const gated = applyVerificationGate({
+      status: "success",
+      role: "implementation-worker",
+      model: "p/one",
+      summary: "implemented the change",
+      executionMetadata: {
+        provisioning: { status: "ready", packageManager: "npm" },
+        verification: [{ command: "npm test", status: "failed", summary: "exit code 1: 1 test failed" }],
+      },
+    });
+    expect(gated.status).toBe("partial");
+    expect(gated.executionMetadata?.failureType).toBe("test_failure");
+    const runtime = new MockRuntime(models, [
+      gated,
+      (request) => ({ status: "success", role: request.role, model: request.model, summary: "fixed the failing test" }),
+    ]);
+    const service = new ExpertCouncilService(runtime, {
+      profiles: { models: { "p/one": { toolReliability: 8, coding: 8, bashReliability: 8, autonomousExecution: 8 } } },
+      retry: { correctedRetriesPerModel: 1 },
+    });
+    const result = await service.delegate({ role: "implementation-worker", task: "Implement a bounded change", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(runtime.requests).toHaveLength(2);
+    expect(runtime.requests[1]?.priorFailure?.type).toBe("test_failure");
+    expect(runtime.requests[1]?.priorFailure?.summary).toContain("Diagnose that cause, change the approach");
   });
 });

@@ -105,6 +105,22 @@ function boundedFailureSummary(value: string): string {
   return value.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ").trim().slice(0, 500);
 }
 
+/**
+ * Build the bounded priorFailure summary handed to a retry. When the escalation
+ * decision produced a correctedInstruction, append it so the retry receives the
+ * corrective guidance instead of only the raw failure text. The combined value
+ * is sanitized and truncated to the same 500-character budget as other attempt
+ * summaries.
+ */
+function priorFailureSummary(summary: string, correctedInstruction?: string): string {
+  if (!correctedInstruction) return boundedFailureSummary(summary);
+  // Reserve room for the corrective guidance so the 500-character budget never
+  // truncates it away behind a long raw failure summary.
+  const instruction = boundedFailureSummary(correctedInstruction);
+  const head = boundedFailureSummary(summary).slice(0, Math.max(0, 500 - instruction.length - 3));
+  return `${head} | ${instruction}`;
+}
+
 function constraintsWithAssessment(
   constraints: RoutingConstraints | undefined,
   assessment: ModelAssessmentSnapshot | undefined,
@@ -586,6 +602,9 @@ export class ExpertCouncilService implements ExpertCouncil {
     let retriesForCurrent = 0;
     let escalations = 0;
     let lastResult: ExpertResult | undefined;
+    // Corrective guidance produced by the most recent escalation decision; it
+    // is attached to the next attempt's priorFailure so retries act on it.
+    let correctedInstruction: string | undefined;
     // Per-attempt execution budget. The host must supply an explicit timeout;
     // a timed-out attempt proves that budget was too small, so the loop scales
     // it up instead of re-running the same impossible specification.
@@ -669,7 +688,14 @@ export class ExpertCouncilService implements ExpertCouncil {
         ...(request.workspace ? { workspace: request.workspace } : {}),
         timeoutMs: currentTimeoutMs,
         attempt: state.attempts,
-        ...(failures.length ? { priorFailure: { type: failures.at(-1)!.type, summary: failures.at(-1)!.summary } } : {}),
+        ...(failures.length
+          ? {
+              priorFailure: {
+                type: failures.at(-1)!.type,
+                summary: priorFailureSummary(failures.at(-1)!.summary, correctedInstruction),
+              },
+            }
+          : {}),
       });
       attemptSnapshot.status = lastResult.status;
       Object.assign(attemptSnapshot, { finishedAt: new Date().toISOString() });
@@ -761,6 +787,7 @@ export class ExpertCouncilService implements ExpertCouncil {
         ranked.candidates,
         this.config.retry.correctedRetriesPerModel,
       );
+      correctedInstruction = decision.correctedInstruction;
       if (decision.action === "retry" && retriesForCurrent < this.config.retry.correctedRetriesPerModel) {
         retriesForCurrent += 1;
         continue;

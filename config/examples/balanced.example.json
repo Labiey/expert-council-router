@@ -33,6 +33,13 @@
     "allowInPlaceMutations": false,
     "allowedWorkspaceRoots": [],
     "trustedSkills": [],
-    "worktreeRetentionMs": 86400000
+    "worktreeRetentionMs": 86400000,
+    "workspaceProvisioning": {
+      "mode": "none",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000
+    }
   }
 }

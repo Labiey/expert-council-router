@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/codex-integration",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Codex plugin distribution for Expert Council",
   "repository": {

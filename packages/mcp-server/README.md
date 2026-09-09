@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current release (0.7.0) includes:
+The current release (0.7.1) includes:
 
 - A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -100,7 +100,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.0 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.1 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -215,6 +215,30 @@ The removed tier vocabulary is still accepted and mapped deterministically so ex
 | `scarce` | `5.0` |
 
 The legacy `usagePreference` field is ignored and dropped; it no longer affects routing.
+
+### Worktree provisioning
+
+Mutation worktrees start from committed `HEAD` and therefore contain no untracked local artifacts. The runtime can provision them from the repository's own committed lockfile before the expert runs; it is opt-in and inert by default:
+
+```json
+{
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "auto",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000
+    }
+  }
+}
+```
+
+- `mode` is `none` (default, never provision), `auto` (detect the committed lockfile and install), or `custom` (run `command` verbatim as an argv array).
+- `auto` runs `pnpm install --frozen-lockfile --prefer-offline`, `npm ci --prefer-offline --no-audit --no-fund`, or `bun install --frozen-lockfile`, always appending `--ignore-scripts`; `uv.lock`, `requirements.txt`, `Cargo.toml`, and `go.mod` are reported as skipped because no supported provisioning exists for those ecosystems.
+- Only mutation worktrees are provisioned; read-only roles run in the main workspace and are never provisioned.
+- The child environment is allowlist-scrubbed (`PATH`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `SYSTEMROOT`, `SYSTEMDRIVE`, `COMSPEC`, `PROGRAMFILES`, `PROGRAMDATA`, `GIT_*`, `npm_config_registry`, `npm_config_cache`); API tokens and cloud credentials are not forwarded.
+- When provisioning is `ready`, the runtime runs `verifyCommand` if configured, otherwise `npm run typecheck` then `npm test`. A failing gate downgrades a successful expert result to `partial` with `failureType: "test_failure"`.
 
 ### Provider limits & concurrency
 
@@ -534,7 +558,7 @@ Or load it for one run without persisting:
 pi --verbose -e "./packages/pi-package"
 ```
 
-A zero-cost load check simply asks Pi to call `expert_inspect`. A real orchestration check should, in a new conversation, build one read-only council, batch two independent read-only assignments at once, confirm that `expert_delegate` immediately returns execution IDs, then accept each completion with `expert_result` and `expert_feedback`. When testing a writable expert, also confirm that one `expert_cleanup` call reports every retry worktree for the execution in `workspaces` and that `git worktree list` afterwards contains only the main checkout.
+A zero-cost load check simply asks Pi to call `expert_inspect`. A real orchestration check should, in a new conversation, build one read-only council, batch two independent read-only assignments at once, confirm that `expert_delegate` immediately returns execution IDs, then accept each completion with `expert_result` and `expert_feedback`. When testing a writable expert, also confirm that one `expert_cleanup` call reports the worktree for the execution in `workspaces` (retries reuse and reset it instead of creating another) and that `git worktree list` afterwards contains only the main checkout.
 
 Before removing a persistent installation, exit every Pi process that loaded the package, then run from the same repository root:
 
@@ -578,7 +602,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.0 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.1 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -604,7 +628,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.0 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.1 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -615,7 +639,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all ten `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.7.0` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all ten `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.7.1` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 
@@ -758,7 +782,7 @@ Run `npm run validate` first, inspect every `npm pack --dry-run` file list, then
 - Writes to non-Git workspaces require explicit in-place mutation authorization.
 - In-flight model calls do not resume after a server restart; persisted state closes them as explicit interrupted failures while preserving plans and completed results.
 - Codex's own sandbox does not automatically contain the external Pi runtime, so Expert Council uses separate allowed roots and worktree boundaries.
-- Expert Council contains no arbitrary third-party package installation, recursive expert trees, graphical interface, remote control plane, or remote telemetry.
+- Expert Council provisions mutation worktrees from the repository's own committed lockfile only when `security.workspaceProvisioning.mode` is `auto` (default `none`, so nothing is installed unless opted in). Installs use the lockfile-pinned command with `--ignore-scripts` and a scrubbed child environment; read-only workspaces are never provisioned and ecosystems without a supported lockfile are skipped. After provisioning, a verification gate runs the repository typecheck and test commands, and a failing gate downgrades an otherwise successful result to `partial` with `failureType: "test_failure"` so the corrected-retry path engages. Expert Council still contains no recursive expert trees, graphical interface, remote control plane, or remote telemetry.
 
 ## License
 

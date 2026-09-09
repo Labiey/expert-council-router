@@ -16,6 +16,7 @@ import {
   type RuntimeBillingDiscovery,
   type RuntimeCapabilities,
   type SkillInfo,
+  type WorkspaceProvisioningConfig,
 } from "@expert-council/core";
 import {
   loadPiSdk,
@@ -26,7 +27,7 @@ import {
   type PiSdkLike,
   type PiSessionLike,
 } from "./pi-sdk.js";
-import { WorkspaceBoundary, type PreparedWorkspace } from "./workspace.js";
+import { WorkspaceBoundary, runBoundedCommand, scrubProvisioningEnv, tailCommandOutput, type BoundedCommandRunner, type PreparedWorkspace, type WorkspaceProvisioningStatus } from "./workspace.js";
 
 export interface PiExpertRuntimeOptions {
   cwd: string;
@@ -225,6 +226,7 @@ function normalizeResult(
   changedFiles: string[],
   workspace: PreparedWorkspace,
   usage?: Record<string, number>,
+  verification?: VerificationEntry[],
 ): ExpertResult {
   const status = parsed?.status === "success" || parsed?.status === "partial" || parsed?.status === "failed" ? parsed.status : "partial";
   const tests = Array.isArray(parsed?.tests)
@@ -276,9 +278,72 @@ function normalizeResult(
       attempts: request.attempt,
       workspace: workspace.root,
       isolated: workspace.isolated,
+      provisioning: workspace.provisioning,
+      ...(verification?.length ? { verification } : {}),
       ...(inferredFailureType ? { failureType: inferredFailureType } : {}),
       ...(usage ? { usage } : {}),
     },
+  };
+}
+
+export interface VerificationEntry {
+  command?: string;
+  status: "passed" | "failed" | "not-run";
+  summary?: string;
+}
+
+export interface VerificationStep {
+  command: string[];
+  label: string;
+}
+
+/** Verification argv: an explicit override, else repository typecheck then tests. */
+export function planVerification(config: WorkspaceProvisioningConfig): VerificationStep[] {
+  if (config.verifyCommand?.length) {
+    return [{ command: [...config.verifyCommand], label: config.verifyCommand.join(" ") }];
+  }
+  return [
+    { command: ["npm", "run", "typecheck"], label: "npm run typecheck" },
+    { command: ["npm", "test"], label: "npm test" },
+  ];
+}
+
+async function runVerification(
+  workspace: PreparedWorkspace,
+  config: WorkspaceProvisioningConfig,
+  runner: BoundedCommandRunner = runBoundedCommand,
+): Promise<VerificationEntry[]> {
+  const entries: VerificationEntry[] = [];
+  const env = config.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  for (const step of planVerification(config)) {
+    const outcome = await runner(step.command, { cwd: workspace.root, timeoutMs: config.timeoutMs, env });
+    const passed = outcome.exitCode === 0 && !outcome.timedOut;
+    const tail = tailCommandOutput(outcome.stderr || outcome.stdout, 2_000);
+    const summary = passed
+      ? "exit code 0"
+      : `exit code ${outcome.exitCode}${outcome.timedOut ? " (timed out)" : ""}${tail ? `: ${tail}` : ""}`;
+    entries.push({
+      command: step.label.slice(0, 1_000),
+      status: passed ? "passed" : "failed",
+      summary: summary.slice(0, 2_000),
+    });
+  }
+  return entries;
+}
+
+/**
+ * Apply the runtime verification gate: a failed verification downgrades an
+ * otherwise successful expert result to `partial` with `test_failure`, which
+ * engages the existing corrected-retry escalation path.
+ */
+export function applyVerificationGate(result: ExpertResult): ExpertResult {
+  const verification = result.executionMetadata?.verification;
+  if (!verification?.some((entry) => entry.status === "failed")) return result;
+  if (result.status !== "success") return result;
+  return {
+    ...result,
+    status: "partial",
+    executionMetadata: { ...result.executionMetadata, failureType: "test_failure" },
   };
 }
 
@@ -287,8 +352,19 @@ async function rolePrompt(role: string, roleDirectory?: string): Promise<string>
   return readFile(new URL(`./roles/${role}.md`, import.meta.url), "utf8");
 }
 
-function executionPrompt(request: ExpertExecutionRequest, roleInstructions: string): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent — account for this before planning commands.\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+function dependencyGuidance(provisioning?: WorkspaceProvisioningStatus): string {
+  if (provisioning?.status === "ready") {
+    return `The runtime provisioned this worktree (${provisioning.packageManager ?? "package manager"}); dependencies are installed. Self-verify with the repository's typecheck command and then its test command, and report both in \`tests\`. Do NOT run a package-manager install, and do NOT run a build/release/pack script — in this repository a build regenerates Git-tracked artifacts and would pollute the diff you hand back.`;
+  }
+  return "Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent — account for this before planning commands. Dependencies are NOT installed; report `tests` entries as not-run with the reason instead of attempting an install.";
+}
+
+function executionPrompt(
+  request: ExpertExecutionRequest,
+  roleInstructions: string,
+  provisioning?: WorkspaceProvisioningStatus,
+): string {
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
 }
 
 interface ActiveExpertSession {
@@ -419,6 +495,7 @@ export class PiExpertRuntime implements ExpertRuntime {
 
   async getCapabilities(cwd: string = this.options.cwd): Promise<RuntimeCapabilities> {
     const workspace = await this.boundary.mutationCapability(cwd);
+    const provisioningMode = this.options.config.security.workspaceProvisioning.mode;
     return {
       hostType: `pi:${this.packageName}`,
       modelDiscovery: true,
@@ -428,6 +505,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       mutation: workspace.mutation,
       workspaceIsolation: workspace.workspaceIsolation,
       ...(workspace.sourceWorkspaceDirty !== undefined ? { sourceWorkspaceDirty: workspace.sourceWorkspaceDirty } : {}),
+      workspaceProvisioning: { mode: provisioningMode },
       supportedTools: process.platform === "win32"
         ? ["read", "grep", "find", "ls", "edit", "write", "powershell"]
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
@@ -435,6 +513,9 @@ export class PiExpertRuntime implements ExpertRuntime {
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
         ...workspace.limitations,
+        provisioningMode === "none"
+          ? "Mutation worktrees are not provisioned (security.workspaceProvisioning.mode=none); experts must not install dependencies."
+          : `Mutation worktrees are provisioned from the repository lockfile (security.workspaceProvisioning.mode=${provisioningMode}); read-only workspaces are never provisioned.`,
         ...(workspace.workspaceIsolation === "git-worktree"
           ? [`Mutation worktrees are retained for review until expert_cleanup is called or the ${this.options.config.security.worktreeRetentionMs}ms retention window expires.`]
           : []),
@@ -492,7 +573,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       if (request.reasoningLevel && session.getAvailableThinkingLevels?.().includes(request.reasoningLevel)) {
         session.setThinkingLevel?.(request.reasoningLevel);
       }
-      const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory));
+      const prompt = executionPrompt(request, await rolePrompt(request.role, this.options.roleDirectory), workspace.provisioning);
       const timeoutMs = request.timeoutMs;
       let timer: NodeJS.Timeout | undefined;
       const execution = (async () => {
@@ -543,18 +624,36 @@ export class PiExpertRuntime implements ExpertRuntime {
           role: request.role,
           model: request.model,
           summary: safeText(sessionError, 4_000) ?? "Expert session failed.",
+          ...(workspace.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {}),
           executionMetadata: {
             attempts: request.attempt,
             workspace: workspace.root,
             isolated: workspace.isolated,
+            provisioning: workspace.provisioning,
             failureType: inferFailureType(sessionError),
             durationMs: Date.now() - started,
             ...(usage ? { usage } : {}),
           },
         };
       }
+      // Verification gate: only a provisioned mutation worktree has the
+      // dependencies needed to typecheck and test the repository. Read-only
+      // roles and unprovisioned worktrees are never gated.
+      let verification: VerificationEntry[] | undefined;
+      if (
+        workspace.strategy === "git-worktree" &&
+        !effectiveReadOnly &&
+        workspace.provisioning.status === "ready"
+      ) {
+        verification = await runVerification(workspace, this.options.config.security.workspaceProvisioning);
+      }
       const changedFiles = await this.boundary.changedFiles(workspace);
-      const result = normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session));
+      let result = applyVerificationGate(
+        normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session), verification),
+      );
+      if (workspace.limitations?.length) {
+        result = { ...result, risks: [...workspace.limitations, ...(result.risks ?? [])].slice(0, 20) };
+      }
       result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
       return result;
     } catch (error) {
@@ -563,11 +662,12 @@ export class PiExpertRuntime implements ExpertRuntime {
         role: request.role,
         model: request.model,
         summary: safeText(error instanceof Error ? error.message : String(error), 4_000) ?? "Expert execution failed.",
+        ...(workspace?.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {}),
         executionMetadata: {
           attempts: request.attempt,
           failureType: inferFailureType(error),
           durationMs: Date.now() - started,
-          ...(workspace ? { workspace: workspace.root, isolated: workspace.isolated } : {}),
+          ...(workspace ? { workspace: workspace.root, isolated: workspace.isolated, provisioning: workspace.provisioning } : {}),
         },
       };
     } finally {
@@ -654,6 +754,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         attempts: request.attempt,
         workspace: entry.workspace.root,
         isolated: entry.workspace.isolated,
+        provisioning: entry.workspace.provisioning,
         failureType: "aborted",
         durationMs: Date.now() - started,
         ...(usage ? { usage } : {}),

@@ -115,6 +115,18 @@ const expertResult = z.object({
     isolated: z.boolean().optional(),
     escalationCount: z.number().int().min(0).max(100).optional(),
     unavailableModels: z.array(identifier).max(8).optional(),
+    provisioning: z.object({
+      status: z.enum(["ready", "skipped", "failed"]),
+      packageManager: identifier.optional(),
+      command: boundedText(8_000).optional(),
+      durationMs: z.number().finite().min(0).optional(),
+      detail: boundedText(8_000).optional(),
+    }).strict().optional(),
+    verification: z.array(z.object({
+      command: boundedText(1_000).optional(),
+      status: z.enum(["passed", "failed", "not-run"]),
+      summary: boundedText(2_000).optional(),
+    }).strict()).max(20).optional(),
   }).strict().optional(),
 }).strict();
 
