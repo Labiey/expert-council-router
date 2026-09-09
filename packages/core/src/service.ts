@@ -10,6 +10,16 @@ import { decideEscalation } from "./escalation.js";
 import { classifyAvailabilityEvidence } from "./failures.js";
 import { failureTypeForResult, indicatesModelUnavailable } from "./failures.js";
 import {
+  compositionByName,
+  compositionMenu,
+  compositionPools,
+  compositionRolesSummary,
+  parseCompositionDocument,
+  pruneCompositionDocument,
+  resolveCompositionForSession,
+  sanitizeCompositionModelKey,
+} from "./compositions.js";
+import {
   activeModelAvailability,
   evaluateModelAssessment,
   modelAvailabilityWarnings,
@@ -29,6 +39,8 @@ import type {
   CouncilStateOptions,
   CouncilStateSnapshot,
   CouncilStatus,
+  CompositionDocument,
+  CompositionPools,
   DelegationHandle,
   DelegationRequest,
   EscalationRequest,
@@ -44,6 +56,7 @@ import type {
   ExpertRuntime,
   ExecutionAttemptSnapshot,
   ExecutionStateSnapshot,
+  FailureType,
   ModelAssessmentSnapshot,
   ResourceInventory,
   RuntimeBillingDiscovery,
@@ -129,6 +142,8 @@ export class ExpertCouncilService implements ExpertCouncil {
   private readonly executionPromises = new Map<string, Promise<ExpertResult>>();
   private routePolicyDoc: RoutePolicyDocument | undefined;
   private routePolicyWarning: string | undefined;
+  private compositionsDoc: CompositionDocument | undefined;
+  private compositionsWarning: string | undefined;
   private modelAssessment?: ModelAssessmentSnapshot;
   private persistenceQueue: Promise<void> = Promise.resolve();
 
@@ -205,6 +220,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     await this.refreshSharedAssessment();
     const sessionKey = options?.sessionKey ?? "default";
     await this.refreshRoutePolicy();
+    await this.refreshCompositions();
     const [models, skills, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.runtime.listSkills(),
@@ -255,6 +271,17 @@ export class ExpertCouncilService implements ExpertCouncil {
       .map((provider) => `Provider ${provider} is subscription-billed but has no per-model cost classes: token plans carry periodic quotas with per-model burn rates, so add "${provider}/<model>" billing entries instead of one provider-level class.`);
     const systemEntry = this.routePolicyDoc?.system;
     const sessionEntry = this.routePolicyDoc?.sessions?.[sessionKey];
+    const compositionBinding = this.compositionsDoc?.sessions?.[sessionKey]?.name;
+    const compositions = this.stateOptions.readCompositions
+      ? {
+          ...(this.stateOptions.compositionsPath ? { compositionsPath: this.stateOptions.compositionsPath } : {}),
+          compositions: (this.compositionsDoc?.compositions ?? []).map((composition) => ({
+            name: composition.name,
+            rolesSummary: compositionRolesSummary(composition),
+          })),
+          ...(compositionBinding ? { sessionBinding: compositionBinding } : {}),
+        }
+      : undefined;
     const providerLimits = this.stateOptions.usageLedger || this.stateOptions.readProviderLimits
       ? await this.buildProviderLimitsView(providers)
       : undefined;
@@ -275,8 +302,10 @@ export class ExpertCouncilService implements ExpertCouncil {
         ...(sessionEntry ? { session: sessionEntry } : {}),
         ...(this.stateOptions.routePolicyPath ? { sourcePath: this.stateOptions.routePolicyPath } : {}),
       },
+      ...(compositions ? { compositions } : {}),
       warnings: [
         ...(this.routePolicyWarning ? [this.routePolicyWarning] : []),
+        ...(this.compositionsWarning ? [this.compositionsWarning] : []),
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
@@ -292,6 +321,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     await this.refreshSharedAssessment();
     const sessionKey = request.sessionKey ?? "default";
     await this.refreshRoutePolicy();
+    await this.refreshCompositions();
     const [fetchedModels, aggregates, runtimeCapabilities, runtimeBilling] = await Promise.all([
       this.runtime.listAvailableModels(),
       this.telemetry.aggregate(),
@@ -318,14 +348,35 @@ export class ExpertCouncilService implements ExpertCouncil {
       runtimeCapabilities,
       runtimeBillingPolicies,
     );
-    const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates);
+    const hasCostPolicy = Boolean(request.constraints?.costPolicy);
+    const composition = this.resolveRequestedComposition(request, sessionKey, hasCostPolicy);
+    const plan = buildCouncilPlan({ ...request, constraints }, models, this.config, aggregates, composition);
     const providerExclusionWarnings = Object.values(providerExclusions).map((reason) => `Candidate excluded: ${reason}.`);
     if (providerExclusionWarnings.length) plan.warnings = [...providerExclusionWarnings, ...plan.warnings];
-    if (!request.constraints?.costPolicy) {
-      plan.warnings = [
-        "No costPolicy was supplied. Before the first council in a conversation, ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy and reuse the answer for later councils in this conversation.",
-        ...plan.warnings,
-      ];
+    if (composition && plan.experts.length === 0) {
+      throw new Error(
+        `Council composition "${composition.name}" cannot staff any role: every model in its pools is excluded by route policy, provider caps/concurrency, or hard constraints. Edit council-compositions.json or choose another composition.`,
+      );
+    }
+    if (hasCostPolicy || composition || !this.stateOptions.readCompositions) {
+      if (!hasCostPolicy && !composition) {
+        plan.warnings = [
+          "No costPolicy was supplied. Before the first council in a conversation, ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy and reuse the answer for later councils in this conversation.",
+          ...plan.warnings,
+        ];
+      }
+    } else {
+      // Feature is wired and neither a composition nor a policy resolved: offer
+      // the saved rosters plus the auto (cost-policy) option instead of a
+      // reminder, and bind nothing.
+      plan.compositionMenu = compositionMenu(this.compositionsDoc);
+    }
+    if (composition && request.composition) {
+      // An explicit composition is a deliberate session choice; persist it.
+      await this.stateOptions.compositionsStore?.bind(sessionKey, composition.name, new Date()).catch(() => undefined);
+    } else if (hasCostPolicy) {
+      // An explicit cost policy means the session opts out of compositions.
+      await this.stateOptions.compositionsStore?.unbind(sessionKey, new Date()).catch(() => undefined);
     }
     this.plans.set(plan.id, plan);
     await this.persistState(Boolean(request.modelAssessment));
@@ -406,6 +457,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     ]);
     const sessionKey = request.sessionKey ?? "default";
     await this.refreshRoutePolicy();
+    await this.refreshCompositions();
     const models = this.filterByRoutePolicy(unfilteredModels, sessionKey);
     if (models.length === 0 && resolveEffectivePolicy(this.routePolicyDoc, sessionKey)) {
       return {
@@ -415,6 +467,52 @@ export class ExpertCouncilService implements ExpertCouncil {
         summary: "The route policy excludes every available model; edit route-policy.json (system or the session entry) before delegating.",
         executionMetadata: { attempts: 0, durationMs: 0, executionId: "n/a" },
       };
+    }
+    const composition = resolveCompositionForSession(this.compositionsDoc, sessionKey);
+    const rolePool = composition?.pools[request.role] ?? [];
+    const pinnedKey = request.model !== undefined ? sanitizeCompositionModelKey(request.model) : undefined;
+    const fail = (summary: string, failureType: FailureType, model = "unassigned"): ExpertResult => {
+      const result: ExpertResult = {
+        status: "failed",
+        role: request.role,
+        model,
+        summary,
+        executionMetadata: { executionId: id, attempts: 0, failureType, durationMs: Date.now() - started },
+      };
+      Object.assign(state, { status: result.status, finishedAt: new Date().toISOString() });
+      return result;
+    };
+    if (request.model !== undefined && !pinnedKey) {
+      return fail(`Pinned model "${request.model}" is not a valid provider/id model key.`, "missing_context");
+    }
+    const initialExclusions = await this.computeProviderExclusions(models, state.id);
+    if (pinnedKey && !unfilteredModels.some((model) => `${model.provider}/${model.id}` === pinnedKey)) {
+      return fail(
+        `Pinned model "${pinnedKey}" is not in the discovered model inventory; call expert_inspect for the current model keys.`,
+        "missing_context",
+      );
+    }
+    if (pinnedKey && rolePool.length && !rolePool.includes(pinnedKey)) {
+      return fail(
+        `Pinned model "${pinnedKey}" is not in the composition pool for ${request.role}${composition ? ` in "${composition.name}"` : ""}: [${rolePool.join(", ")}].`,
+        "permission_error",
+        pinnedKey,
+      );
+    }
+    if (pinnedKey && !models.some((model) => `${model.provider}/${model.id}` === pinnedKey)) {
+      return fail(`Pinned model "${pinnedKey}" is excluded by the route policy for session "${sessionKey}".`, "permission_error", pinnedKey);
+    }
+    if (pinnedKey && initialExclusions[parseModelKey(pinnedKey).provider]) {
+      return fail(`Pinned model "${pinnedKey}" is excluded: ${initialExclusions[parseModelKey(pinnedKey).provider]}.`, "permission_error", pinnedKey);
+    }
+    const roleModels = rolePool.length
+      ? models.filter((model) => rolePool.includes(`${model.provider}/${model.id}`))
+      : models;
+    if (!pinnedKey && rolePool.length && roleModels.length === 0) {
+      return fail(
+        `Composition "${composition!.name}" restricts ${request.role} to [${rolePool.join(", ")}], but none are in the current inventory or route policy.`,
+        "permission_error",
+      );
     }
     const plan = request.councilId ? this.plans.get(request.councilId) : undefined;
     const planWarnings: string[] = [];
@@ -433,7 +531,6 @@ export class ExpertCouncilService implements ExpertCouncil {
       planWarnings.push(`Council plan ${plan.id} was built against a different model inventory; routing was refreshed.`);
     }
     const planned = plan?.experts.find((expert) => expert.role === request.role);
-    const initialExclusions = await this.computeProviderExclusions(models, state.id);
     noteProviderExclusions(initialExclusions);
     const routingConstraints = constraintsWithAssessment(
       { ...request.constraints, ...(Object.keys(initialExclusions).length ? { providerExclusions: initialExclusions } : {}) },
@@ -441,7 +538,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       runtimeCapabilities,
     );
     const ranked = rankModels({
-      models,
+      models: roleModels,
       role: request.role,
       config: this.config,
       constraints: routingConstraints,
@@ -453,12 +550,28 @@ export class ExpertCouncilService implements ExpertCouncil {
       }
       ranked.candidates.sort((a, b) => (a.model === planned.model ? -1 : b.model === planned.model ? 1 : b.score - a.score));
     }
+    if (pinnedKey) {
+      // A pin is exclusive: retries stay on that model and never escalate away
+      // from the host's deliberate choice.
+      if (!ranked.candidates.some((candidate) => candidate.model === pinnedKey)) {
+        const rejected = ranked.rejected.find((candidate) => candidate.model === pinnedKey)?.rejected ?? [];
+        return fail(
+          `Pinned model "${pinnedKey}" is not eligible for ${request.role}${rejected.length ? `: ${rejected.join("; ")}` : "."}`,
+          "permission_error",
+          pinnedKey,
+        );
+      }
+      ranked.candidates = ranked.candidates.filter((candidate) => candidate.model === pinnedKey);
+    }
     if (!ranked.candidates.length) {
+      const poolNote = rolePool.length && composition
+        ? ` Composition "${composition.name}" restricts ${request.role} to [${rolePool.join(", ")}].`
+        : "";
       const result: ExpertResult = {
         status: "failed",
         role: request.role,
         model: "unassigned",
-        summary: "No eligible model satisfies the role and runtime constraints.",
+        summary: `No eligible model satisfies the role and runtime constraints.${poolNote}`,
         risks: [...planWarnings, ...ranked.rejected.flatMap((candidate) => candidate.rejected ?? [])].slice(0, 8),
         executionMetadata: { executionId: id, attempts: 0, failureType: "permission_error", durationMs: Date.now() - started },
       };
@@ -756,6 +869,48 @@ export class ExpertCouncilService implements ExpertCouncil {
     const effective = resolveEffectivePolicy(this.routePolicyDoc, sessionKey);
     if (!effective) return models;
     return models.filter((model) => !routePolicyExcludes(effective, `${model.provider}/${model.id}`));
+  }
+
+  /**
+   * Adopt the newest saved-compositions document. Parse/validation failures
+   * surface through the inspect warning path and never block routing.
+   */
+  private async refreshCompositions(): Promise<void> {
+    if (!this.stateOptions.readCompositions) return;
+    try {
+      const raw = await this.stateOptions.readCompositions();
+      // Prune stale session bindings in memory; the store owns any write-back.
+      this.compositionsDoc = raw ? pruneCompositionDocument(parseCompositionDocument(raw)) : undefined;
+      this.compositionsWarning = undefined;
+    } catch (error) {
+      this.compositionsDoc = undefined;
+      this.compositionsWarning = `Council compositions file could not be loaded and was ignored: ${error instanceof Error ? error.message : String(error)}`;
+    }
+  }
+
+  /**
+   * Resolution order for a build: explicit request param > session binding >
+   * none. An explicit name that does not exist is a hard, actionable error.
+   */
+  private resolveRequestedComposition(
+    request: BuildCouncilRequest,
+    sessionKey: string,
+    hasCostPolicy: boolean,
+  ): { name: string; pools: CompositionPools } | undefined {
+    if (request.composition) {
+      const composition = compositionByName(this.compositionsDoc, request.composition);
+      if (!composition) {
+        const available = (this.compositionsDoc?.compositions ?? []).map((entry) => entry.name);
+        throw new Error(
+          `Unknown council composition "${request.composition}". Available compositions: ${available.length ? available.join(", ") : "(none saved)"}. Edit council-compositions.json or omit the composition parameter.`,
+        );
+      }
+      return { name: composition.name, pools: compositionPools(composition) };
+    }
+    // An explicit cost policy is the session's assembly choice and wins over a
+    // stale composition binding, which is unbound below.
+    if (hasCostPolicy) return undefined;
+    return resolveCompositionForSession(this.compositionsDoc, sessionKey);
   }
 
   /**

@@ -8,6 +8,7 @@ import { JsonlTelemetryStore } from "./file-telemetry.js";
 import { JsonModelAssessmentStore } from "./file-assessment.js";
 import { JsonRoutePolicyStore } from "./file-route-policy.js";
 import { JsonUsageLedgerStore, createProviderLimitsReader } from "./file-usage-ledger.js";
+import { JsonCompositionsStore } from "./file-compositions.js";
 import { JsonCouncilStateStore } from "./file-state.js";
 import { SplitCouncilStateStore } from "./persistent-state.js";
 import { PiExpertRuntime } from "./pi-runtime.js";
@@ -22,6 +23,7 @@ export interface CreateCouncilOptions {
   modelAssessmentPath?: string;
   routePolicyPath?: string;
   usageLedgerPath?: string;
+  compositionsPath?: string;
   roleDirectory?: string;
   /** Host-provided SDK used by self-contained distributions such as the Codex plugin. */
   sdk?: PiSdkLike;
@@ -69,6 +71,7 @@ export function defaultCouncilStoragePaths(cwd: string, dataRoot = defaultCounci
     modelAssessmentPath: path.join(path.resolve(dataRoot), "model-assessment.json"),
     routePolicyPath: path.join(path.resolve(dataRoot), "route-policy.json"),
     usageLedgerPath: path.join(path.resolve(dataRoot), "usage-ledger.json"),
+    councilCompositionsPath: path.join(path.resolve(dataRoot), "council-compositions.json"),
   };
 }
 
@@ -131,10 +134,18 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
       ?? defaults.usageLedgerPath,
     "Usage ledger path",
   );
+  const compositionsPath = resolveOperatorPath(
+    cwd,
+    options.compositionsPath
+      ?? process.env.EXPERT_COUNCIL_COMPOSITIONS
+      ?? defaults.councilCompositionsPath,
+    "Council compositions path",
+  );
   const stateStore = new JsonCouncilStateStore(statePath);
   const assessmentStore = new JsonModelAssessmentStore(modelAssessmentPath);
   const routePolicyStore = new JsonRoutePolicyStore(routePolicyPath);
   const usageLedgerStore = new JsonUsageLedgerStore(usageLedgerPath);
+  const compositionsStore = new JsonCompositionsStore(compositionsPath);
   const persistence = new SplitCouncilStateStore(stateStore, assessmentStore);
   let initialState = await persistence.load();
   if (process.platform === "win32" && !initialState?.modelAssessment) {
@@ -165,6 +176,9 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
     persistence,
     readRoutePolicy: () => routePolicyStore.load(),
     routePolicyPath,
+    readCompositions: () => compositionsStore.load(),
+    compositionsPath,
+    compositionsStore,
     readProviderLimits: createProviderLimitsReader(routePolicyStore),
     usageLedger: usageLedgerStore,
   });

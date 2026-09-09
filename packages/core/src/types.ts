@@ -310,6 +310,8 @@ export interface BuildCouncilRequest {
   modelAssessment?: ModelAssessmentSnapshot;
   /** Session key selecting which persisted route-policy session entry applies; defaults to "default". */
   sessionKey?: string;
+  /** Explicit saved composition name; wins over the session binding. */
+  composition?: string;
 }
 
 export interface RankedCandidate {
@@ -345,6 +347,10 @@ export interface CouncilPlan {
   warnings: string[];
   costPolicy?: CostPolicy;
   inventoryFingerprint?: string;
+  /** Name of the saved composition that constrained this build, when one resolved. */
+  composition?: string;
+  /** Saved-composition choices offered when neither a composition nor a costPolicy was supplied. */
+  compositionMenu?: CompositionMenuEntry[];
 }
 
 export interface DelegationRequest {
@@ -358,6 +364,13 @@ export interface DelegationRequest {
   constraints?: RoutingConstraints;
   /** Session key selecting which persisted route-policy session entry applies; defaults to "default". */
   sessionKey?: string;
+  /**
+   * Optional `provider/id` pin. The model must exist in the discovered
+   * inventory, be inside the role's composition pool when one resolves, and
+   * pass route-policy plus cap/concurrency exclusions. Used to dispatch
+   * several same-role experts concurrently, one per model.
+   */
+  model?: string;
 }
 
 export interface DelegationHandle {
@@ -471,6 +484,8 @@ export interface ResourceInventory {
   modelAssessment?: ModelAssessmentSnapshot;
   modelAssessmentStatus?: ModelAssessmentStatus;
   routePolicy: ResourceRoutePolicyView;
+  /** Saved council compositions and the session binding; omitted when the feature is unwired. */
+  compositions?: ResourceCompositionsView;
   /** Per-provider caps, weighted usage, and in-flight counts; omitted when caps are unwired. */
   providerLimits?: ProviderLimitsView[];
   warnings: string[];
@@ -571,6 +586,49 @@ export interface ResourceRoutePolicyView {
   sourcePath?: string;
 }
 
+/** One saved council composition: a named roster mapping roles to model pools. */
+export interface Composition {
+  name: string;
+  /** Only roles with at least one model key are present; a missing/empty role auto-routes. */
+  roles: Partial<Record<ExpertRole, string[]>>;
+}
+
+/** Persisted session -> composition binding entry. */
+export interface CompositionSessionBinding {
+  name: string;
+  /** ISO timestamp of the last bind; absent for hand-written entries, which are never pruned. */
+  updatedAt?: string;
+}
+
+/** Persisted user-defined council compositions (council-compositions.json). */
+export interface CompositionDocument {
+  version: 1;
+  /** Saved rosters in menu-priority order. */
+  compositions: Composition[];
+  /** Session key (host conversation id) -> saved composition name. */
+  sessions?: Record<string, CompositionSessionBinding>;
+}
+
+/** Per-role candidate pools resolved from a composition; an empty array means auto-route. */
+export type CompositionPools = Record<ExpertRole, string[]>;
+
+/** One entry of the first-build composition menu: a saved composition or the auto option. */
+export interface CompositionMenuEntry {
+  name: string;
+  /** Role -> model count for a saved composition; omitted for the auto option. */
+  rolesSummary?: Record<string, number>;
+  /** Present only on the auto option. */
+  description?: string;
+}
+
+/** Host-facing compositions view returned by inspectResources. */
+export interface ResourceCompositionsView {
+  compositionsPath?: string;
+  compositions: Array<{ name: string; rolesSummary: Record<string, number> }>;
+  /** Name of the composition currently bound to the inspected session, if any. */
+  sessionBinding?: string;
+}
+
 export interface CouncilStatus {
   plans: Array<{ id: string; taskClass: TaskClass; expertCount: number; createdAt: string }>;
   executions: ExecutionStateSnapshot[];
@@ -637,6 +695,18 @@ export interface CouncilStateOptions {
   readRoutePolicy?: () => Promise<RoutePolicyDocument | undefined>;
   /** Display path of route-policy.json surfaced to hosts through inspectResources. */
   routePolicyPath?: string;
+  /** Load the persisted council-compositions document; absent disables the compositions feature. */
+  readCompositions?: () => Promise<CompositionDocument | undefined>;
+  /** Display path of council-compositions.json surfaced to hosts through inspectResources. */
+  compositionsPath?: string;
+  /**
+   * Persist session -> composition bindings. Absent disables binding; builds and
+   * delegations still honor the document's existing sessions map.
+   */
+  compositionsStore?: {
+    bind(sessionKey: string, name: string, now: Date): Promise<void>;
+    unbind(sessionKey: string, now: Date): Promise<void>;
+  };
   /** Load per-provider token caps; absent disables cap enforcement. */
   readProviderLimits?: () => Promise<ProviderLimitsDocument | undefined>;
   /**

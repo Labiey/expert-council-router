@@ -13,7 +13,7 @@ import {
   sanitizeOutcome,
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
-import type { CouncilStateOptions, CouncilStateSnapshot, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
+import type { CompositionDocument, CouncilStateOptions, CouncilStateSnapshot, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
 const profiles = {
@@ -1136,6 +1136,179 @@ describe("429 quota exhaustion classification", () => {
     expect(saved.modelAvailability?.["plan/one"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
     expect(saved.modelAvailability?.["plan/two"]).toMatchObject({ callable: false, kind: "quota-exhausted" });
     expect(saved.modelStatus?.["plan/two"]).toMatchObject({ state: "quota-exhausted" });
+  });
+});
+
+describe("persistent council compositions", () => {
+  const compositionAssessment = {
+    asOf: "2026-09-03T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: {
+      "cheap/one": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+      "cheap/two": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+      "strong/one": { coding: 9.5, toolReliability: 9.5, autonomousExecution: 9.5, bashReliability: 9.5 },
+    },
+  };
+  const compositionModels = [model("cheap", "one"), model("cheap", "two"), model("strong", "one")];
+  const document: CompositionDocument = {
+    version: 1,
+    compositions: [
+      { name: "daily-cheap", roles: { scout: ["cheap/one", "cheap/two"], "implementation-worker": ["strong/one"] } },
+      { name: "only-cheap", roles: { "implementation-worker": ["cheap/one"], verifier: ["strong/one"] } },
+    ],
+  };
+  const boundDocument: CompositionDocument = {
+    ...document,
+    sessions: { default: { name: "daily-cheap" } },
+  };
+
+  function compositionService(
+    runtime: MockRuntime,
+    options: {
+      compositions?: CompositionDocument;
+      readRoutePolicy?: CouncilStateOptions["readRoutePolicy"];
+      store?: CouncilStateOptions["compositionsStore"];
+    } = {},
+  ) {
+    return new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: abortInitialState(compositionAssessment),
+      persistence: { save: async () => {}, updateModelAssessment: async () => {} },
+      ...(options.compositions ? { readCompositions: async () => options.compositions } : {}),
+      ...(options.readRoutePolicy ? { readRoutePolicy: options.readRoutePolicy } : {}),
+      ...(options.store ? { compositionsStore: options.store } : {}),
+    });
+  }
+
+  it("offers a bounded composition menu when neither composition nor costPolicy is supplied", async () => {
+    const plan = await compositionService(new MockRuntime(compositionModels), { compositions: document })
+      .buildCouncil({ task: "Implement a small bounded feature", constraints: { maxExperts: 1 } });
+    expect(plan.compositionMenu).toEqual([
+      { name: "daily-cheap", rolesSummary: { scout: 2, "implementation-worker": 1 } },
+      { name: "only-cheap", rolesSummary: { "implementation-worker": 1, verifier: 1 } },
+      { name: "auto", description: "create a session composition via costPolicy (economy/balanced/speed)" },
+    ]);
+    expect(plan.warnings.join(" ")).not.toContain("No costPolicy was supplied");
+  });
+
+  it("keeps the cost-policy reminder when the compositions feature is unwired", async () => {
+    const plan = await new ExpertCouncilService(new MockRuntime(compositionModels), {})
+      .buildCouncil({ task: "Implement a small bounded feature", constraints: { maxExperts: 1 } });
+    expect(plan.compositionMenu).toBeUndefined();
+    expect(plan.warnings.join(" ")).toContain("No costPolicy was supplied");
+  });
+
+  it("restricts an explicit composition's candidate selection to its pool", async () => {
+    const plan = await compositionService(new MockRuntime(compositionModels), { compositions: document })
+      .buildCouncil({
+        task: "Implement a small bounded feature",
+        composition: "daily-cheap",
+        constraints: { maxExperts: 1 },
+      });
+    expect(plan.composition).toBe("daily-cheap");
+    expect(plan.experts.map((expert) => expert.role)).toEqual(["implementation-worker"]);
+    expect(plan.experts[0]?.model).toBe("strong/one");
+    expect(plan.compositionMenu).toBeUndefined();
+  });
+
+  it("fails an unknown composition with the available names", async () => {
+    await expect(compositionService(new MockRuntime(compositionModels), { compositions: document })
+      .buildCouncil({ task: "Implement a small bounded feature", composition: "nope" }))
+      .rejects.toThrow(/Unknown council composition "nope".*daily-cheap/s);
+  });
+
+  it("lets route-policy deny beat the composition pool and reports the unstaffable role", async () => {
+    const service = compositionService(new MockRuntime(compositionModels), {
+      compositions: document,
+      readRoutePolicy: async () => ({ version: 1, system: { deny: ["cheap"] } }),
+    });
+    const plan = await service.buildCouncil({
+      task: "Implement a small bounded feature",
+      composition: "only-cheap",
+      constraints: { maxExperts: 2 },
+    });
+    expect(plan.experts.map((expert) => expert.role)).toEqual(["verifier"]);
+    expect(plan.warnings.join(" ")).toContain("restricts implementation-worker");
+    expect(plan.warnings.join(" ")).toContain("unstaffable");
+  });
+
+  it("reports a fully excluded composition as unstaffable", async () => {
+    const service = compositionService(new MockRuntime(compositionModels), {
+      compositions: { version: 1, compositions: [{ name: "cheap-only", roles: { "implementation-worker": ["cheap/one"] } }] },
+      readRoutePolicy: async () => ({ version: 1, system: { deny: ["cheap"] } }),
+    });
+    await expect(service.buildCouncil({
+      task: "Implement a small bounded feature",
+      composition: "cheap-only",
+      constraints: { maxExperts: 1 },
+    })).rejects.toThrow(/cannot staff any role/);
+  });
+
+  it("pins a delegation to a model inside the session composition pool", async () => {
+    const runtime = new MockRuntime(compositionModels, [
+      { status: "success", role: "scout", model: "cheap/two", summary: "ok" },
+    ]);
+    const result = await compositionService(runtime, { compositions: boundDocument }).delegate({
+      role: "scout",
+      task: "Inspect a tiny file",
+      timeoutMs: 60_000,
+      model: "cheap/two",
+    });
+    expect(result.status).toBe("success");
+    expect(runtime.requests.map((request) => request.model)).toEqual(["cheap/two"]);
+  });
+
+  it("rejects a pinned model outside the composition pool with a structured error", async () => {
+    const runtime = new MockRuntime(compositionModels);
+    const result = await compositionService(runtime, { compositions: boundDocument }).delegate({
+      role: "scout",
+      task: "Inspect a tiny file",
+      timeoutMs: 60_000,
+      model: "strong/one",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("not in the composition pool");
+    expect(result.summary).toContain("cheap/one");
+    expect(result.executionMetadata?.failureType).toBe("permission_error");
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  it("rejects a pinned model absent from the discovered inventory", async () => {
+    const runtime = new MockRuntime(compositionModels);
+    const result = await compositionService(runtime, { compositions: boundDocument }).delegate({
+      role: "scout",
+      task: "Inspect a tiny file",
+      timeoutMs: 60_000,
+      model: "ghost/model",
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("not in the discovered model inventory");
+    expect(runtime.requests).toHaveLength(0);
+  });
+
+  it("binds an explicit composition build and unbinds on an explicit costPolicy build", async () => {
+    const binds: string[] = [];
+    const unbinds: string[] = [];
+    const store: CouncilStateOptions["compositionsStore"] = {
+      bind: async (_sessionKey, name) => { binds.push(name); },
+      unbind: async () => { unbinds.push("default"); },
+    };
+    const service = compositionService(new MockRuntime(compositionModels), { compositions: boundDocument, store });
+
+    await service.buildCouncil({
+      task: "Implement a small bounded feature",
+      composition: "daily-cheap",
+      constraints: { maxExperts: 1 },
+    });
+    expect(binds).toEqual(["daily-cheap"]);
+
+    const auto = await service.buildCouncil({
+      task: "Implement a small bounded feature",
+      constraints: { costPolicy: "balanced", maxExperts: 1 },
+    });
+    expect(unbinds).toEqual(["default"]);
+    // An explicit cost policy wins over a stale session binding: no pool restriction.
+    expect(auto.composition).toBeUndefined();
+    expect(auto.compositionMenu).toBeUndefined();
   });
 });
 

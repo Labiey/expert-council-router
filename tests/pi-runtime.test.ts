@@ -614,3 +614,47 @@ describe("zombie-session abort regression", () => {
     expect(await runtime.inspectExecution("exec_zombie")).toBeUndefined();
   });
 });
+
+describe("council compositions persistence", () => {
+  it("binds, unbinds, prunes stale bindings, and creates the file lazily", async () => {
+    const { mkdtemp, readFile, rm, writeFile } = await import("node:fs/promises");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const { JsonCompositionsStore } = await import("../packages/pi-runtime/src/file-compositions.js");
+    const dir = await mkdtemp(path.join(os.tmpdir(), "ec-compositions-"));
+    const filePath = path.join(dir, "council-compositions.json");
+    try {
+      const store = new JsonCompositionsStore(filePath);
+      // A missing file is an empty feature, not an error.
+      expect(await store.load()).toBeUndefined();
+
+      const now = new Date("2026-09-07T00:00:00.000Z");
+      await store.bind("session-a", "daily-cheap", now);
+      // Lazy creation: the first bind writes the file.
+      const onDisk = JSON.parse(await readFile(filePath, "utf8"));
+      expect(onDisk.sessions["session-a"]).toEqual({ name: "daily-cheap", updatedAt: now.toISOString() });
+      expect((await store.load())?.sessions?.["session-a"]?.name).toBe("daily-cheap");
+
+      await store.unbind("session-a", now);
+      expect((await store.load())?.sessions).toBeUndefined();
+
+      // A stale binding is pruned on load and written back to disk.
+      await writeFile(filePath, `${JSON.stringify({
+        compositions: [{ name: "old" }],
+        sessions: {
+          stale: { name: "old", updatedAt: "2020-01-01T00:00:00.000Z" },
+          fresh: { name: "old", updatedAt: now.toISOString() },
+        },
+      })}\n`, "utf8");
+      const reloaded = new JsonCompositionsStore(filePath);
+      const loaded = await reloaded.load();
+      expect(loaded?.sessions?.stale).toBeUndefined();
+      expect(loaded?.sessions?.fresh).toBeDefined();
+      const prunedOnDisk = JSON.parse(await readFile(filePath, "utf8"));
+      expect(prunedOnDisk.sessions.stale).toBeUndefined();
+      expect(prunedOnDisk.sessions.fresh.name).toBe("old");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

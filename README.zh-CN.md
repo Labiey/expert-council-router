@@ -431,6 +431,32 @@ MCP 表面刻意保持为 10 个语义工具：
 
 `expert_inspect` 和 `expert_build` 默认返回面向宿主的紧凑视图。只有确实需要准确模型元数据、备选项、评分、工具或 Skill 时才传入 `detail: "full"`。
 
+### 委员会编成（Council compositions）
+
+已保存的委员会名单保存在共享状态目录中与 `route-policy.json` 同级的 `council-compositions.json`——不新增任何工具。默认位置：Windows `%LOCALAPPDATA%\ExpertCouncil\council-compositions.json`，macOS `~/Library/Application Support/ExpertCouncil/council-compositions.json`，Linux `$XDG_STATE_HOME/expert-council/council-compositions.json`（或 `~/.local/state/expert-council/council-compositions.json`）；可用 `EXPERT_COUNCIL_COMPOSITIONS` 覆盖。
+
+```json
+{
+  "compositions": [
+    {
+      "name": "daily-cheap",
+      "roles": {
+        "scout": ["qwen-token-plan-cn/deepseek-v4-flash"],
+        "implementation-worker": ["zai/glm-5.3-flash", "deepseek/deepseek-v4-flash"]
+      }
+    }
+  ],
+  "sessions": { "01a066b2-a166-7e67-983d-2bbec848c223": "daily-cheap" }
+}
+```
+
+- `compositions` 是有序列表（即菜单优先级），最多 32 个唯一名称（≤80 字符）。`roles` 以七个语义角色为键；每个值是 `provider/id` 模型键列表（每角色 ≤16 个）。角色缺失或列表为空时该角色自动路由。
+- `sessions` 把会话键（宿主对话 ID）映射到编成名称。条目 30 天后过期；工具写入的绑定带 `updatedAt` 时间戳，手写的字符串条目则保留。
+- 首次构建既未传 `composition` 也未传 `costPolicy` 时，`expert_build` 返回 `compositionMenu`：最多三个已保存名单加一个 `auto` 选项。把选中的名称作为 `composition` 传回；`auto` 选项即成本策略流程（economy/balanced/speed）。
+- 显式 `composition` 构建成功后会把该名称绑定到会话；成功传入 `costPolicy` 会解除绑定。菜单响应不绑定任何内容。
+- 某角色的候选池是编成列表与路由策略过滤、Provider 限额/并发排除的交集。路由策略的 `deny` 恒胜于候选池，池被完全排除的角色会报告为无法编成。
+- `expert_delegate` 的单项参数与 `assignments[]` 均接受可选 `model`（`provider/id`）。对同一角色的多个任务分别固定不同的池内模型即可并发派遣多个专家；固定模型不在该角色池、已发现清单或路由策略内时会返回结构化错误。
+
 ### 路由策略文件
 
 模型黑白名单保存在共享状态目录中与 `model-assessment.json` 同级的 `route-policy.json`——不新增任何工具。文件包含所有会话共同遵守的 `system` 条目，以及按宿主会话键组织的 `sessions` 条目（Pi 会话 ID 在 resume 后保持不变；MCP stdio 会话使用稳定的 `"default"` 键）。会话只能收紧系统策略：deny 取并集、allow 取交集、deny 恒胜。条目为 `provider/id` 或裸 `provider`（整个供应商）。`expert_inspect` 会返回本会话的 `sessionKey`、当前 `effective` 策略与文件 `sourcePath`，宿主（或你）可以直接编辑该文件；改动在下次专家调用即生效，超过 30 天的会话条目自动清理，损坏文件会带警告忽略。
@@ -482,6 +508,7 @@ node packages/mcp-server/dist/bin.js
 - `EXPERT_COUNCIL_CONFIG`：用户 JSON 配置。
 - `EXPERT_COUNCIL_TELEMETRY`：本地遥测 JSONL 路径。
 - `EXPERT_COUNCIL_STATE`：持久化计划、执行和结果状态路径。
+- `EXPERT_COUNCIL_COMPOSITIONS`：已保存委员会编成的路径。
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`：同步 MCP 操作的有限超时，默认 30000 毫秒。
 - `PI_CODING_AGENT_MODULE`：自动解析失败时显式指定 Pi 包目录。
 

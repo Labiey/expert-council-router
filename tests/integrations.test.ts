@@ -575,8 +575,12 @@ describe("Pi adapter registration", () => {
       undefined,
       { cwd: ".", sessionManager: { getBranch: () => sessionEntries } },
     );
-    expect(JSON.parse(firstAttempt.content[0]!.text)).toMatchObject({ status: "preference-required" });
-    expect(received).toBeUndefined();
+    // The first build consults the service for a composition menu; no cost
+    // policy is established yet, so no constraints are forwarded.
+    expect(received).toBeDefined();
+    expect(received?.constraints).toBeUndefined();
+    expect(JSON.parse(firstAttempt.content[0]!.text).status).not.toBe("preference-required");
+    received = undefined;
 
     await tools.get("expert_build")!.execute(
       "call",
@@ -668,6 +672,79 @@ describe("Pi adapter registration", () => {
     expect(JSON.parse(fetched.content[0]!.text).result.summary).toBe("private feedback");
   });
 
+  it("passes an explicit composition and surfaces the composition menu", async () => {
+    type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
+    const tools = new Map<string, Tool>();
+    const requests: Array<Parameters<ExpertCouncil["buildCouncil"]>[0]> = [];
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      buildCouncil: async (request) => {
+        requests.push(request);
+        return {
+          id: "c",
+          taskClass: "normal",
+          task: request.task,
+          experts: [],
+          createdAt: "now",
+          warnings: [],
+          ...(request.composition
+            ? {}
+            : { compositionMenu: [{ name: "auto", description: "create a session composition via costPolicy (economy/balanced/speed)" }] }),
+        };
+      },
+    };
+    piExtension({
+      registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+      appendEntry: () => {},
+    } as never, { councilFor: async () => council });
+
+    const menu = await tools.get("expert_build")!.execute(
+      "call",
+      { task: "review" },
+      undefined,
+      undefined,
+      { cwd: ".", sessionManager: { getBranch: () => [] } },
+    );
+    const menuPayload = JSON.parse(menu.content[0]!.text);
+    expect(menuPayload.status).toBe("composition-menu-required");
+    expect(menuPayload.compositionMenu).toHaveLength(1);
+
+    await tools.get("expert_build")!.execute(
+      "call",
+      { task: "review", composition: "daily-cheap" },
+      undefined,
+      undefined,
+      { cwd: ".", sessionManager: { getBranch: () => [] } },
+    );
+    expect(requests.at(-1)?.composition).toBe("daily-cheap");
+  });
+
+  it("forwards an optional model pin on a single delegation", async () => {
+    type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
+    const tools = new Map<string, Tool>();
+    let received: Parameters<ExpertCouncil["startDelegation"]>[0] | undefined;
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      startDelegation: (request) => {
+        received = request;
+        return { executionId: "exec_pin", result: new Promise(() => {}) };
+      },
+    };
+    piExtension({
+      registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+      sendMessage: () => {},
+    } as never, { councilFor: async () => council });
+
+    await tools.get("expert_delegate")!.execute(
+      "call",
+      { role: "scout", task: "map files", timeoutMs: 60_000, model: "p/m" },
+      undefined,
+      undefined,
+      { cwd: ".", isIdle: () => false },
+    );
+    expect(received?.model).toBe("p/m");
+  });
+
   it("dispatches a complete independent batch before returning", async () => {
     type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
     const tools = new Map<string, Tool>();
@@ -711,5 +788,53 @@ describe("Pi adapter registration", () => {
         { executionId: "exec_batch_2", role: "reviewer", status: "running" },
       ],
     });
+  });
+});
+
+describe("council composition surface", () => {
+  it("accepts composition and model-pinning schemas", () => {
+    expect(MCP_INPUT_SCHEMAS.expert_build.composition.safeParse("daily-cheap").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_build.composition.safeParse("x".repeat(81)).success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_build.composition.safeParse("bad\0name").success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.model.safeParse("p/m").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.model.safeParse("nope").success).toBe(false);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
+      { role: "scout", task: "map files", timeoutMs: 600_000, model: "p/m" },
+    ]).success).toBe(true);
+  });
+
+  it("permits a compositionMenu in the expert_build response", async () => {
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      buildCouncil: async (request) => ({
+        id: "c",
+        taskClass: "normal",
+        task: request.task,
+        experts: [],
+        createdAt: "now",
+        warnings: [],
+        compositionMenu: [
+          { name: "daily-cheap", rolesSummary: { scout: 2 } },
+          { name: "auto", description: "create a session composition via costPolicy (economy/balanced/speed)" },
+        ],
+      }),
+    };
+    const server = createClientRootMcpServer({ cwd: process.cwd() }, async () => council);
+    const client = new Client({ name: "composition-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const build = await client.callTool({
+        name: "expert_build",
+        arguments: { task: "Implement a small bounded feature", composition: "daily-cheap" },
+      });
+      const payload = JSON.parse((build.content as Array<{ text: string }>)[0]!.text);
+      expect(payload.compositionMenu).toHaveLength(2);
+      expect(payload.compositionMenu[0]).toMatchObject({ name: "daily-cheap", rolesSummary: { scout: 2 } });
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 });

@@ -430,6 +430,32 @@ The MCP surface is deliberately limited to ten semantic tools:
 
 `expert_inspect` and `expert_build` return compact host-facing views by default. Pass `detail: "full"` only when exact model metadata, alternatives, scores, tools, or Skills are genuinely required.
 
+### Council compositions
+
+Saved council rosters live in `council-compositions.json` next to `route-policy.json` in the shared state directory — no dedicated tool. The default location is `%LOCALAPPDATA%\ExpertCouncil\council-compositions.json` on Windows, `~/Library/Application Support/ExpertCouncil/council-compositions.json` on macOS, and `$XDG_STATE_HOME/expert-council/council-compositions.json` (or `~/.local/state/expert-council/council-compositions.json`) on Linux; override it with `EXPERT_COUNCIL_COMPOSITIONS`.
+
+```json
+{
+  "compositions": [
+    {
+      "name": "daily-cheap",
+      "roles": {
+        "scout": ["qwen-token-plan-cn/deepseek-v4-flash"],
+        "implementation-worker": ["zai/glm-5.3-flash", "deepseek/deepseek-v4-flash"]
+      }
+    }
+  ],
+  "sessions": { "01a066b2-a166-7e67-983d-2bbec848c223": "daily-cheap" }
+}
+```
+
+- `compositions` is an ordered list (menu priority) of at most 32 unique names (≤80 characters). `roles` is keyed by the seven semantic role values; each value is a list of `provider/id` model keys (≤16 per role). A missing or empty role auto-routes that role.
+- `sessions` maps a session key (host conversation id) to a composition name. Entries expire after 30 days; bindings written by the tool carry an `updatedAt` stamp, while hand-written string entries are kept.
+- On the first build with neither `composition` nor `costPolicy`, `expert_build` returns a `compositionMenu`: up to three saved rosters plus an `auto` option. Pass a saved name back as `composition`; the `auto` option is the cost-policy flow (economy/balanced/speed).
+- A successful explicit `composition` build binds that name to the session; a successful `costPolicy` build unbinds it. A menu response binds nothing.
+- A role's candidate pool is the composition list intersected with route-policy filtering and provider cap/concurrency exclusions. Route-policy `deny` always wins over a pool, and a fully excluded role is reported as unstaffable.
+- `expert_delegate` accepts an optional `model` (`provider/id`) per assignment and in `assignments[]`. Pin different pool models on same-role assignments to dispatch several experts concurrently; a pin outside the role's pool, the discovered inventory, or the route policy fails with a structured error.
+
 ### Route policy file
 
 Model allow/deny lists live in `route-policy.json` next to `model-assessment.json` in the shared state directory — no dedicated tool. The file holds a `system` entry that every session obeys and per-session entries under `sessions` keyed by the host conversation (Pi session IDs survive resume; MCP stdio conversations use a stable `"default"` key). Sessions may only narrow the system policy: deny lists union, allow lists intersect, and deny always wins. Entries are `provider/id` or a bare `provider` for a whole provider. `expert_inspect` returns this conversation's `sessionKey`, the `effective` policy, and the file's `sourcePath` so the host (or you) can edit it directly; changes apply on the next expert call, stale session entries are pruned after 30 days, and a corrupt file is ignored with a warning.
@@ -481,6 +507,7 @@ Supported environment variables:
 - `EXPERT_COUNCIL_CONFIG`: user JSON configuration.
 - `EXPERT_COUNCIL_TELEMETRY`: local telemetry JSONL path.
 - `EXPERT_COUNCIL_STATE`: persisted plans, executions, and results state path.
+- `EXPERT_COUNCIL_COMPOSITIONS`: saved council compositions path.
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`: bounded timeout for synchronous MCP operations, 30000 ms by default.
 - `PI_CODING_AGENT_MODULE`: explicit Pi package directory when automatic resolution fails.
 

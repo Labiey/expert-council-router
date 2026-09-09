@@ -4,6 +4,7 @@ import { rankModels } from "./routing.js";
 import type {
   AvailableModel,
   BuildCouncilRequest,
+  CompositionPools,
   CouncilMember,
   CouncilPlan,
   ExpertRole,
@@ -105,11 +106,17 @@ export function rolesForTask(taskClass: TaskClass, maxExperts: number): ExpertRo
   return ["planner", "implementation-worker", "reviewer", "verifier"];
 }
 
+export interface CouncilCompositionInput {
+  name: string;
+  pools: CompositionPools;
+}
+
 export function buildCouncilPlan(
   request: BuildCouncilRequest,
   models: AvailableModel[],
   config: CouncilConfig,
   telemetry: TelemetryAggregate[] = [],
+  composition?: CouncilCompositionInput,
 ): CouncilPlan {
   const taskClass = classifyTask(request.task, config.routing.taskClassification);
   const maxExperts = Math.min(request.constraints?.maxExperts ?? config.routing.maxExperts, config.routing.maxExperts);
@@ -124,8 +131,15 @@ export function buildCouncilPlan(
   const selectedModels: string[] = [];
 
   for (const role of roles) {
+    // A composition restricts the role's candidate pool; route-policy and
+    // cap/concurrency exclusions were already applied to `models`, so this
+    // intersection cannot resurrect a denied model. An empty pool auto-routes.
+    const pool = composition?.pools[role] ?? [];
+    const roleModels = pool.length
+      ? models.filter((model) => pool.includes(`${model.provider}/${model.id}`))
+      : models;
     const ranked = rankModels({
-      models,
+      models: roleModels,
       role,
       config,
       ...(request.constraints ? { constraints: request.constraints } : {}),
@@ -134,7 +148,13 @@ export function buildCouncilPlan(
     });
     const selected = ranked.candidates[0];
     if (!selected) {
-      warnings.push(`No eligible model for ${role}; ${ranked.rejected.length} candidate(s) rejected.`);
+      if (pool.length) {
+        warnings.push(
+          `Composition "${composition!.name}" restricts ${role} to ${pool.join(", ")}, but none of those models are eligible (route policy, provider caps/concurrency, or hard constraints); the role is unstaffable.`,
+        );
+      } else {
+        warnings.push(`No eligible model for ${role}; ${ranked.rejected.length} candidate(s) rejected.`);
+      }
       continue;
     }
     selectedModels.push(selected.model);
@@ -166,6 +186,7 @@ export function buildCouncilPlan(
     createdAt: new Date().toISOString(),
     warnings,
     ...(request.constraints?.costPolicy ? { costPolicy: request.constraints.costPolicy } : {}),
+    ...(composition ? { composition: composition.name } : {}),
     inventoryFingerprint: modelInventoryFingerprint(models),
   };
 }

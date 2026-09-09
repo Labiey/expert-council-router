@@ -104,6 +104,12 @@ const DelegationAssignment = Type.Object({
   })),
   councilId: Type.Optional(ExecutionIdentifier),
   workspace: Type.Optional(WorkspacePath),
+  model: Type.Optional(Type.String({
+    minLength: 1,
+    maxLength: 200,
+    pattern: "^[^/]+/[^/]+$",
+    description: "Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch.",
+  })),
   timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
 });
 type DelegationAssignmentInput = Static<typeof DelegationAssignment>;
@@ -143,10 +149,10 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_build",
     label: "Expert Build",
-    description: "Build a small deterministic expert council. A current complete model assessment is mandatory; the first council in a Pi conversation also requires a user-selected economy, balanced, or speed preference.",
+    description: "Build a small deterministic expert council. A current complete model assessment is mandatory; the first council in a Pi conversation offers saved compositions plus an auto (cost policy) option.",
     promptGuidelines: [
-      "Before the first council in a conversation, ask the user once to choose economy (lowest effective cost), balanced (cost/time/success), or speed (fastest completion), unless their request already states the choice. Never choose that first preference silently.",
-      "After the first council, omit costPolicy to reuse the session preference. Supply it again only when the user explicitly changes preference.",
+      "Before the first council in a conversation, present the composition menu returned by the tool: saved compositions plus the auto option. The auto option asks the user once to choose economy (lowest effective cost), balanced (cost/time/success), or speed (fastest completion); never choose that first preference silently. Saved compositions are already the user's stated roster.",
+      "After the first council, omit composition and costPolicy to reuse the session choice. Supply either again only when the user explicitly changes it.",
       "When the model-assessment gate reports missing, stale, or inventory-changed, do not build or delegate. Use an already available web/research tool for researchModels only, preserve saved scores for other requiredModels entries, then retry once with a complete dated, sourced modelAssessment. Never install a web tool or third-party package automatically.",
       "Use the actual host clock for modelAssessment.asOf and 1 to 12 consolidated source URLs. If the gate reports future-dated, keep the existing evidence and scores, correct only the timestamp, and do not browse again.",
       "When expert_inspect reports modelAssessment.status='current', omit modelAssessment from expert_build and reuse the saved snapshot. Never send an empty or reconstructed assessment.",
@@ -155,6 +161,11 @@ export default function expertCouncilExtension(
       task: TaskText,
       maxExperts: Type.Optional(Type.Integer({ minimum: 1, maximum: 8 })),
       costPolicy: Type.Optional(CostPolicySchema),
+      composition: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 80,
+        description: "Name of a saved council composition from council-compositions.json; restricts each role's candidate pool.",
+      })),
       minimumContextWindow: Type.Optional(Type.Integer({ minimum: 1 })),
       modelAssessment: Type.Optional(ModelAssessment),
       detail: Detail,
@@ -166,21 +177,11 @@ export default function expertCouncilExtension(
       signal?.throwIfAborted();
       const previousPreference = sessionAssemblyPreference(ctx);
       const requestedPreference = params.costPolicy as CostPolicy | undefined;
-      if (!previousPreference && !requestedPreference) {
-        return output({
-          status: "preference-required",
-          question: "这是本对话第一次组建专家委员会。请选择组建方式：价格优先、综合价格/时间/成功率，或速度优先。",
-          choices: [
-            { costPolicy: "economy", label: "价格优先", description: "优先最低有效边际成本。" },
-            { costPolicy: "balanced", label: "综合平衡", description: "平衡价格、完成时间与成功率。" },
-            { costPolicy: "speed", label: "速度优先", description: "优先最快完成。" },
-          ],
-        });
-      }
-      const costPolicy = requestedPreference ?? previousPreference!;
+      const requestedComposition = params.composition as string | undefined;
       if (requestedPreference && requestedPreference !== previousPreference) {
         pi.appendEntry(ASSEMBLY_PREFERENCE_ENTRY, { costPolicy: requestedPreference, recordedAt: new Date().toISOString() });
       }
+      const costPolicy = requestedPreference ?? previousPreference;
       const council = await getCouncil(ctx.cwd);
       const inventory = await council.inspectResources();
       const assessment = resolveModelAssessment(
@@ -198,19 +199,24 @@ export default function expertCouncilExtension(
           warning: "expert_build did not assemble a council. Complete the required web audit, then retry once with modelAssessment.",
         });
       }
+      // With neither a composition nor an established cost policy the service
+      // returns a bounded composition menu instead of a cost-policy reminder.
       const plan = await council.buildCouncil({
         task: params.task,
         sessionKey: sessionKeyOf(ctx),
+        ...(requestedComposition ? { composition: requestedComposition } : {}),
         ...(assessment.source === "submitted" && assessment.assessment
           ? { modelAssessment: assessment.assessment }
           : {}),
-        ...(params.maxExperts !== undefined || params.costPolicy !== undefined || params.minimumContextWindow !== undefined ? {
-          constraints: {
-            ...(params.maxExperts ? { maxExperts: params.maxExperts } : {}),
-            costPolicy,
-            ...(params.minimumContextWindow ? { minimumContextWindow: params.minimumContextWindow } : {}),
-          },
-        } : { constraints: { costPolicy } }),
+        ...(costPolicy || params.maxExperts !== undefined || params.minimumContextWindow !== undefined
+          ? {
+              constraints: {
+                ...(params.maxExperts ? { maxExperts: params.maxExperts } : {}),
+                ...(costPolicy ? { costPolicy } : {}),
+                ...(params.minimumContextWindow ? { minimumContextWindow: params.minimumContextWindow } : {}),
+              },
+            }
+          : {}),
       });
       return output({
         ...presentCouncilPlan({
@@ -222,10 +228,20 @@ export default function expertCouncilExtension(
               : []),
           ],
         }, params.detail),
-        assemblyPreference: {
-          costPolicy,
-          source: requestedPreference ? "user-selected" : "reused-from-session",
-        },
+        ...(plan.compositionMenu
+          ? {
+              status: "composition-menu-required",
+              guidance: "Present these saved compositions plus the auto option to the user. Pass the chosen name back as composition; the auto option asks the cost policy once.",
+            }
+          : {}),
+        ...(costPolicy
+          ? {
+              assemblyPreference: {
+                costPolicy,
+                source: requestedPreference ? "user-selected" : "reused-from-session",
+              },
+            }
+          : {}),
       });
     },
   });
@@ -236,6 +252,7 @@ export default function expertCouncilExtension(
     description: "Start one or up to eight bounded semantic expert assignments in the background and immediately return execution IDs. timeoutMs is required for every assignment: set it explicitly from task difficulty (read-only investigation 5–15 min, implementation/debugging 30–60 min).",
     promptGuidelines: [
       "Dispatch every independent assignment selected for the current batch before ending the turn; prefer the assignments array when two or more tasks are ready.",
+      "model is optional: pin one model from the role's composition pool per assignment to dispatch several same-role experts concurrently, one per model.",
       "Pass assignments as a real JSON array, never as a quoted or stringified JSON value.",
       "After expert_delegate reports that a task has completed, call expert_result with its executionId before using the feedback.",
       "After verifying the completed result, call expert_feedback with the same executionId and verification outcome so local routing can learn.",
@@ -251,6 +268,12 @@ export default function expertCouncilExtension(
       })),
       councilId: Type.Optional(ExecutionIdentifier),
       workspace: Type.Optional(WorkspacePath),
+      model: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 200,
+        pattern: "^[^/]+/[^/]+$",
+        description: "Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch.",
+      })),
       timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
       assignments: Type.Optional(Type.Array(DelegationAssignment, { minItems: 1, maxItems: 8 })),
     }, { additionalProperties: false }),
@@ -293,6 +316,7 @@ export default function expertCouncilExtension(
         ...(params.taskDescription ? { taskDescription: params.taskDescription } : {}),
         ...(params.councilId ? { councilId: params.councilId } : {}),
         ...(params.workspace ? { workspace: params.workspace } : {}),
+        ...(params.model ? { model: params.model } : {}),
         timeoutMs: params.timeoutMs,
       }];
       const assignments = requestedAssignments.map((assignment): DelegationRequest => ({
@@ -302,6 +326,7 @@ export default function expertCouncilExtension(
         ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
         ...(assignment.councilId ? { councilId: assignment.councilId } : {}),
         ...(assignment.workspace ? { workspace: assignment.workspace } : {}),
+        ...(assignment.model ? { model: assignment.model } : {}),
         timeoutMs: assignment.timeoutMs,
       }));
       const receipts = assignments.map((assignment) => {

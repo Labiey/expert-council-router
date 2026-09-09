@@ -1,6 +1,7 @@
 export * from "./config-loader.js";
 export * from "./factory.js";
 export * from "./file-assessment.js";
+export * from "./file-compositions.js";
 export * from "./file-telemetry.js";
 export * from "./file-state.js";
 export * from "./file-usage-ledger.js";

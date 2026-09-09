@@ -56,6 +56,10 @@ const boundedText = (maximum: number) => z.string().min(1).max(maximum).refine(
 );
 const taskText = boundedText(100_000);
 const workspacePath = boundedText(32_768);
+const modelKey = z.string().min(1).max(200).regex(/^[^/]+\/[^/]+$/).refine(
+  (value) => !value.includes("\0"),
+  { message: "must not contain NUL bytes" },
+);
 const executionIdentifier = z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/);
 const delegationAssignment = z.object({
   role,
@@ -63,6 +67,8 @@ const delegationAssignment = z.object({
   taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
+  model: modelKey.optional()
+    .describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
   timeoutMs: z.number().int().min(1_000).max(3_600_000)
     .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
 });
@@ -78,6 +84,8 @@ export const MCP_INPUT_SCHEMAS = {
       costPolicy: z.enum(["economy", "balanced", "speed", "quality"]).optional(),
       minimumContextWindow: z.number().int().positive().optional(),
     }).optional(),
+    composition: boundedText(80).optional()
+      .describe("Name of a saved council composition from council-compositions.json; restricts each role's candidate pool"),
     modelAssessment: modelAssessmentSnapshotSchema.optional(),
     detail,
   },
@@ -87,6 +95,8 @@ export const MCP_INPUT_SCHEMAS = {
     taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
     councilId: executionIdentifier.optional(),
     workspace: workspacePath.optional(),
+    model: modelKey.optional()
+      .describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
     timeoutMs: z.number().int().min(1_000).max(3_600_000)
       .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
     assignments: z.array(delegationAssignment).min(1).max(8).optional()
@@ -187,7 +197,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_build",
     {
       title: "Build Expert Council",
-      description: "Classify a task and deterministically assemble a small semantic expert team. A current, complete, dated Main Agent model assessment is mandatory. Before the first council in a conversation, establish exactly one cost policy with the user — economy (lowest effective cost), balanced (cost, time, and success probability), or speed (fastest completion) — and pass it as constraints.costPolicy; reuse the answer for later councils in this conversation. When costPolicy is omitted, the response includes a reminder to ask.",
+      description: "Classify a task and deterministically assemble a small semantic expert team. A current, complete, dated Main Agent model assessment is mandatory. Without composition or costPolicy the response lists up to 3 saved compositions plus an auto option; pass one back. Pass a saved composition name to restrict each role to that roster, or establish exactly one cost policy with the user — economy (lowest effective cost), balanced (cost, time, and success probability), or speed (fastest completion) — and pass it as constraints.costPolicy; reuse the answer for later councils in this conversation.",
       inputSchema: MCP_INPUT_SCHEMAS.expert_build,
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -212,12 +222,13 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       const plan = await withMcpTimeout(council.buildCouncil({
         task: input.task,
         sessionKey: sessionKeyOf(extra),
+        ...(input.composition ? { composition: input.composition } : {}),
         ...(input.constraints ? { constraints: input.constraints } : {}),
         ...(assessment.source === "submitted" && assessment.assessment
           ? { modelAssessment: assessment.assessment }
           : {}),
       }));
-      if (input.constraints?.costPolicy) session.costPolicyEstablished = true;
+      if (input.constraints?.costPolicy || input.composition) session.costPolicyEstablished = true;
       return response(presentCouncilPlan({
         ...plan,
         warnings: [
@@ -233,7 +244,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_delegate",
     {
       title: "Delegate Expert Task",
-      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. Before the first delegation or council in a conversation, establish one cost policy with the user — economy, balanced, or speed — via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. timeoutMs is required for every assignment: set it explicitly from task difficulty (read-only investigation 5–15 min, implementation/debugging 30–60 min).",
+      description: "Start one or up to eight bounded Pi expert assignments in the background and immediately return execution IDs. Prefer this over doing substantial multi-file investigation, implementation, review, or debugging inline whenever delegation saves Main Agent context or model quota; for a substantial task with no council yet, call expert_build first to classify it and size the team. model is optional: pin one model from the role's composition pool for single or concurrent dispatch. Before the first delegation or council in a conversation, establish one cost policy with the user — economy, balanced, or speed — via expert_build's constraints.costPolicy; until then every response carries a reminder to ask. timeoutMs is required for every assignment: set it explicitly from task difficulty (read-only investigation 5–15 min, implementation/debugging 30–60 min).",
       inputSchema: MCP_INPUT_SCHEMAS.expert_delegate,
       annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     },
@@ -268,6 +279,7 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           ...(input.taskDescription ? { taskDescription: input.taskDescription } : {}),
           ...(input.councilId ? { councilId: input.councilId } : {}),
           ...(input.workspace ? { workspace: input.workspace } : {}),
+          ...(input.model ? { model: input.model } : {}),
           timeoutMs: input.timeoutMs,
         }]).map((assignment) => ({
           ...assignment,

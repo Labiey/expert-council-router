@@ -34,6 +34,9 @@ function hostCouncil(startDelegation: ExpertCouncil["startDelegation"]): ExpertC
     }),
     buildCouncil: async (request) => ({
       id: "council_host", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [],
+      ...(request.constraints?.costPolicy || request.composition
+        ? {}
+        : { compositionMenu: [{ name: "auto", description: "create a session composition via costPolicy (economy/balanced/speed)" }] }),
     }),
     startDelegation,
     delegate: async (request) => (await startDelegation(request).result),
@@ -115,7 +118,8 @@ describe("Pi 0.84.4 extension host integration", () => {
       expect(build).toBeDefined();
       const preferenceRequired = await build!.execute("build-1", { task: "review" }, undefined, undefined);
       expect(JSON.parse((preferenceRequired.content[0] as { text: string }).text)).toMatchObject({
-        status: "preference-required",
+        status: "composition-menu-required",
+        compositionMenu: [{ name: "auto" }],
       });
       const selectedPreference = await build!.execute(
         "build-2",

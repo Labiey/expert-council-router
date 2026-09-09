@@ -1,4 +1,5 @@
 export * from "./config.js";
+export * from "./compositions.js";
 export * from "./council.js";
 export * from "./escalation.js";
 export * from "./failures.js";

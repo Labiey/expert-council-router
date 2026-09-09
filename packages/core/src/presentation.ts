@@ -90,6 +90,7 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
       ...(inventory.routePolicy?.session ? { session: inventory.routePolicy.session } : {}),
       ...(inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}),
     },
+    ...(inventory.compositions ? { compositions: inventory.compositions } : {}),
     ...(inventory.providerLimits ? { providerLimits: inventory.providerLimits } : {}),
     warnings: inventory.warnings,
     detail: "compact" as const,
@@ -103,6 +104,8 @@ export function presentCouncilPlan(plan: CouncilPlan, detail: PresentationDetail
     id: plan.id,
     taskClass: plan.taskClass,
     ...(plan.costPolicy ? { costPolicy: plan.costPolicy } : {}),
+    ...(plan.composition ? { composition: plan.composition } : {}),
+    ...(plan.compositionMenu ? { compositionMenu: plan.compositionMenu } : {}),
     experts: plan.experts.map((expert) => ({
       role: expert.role,
       model: expert.model,
