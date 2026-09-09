@@ -312649,7 +312649,8 @@ var councilPlan = external_exports.object({
   createdAt: timestamp,
   warnings: external_exports.array(boundedText(2e3)).max(100),
   costPolicy: costPolicy.optional(),
-  inventoryFingerprint: boundedText(1e6).optional()
+  inventoryFingerprint: boundedText(1e6).optional(),
+  composition: boundedText(80).optional()
 }).strict();
 var attempt2 = external_exports.object({
   attempt: external_exports.number().int().min(1).max(100),

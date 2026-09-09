@@ -58,6 +58,7 @@ const councilPlan = z.object({
   warnings: z.array(boundedText(2_000)).max(100),
   costPolicy: costPolicy.optional(),
   inventoryFingerprint: boundedText(1_000_000).optional(),
+  composition: boundedText(80).optional(),
 }).strict();
 
 const attempt = z.object({
