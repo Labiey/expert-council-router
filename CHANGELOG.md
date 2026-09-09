@@ -2,6 +2,13 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.2 - 2026-09-09
+
+### Fixed
+
+- **Windows provisioning**: npm/pnpm resolve through `.cmd` shims that `execFile` cannot launch (and modern Node refuses `.cmd` children without a shell) — provisioning failed with `spawn npm ENOENT` on Windows. The platform runner now routes npm/pnpm/yarn through `.cmd` + shell.
+- **Persisted-state restore**: plans saved by 0.7.1 with the new `composition`/`compositionMenu` fields were rejected on restore by the strict state schema (`Unrecognized key`), breaking every subsequent delegation in an existing session. Both fields are now accepted.
+
 ## 0.7.1 - 2026-09-09
 
 ### Added
