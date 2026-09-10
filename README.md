@@ -17,20 +17,26 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current release (0.7.6) includes:
+The current version (0.7.6) includes:
 
-- A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
+- A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
-- Hard tool allowlists and installed-Skill filtering for every expert session.
-- Isolated Git worktrees for writable experts.
-- A JSON-capable CLI.
-- An MCP Server with ten asynchronous semantic tools, event-driven completion waits, an acceptance-feedback loop, and explicit worktree cleanup.
+- Per-expert hard tool allowlists and installed-Skill filtering.
+- Detached Git worktree isolation for writable experts, plus **automatic dependency provisioning** from the repository lockfile (npm/pnpm/bun/uv) with `--ignore-scripts`, an allowlisted child environment, per-execution worktree reuse, and direct host `.venv` interpreter paths surfaced for Python ecosystems.
+- A **runtime verification gate**: after provisioning, the repository typecheck and tests run automatically; a failing gate downgrades a successful result to `partial` and engages the corrected-retry path — zero Main Agent overhead.
+- `timeoutMs` and `reasoningLevel` as required delegation arguments, chosen deliberately per task and model; compositions can pin per-role/per-model reasoning levels that override the argument.
+- Expert fail-fast discipline: when the assigned tools or workspace make a task impossible, experts stop immediately with a structured `missing_context`/`permission_error` result that is relayed in real time instead of burning retries.
+- Persistent council compositions: named rosters in `council-compositions.json` (roles may pin multiple models and reasoning levels), a first-build composition menu, session bindings, `model` pinning, and concurrent same-role dispatch.
+- Provider limits and concurrency: per-provider daily/weekly weighted-token caps (accounted in `usage-ledger.json` via `costMultiplier`) and concurrency limits from `route-policy.json`; excluded candidates report the reason.
+- Tiered runtime availability markers: dead models (24h), plan-quota exhaustion (6h, provider-wide), and **transient TPM/RPM throttling (2 minutes)** — throttling is no longer misread as quota exhaustion.
+- `council-config.json` operator configuration discovered by default in the data directory (no environment variable); `expert_inspect` returns its path and the effective mode so the Main Agent can edit it on request.
+- A CLI with JSON output.
+- An MCP Server with 10 async semantic tools, event-driven completion waits, a feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
-- Runtime availability markers: when a call fails with dead-model evidence, the model is recorded into the persisted assessment and hard-rejected by later council building, delegation, and escalation; markers expire and are retried automatically after 24 hours.
-- Provider session error surfacing: upstream denials such as `403 AccessDenied` are no longer swallowed; they return to the Main Agent with the real diagnostic and the correct failure class.
-- Cross-process shared model assessment: with multiple instances running in parallel, availability markers become visible to each other without a restart.
-- A self-contained Codex plugin with the shared Skill, stdio MCP Server, and tested Pi SDK runtime, using Codex's host-owned `codex/sandbox-state-meta` capability for workspace discovery (no hooks or global SDK lookup).
-- Deterministic automated tests that never consume model quota.
+- Provider session-error pass-through: upstream refusals such as `403 AccessDenied` reach the Main Agent with real diagnostics and the correct failure type.
+- Cross-process shared model assessment: availability markers are visible to parallel instances without restarts.
+- A self-contained Codex plugin bundling the shared Skill, a stdio MCP Server, and the verified Pi SDK runtime, discovering workspaces through the Codex host's own `codex/sandbox-state-meta` capability (no hooks or global SDK resolution).
+- Deterministic automated tests that never spend model quota.
 
 ## Architecture
 

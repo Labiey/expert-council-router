@@ -20,14 +20,20 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 当前版本（0.7.6）已包含：
 
-- 与宿主无关的 Core：配置校验、模型归一化、计费策略、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
+- 与宿主无关的 Core：配置校验、模型归一化、按模型/供应商计费倍率、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
-- 写入型专家的独立 Git worktree 隔离。
+- 写入型专家的独立 Git worktree 隔离，及按仓库锁文件（npm/pnpm/bun/uv）的**自动依赖供给**：`--ignore-scripts`、白名单化子进程环境、按执行复用工作树；Python 生态自动暴露宿主 `.venv` 解释器绝对路径。
+- **运行时验证门**：供给完成后自动运行仓库 typecheck 与测试，失败把成功结果降级为 `partial` 并触发修正重试，全程零主代理开销。
+- `timeoutMs` 与 `reasoningLevel` 均为必填派遣参数：主代理必须按任务与模型显式选择；组合名单可按角色/模型钉定思考档位并覆盖派遣参数。
+- 专家 fail-fast 纪律：发现工具或环境不可能完成任务时立即以结构化 `missing_context`/`permission_error` 终止并实时回传，委派循环不做无谓重试。
+- 持久化理事会组合：`council-compositions.json` 命名名单（角色可配多模型与思考档位）、首问组合菜单、会话绑定、`model` 钉定与同角色并发派遣。
+- 供应商限额与并发：`route-policy.json` 按供应商设置日/周加权 token 上限（`usage-ledger.json` 按 `costMultiplier` 记账）与并发上限，超限候选自动排除并给出原因。
+- 运行时可用性标记分级：模型失效（24 小时）、配额周期耗尽（6 小时、全 plan 传播）、**瞬时限流 TPM/RPM（2 分钟）** 三档 TTL，自动过期重试，不再把限流误当配额耗尽拉黑。
+- `council-config.json` 运营者配置默认在数据目录发现（无需环境变量），`expert_inspect` 返回路径与生效模式供主代理代为编辑。
 - 支持 JSON 输出的 CLI。
 - 包含 10 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
-- 运行时可用性标记：调用失败带失效模型证据时，自动把该模型标记进持久化评估，后续组建、委派与升级硬性规避，24 小时后自动过期重试。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
 - 跨进程共享模型评估：多实例并行时，可用性标记无需重启即可互相可见。
 - 自包含的 Codex 插件，内置共享 Skill、stdio MCP Server 与经过验证的 Pi SDK 运行时，通过 Codex 宿主自有的 `codex/sandbox-state-meta` 能力发现工作区（无需 hook 或全局 SDK 解析）。
