@@ -257,7 +257,7 @@ export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension
  * is valid but the plan or API balance ran out and may recover after a top-up
  * or quota reset, so it expires on a shorter marker lifetime.
  */
-export type AvailabilityMarkerKind = "unavailable" | "quota-exhausted";
+export type AvailabilityMarkerKind = "unavailable" | "quota-exhausted" | "rate-limited";
 
 export interface ModelAvailabilityObservation {
   callable: false;
@@ -271,7 +271,7 @@ export interface ModelAvailabilityObservation {
 
 /** Current per-model runtime status snapshot, persisted in the shared assessment. */
 export interface ModelStatusObservation {
-  state: "available" | "quota-exhausted" | "unavailable";
+  state: "available" | "quota-exhausted" | "unavailable" | "rate-limited";
   observedAt: string;
   reason?: string;
 }

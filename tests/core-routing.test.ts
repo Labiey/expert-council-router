@@ -35,8 +35,22 @@ describe("availability evidence classification", () => {
     expect(classifyAvailabilityEvidence("账户欠费，请充值后重试")).toBe("quota-exhausted");
     expect(classifyAvailabilityEvidence("Provider returned 402 payment required")).toBe("quota-exhausted");
     expect(classifyAvailabilityEvidence("model_not_found for p/dead")).toBe("unavailable");
-    expect(classifyAvailabilityEvidence("Provider returned 429 rate limit exceeded.")).toBeUndefined();
+    expect(classifyAvailabilityEvidence("Provider returned 429 rate limit exceeded.")).toBe("rate-limited");
     expect(classifyAvailabilityEvidence("tool call failed")).toBeUndefined();
+  });
+
+  it("separates transient TPM throttling from plan-quota exhaustion", async () => {
+    const { classifyAvailabilityEvidence, inferFailureType } = await import("../packages/core/src/failures.js");
+    const { MODEL_RATE_LIMIT_MARKER_TTL_MS, MODEL_QUOTA_MARKER_TTL_MS } = await import("../packages/core/src/model-assessment.js");
+    // DashScope TPM/RPM throttling: minutes, not hours.
+    expect(classifyAvailabilityEvidence(
+      '429: {"message":"Allocated quota exceeded, please increase your quota limit.","code":"AllocatedQuotaExceeded"} #token-limit',
+    )).toBe("rate-limited");
+    expect(MODEL_RATE_LIMIT_MARKER_TTL_MS).toBe(2 * 60_000);
+    expect(MODEL_QUOTA_MARKER_TTL_MS).toBeGreaterThan(MODEL_RATE_LIMIT_MARKER_TTL_MS);
+    // Plan-cycle exhaustion keeps the long plan-wide marker.
+    expect(classifyAvailabilityEvidence('429: {"message":"Your token-plan 1-week quota has been exhausted.","code":"insufficient_quota"}')).toBe("quota-exhausted");
+    expect(inferFailureType('429: Allocated quota exceeded #token-limit')).toBe("provider_error");
   });
 
   it("expires quota markers on a shorter lifetime than dead-model markers", async () => {
@@ -389,7 +403,7 @@ describe("runtime availability markers", () => {
     expect(indicatesModelUnavailable(
       '403: {"message":"Access to model denied. Please make sure you are eligible for using the model.","code":"AccessDenied.Unpurchased"}',
     )).toBe(true);
-    expect(indicatesModelUnavailable("Provider rate limit reached")).toBe(false);
+    expect(indicatesModelUnavailable("Provider rate limit reached")).toBe(true); // rate-limited: short 2-min evidence
     expect(indicatesModelUnavailable("Invalid API key supplied")).toBe(false);
     expect(indicatesModelUnavailable("src/app.ts does not exist")).toBe(false);
     expect(indicatesModelUnavailable(undefined)).toBe(false);

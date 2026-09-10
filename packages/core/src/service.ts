@@ -1045,10 +1045,12 @@ export class ExpertCouncilService implements ExpertCouncil {
       markedKeys.push(key);
     };
     markOne(modelKey);
-    if (kind === "quota-exhausted") {
-      // Quota and balance are provider-account facts: one model running out
-      // means every sibling model of the same provider is out too. Mark them
-      // so routing stops burning attempts on the same depleted plan.
+    if (kind === "quota-exhausted" || kind === "rate-limited") {
+      // Quota/balance exhaustion and account-level TPM throttling are
+      // provider-account facts: one model hitting them means every sibling
+      // model of the same provider is equally affected. Mark them so routing
+      // stops burning attempts on the same plan. Rate-limit markers expire on
+      // the short 2-minute TTL instead of the quota window.
       for (const sibling of providerSiblings) markOne(sibling);
     }
     if (this.stateOptions.persistence?.updateModelAssessment) {

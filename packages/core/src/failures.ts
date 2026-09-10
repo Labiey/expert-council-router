@@ -44,6 +44,20 @@ const MODEL_UNAVAILABLE_MARKERS = [
  * Unlike dead models these may recover after a top-up or quota reset, so they
  * are marked with a distinct, shorter-lived `quota-exhausted` kind.
  */
+const MODEL_RATE_LIMIT_MARKERS = [
+  "#token-limit",
+  "allocated quota exceeded",
+  "rate limit",
+  "rate-limit",
+  "ratelimit",
+  "throttling",
+  "too many requests",
+  "requests per minute",
+  "tokens per minute",
+  "per-minute limit",
+  "限流",
+];
+
 const MODEL_QUOTA_MARKERS = [
   "insufficient_quota",
   "quota exceeded",
@@ -63,7 +77,7 @@ const MODEL_QUOTA_MARKERS = [
   "plan quota exhausted",
 ] as const;
 
-export type AvailabilityEvidence = "unavailable" | "quota-exhausted";
+export type AvailabilityEvidence = "unavailable" | "quota-exhausted" | "rate-limited";
 
 /**
  * Classify provider-failure evidence: quota exhaustion wins over the generic
@@ -72,6 +86,10 @@ export type AvailabilityEvidence = "unavailable" | "quota-exhausted";
  */
 export function classifyAvailabilityEvidence(summary: unknown): AvailabilityEvidence | undefined {
   const message = (summary instanceof Error ? summary.message : String(summary ?? "")).toLowerCase();
+  // Transient throttling (TPM/RPM windows, e.g. DashScope "Allocated quota
+  // exceeded ... #token-limit") must win over quota wording: it recovers in
+  // minutes and must not blackhole a whole token plan for hours.
+  if (MODEL_RATE_LIMIT_MARKERS.some((marker) => message.includes(marker))) return "rate-limited";
   if (MODEL_QUOTA_MARKERS.some((marker) => message.includes(marker))) return "quota-exhausted";
   if (MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker))) return "unavailable";
   return undefined;
@@ -94,6 +112,12 @@ export function inferFailureType(value: unknown, fallback: FailureType = "unknow
     message.includes("429") ||
     message.includes("quota") ||
     message.includes("insufficient") ||
+    message.includes("rate limit") ||
+    message.includes("rate-limit") ||
+    message.includes("throttling") ||
+    message.includes("token-limit") ||
+    message.includes("too many requests") ||
+    message.includes("限流") ||
     message.includes("欠费") ||
     message.includes("余额不足")
   ) {

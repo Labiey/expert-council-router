@@ -23,10 +23,14 @@ export const MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 60_000;
  * the model sooner instead of writing it off for a full day.
  */
 export const MODEL_QUOTA_MARKER_TTL_MS = 6 * 60 * 60_000;
+/** Transient TPM/RPM throttling recovers in minutes, not hours. */
+export const MODEL_RATE_LIMIT_MARKER_TTL_MS = 2 * 60_000;
 export const MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
 
 function markerTtlMs(kind: AvailabilityMarkerKind | undefined, defaultTtlMs: number): number {
-  return kind === "quota-exhausted" ? MODEL_QUOTA_MARKER_TTL_MS : defaultTtlMs;
+  if (kind === "quota-exhausted") return MODEL_QUOTA_MARKER_TTL_MS;
+  if (kind === "rate-limited") return MODEL_RATE_LIMIT_MARKER_TTL_MS;
+  return defaultTtlMs;
 }
 
 export function activeModelAvailability(
@@ -54,6 +58,9 @@ export function activeModelAvailability(
 function availabilityWarning(key: string, marker: ModelAvailabilityObservation): string {
   if (marker.kind === "quota-exhausted") {
     return `Model ${key} quota or balance ran out at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active (short lifetime); top up or wait for the quota reset and the model is retried automatically.`;
+  }
+  if (marker.kind === "rate-limited") {
+    return `Model ${key} hit a transient provider rate limit at ${marker.observedAt}: ${marker.reason}. Routing avoids it for ${MODEL_RATE_LIMIT_MARKER_TTL_MS / 1000}s and retries automatically.`;
   }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }

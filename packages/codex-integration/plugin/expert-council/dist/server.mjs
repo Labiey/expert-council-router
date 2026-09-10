@@ -310991,6 +310991,19 @@ var MODEL_UNAVAILABLE_MARKERS = [
   "unpurchased",
   "not eligible for using the model"
 ];
+var MODEL_RATE_LIMIT_MARKERS = [
+  "#token-limit",
+  "allocated quota exceeded",
+  "rate limit",
+  "rate-limit",
+  "ratelimit",
+  "throttling",
+  "too many requests",
+  "requests per minute",
+  "tokens per minute",
+  "per-minute limit",
+  "\u9650\u6D41"
+];
 var MODEL_QUOTA_MARKERS = [
   "insufficient_quota",
   "quota exceeded",
@@ -311011,6 +311024,8 @@ var MODEL_QUOTA_MARKERS = [
 ];
 function classifyAvailabilityEvidence(summary) {
   const message = (summary instanceof Error ? summary.message : String(summary ?? "")).toLowerCase();
+  if (MODEL_RATE_LIMIT_MARKERS.some((marker) => message.includes(marker)))
+    return "rate-limited";
   if (MODEL_QUOTA_MARKERS.some((marker) => message.includes(marker)))
     return "quota-exhausted";
   if (MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker)))
@@ -311027,7 +311042,7 @@ function inferFailureType(value3, fallback = "unknown") {
   if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) {
     return "permission_error";
   }
-  if (message.includes("429") || message.includes("quota") || message.includes("insufficient") || message.includes("\u6B20\u8D39") || message.includes("\u4F59\u989D\u4E0D\u8DB3")) {
+  if (message.includes("429") || message.includes("quota") || message.includes("insufficient") || message.includes("rate limit") || message.includes("rate-limit") || message.includes("throttling") || message.includes("token-limit") || message.includes("too many requests") || message.includes("\u9650\u6D41") || message.includes("\u6B20\u8D39") || message.includes("\u4F59\u989D\u4E0D\u8DB3")) {
     return "provider_error";
   }
   if (PROVIDER_FAILURE_MARKERS.some((marker) => message.includes(marker)))
@@ -311116,9 +311131,14 @@ var DEFAULT_MODEL_ASSESSMENT_MAX_AGE_DAYS = 30;
 var MAX_MODEL_ASSESSMENT_FUTURE_SKEW_MS = 5 * 6e4;
 var MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 6e4;
 var MODEL_QUOTA_MARKER_TTL_MS = 6 * 60 * 6e4;
+var MODEL_RATE_LIMIT_MARKER_TTL_MS = 2 * 6e4;
 var MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
 function markerTtlMs(kind, defaultTtlMs) {
-  return kind === "quota-exhausted" ? MODEL_QUOTA_MARKER_TTL_MS : defaultTtlMs;
+  if (kind === "quota-exhausted")
+    return MODEL_QUOTA_MARKER_TTL_MS;
+  if (kind === "rate-limited")
+    return MODEL_RATE_LIMIT_MARKER_TTL_MS;
+  return defaultTtlMs;
 }
 function activeModelAvailability(assessment, now = /* @__PURE__ */ new Date(), ttlMs = MODEL_AVAILABILITY_MARKER_TTL_MS) {
   const entries = assessment?.modelAvailability ?? {};
@@ -311141,6 +311161,9 @@ function activeModelAvailability(assessment, now = /* @__PURE__ */ new Date(), t
 function availabilityWarning(key, marker) {
   if (marker.kind === "quota-exhausted") {
     return `Model ${key} quota or balance ran out at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active (short lifetime); top up or wait for the quota reset and the model is retried automatically.`;
+  }
+  if (marker.kind === "rate-limited") {
+    return `Model ${key} hit a transient provider rate limit at ${marker.observedAt}: ${marker.reason}. Routing avoids it for ${MODEL_RATE_LIMIT_MARKER_TTL_MS / 1e3}s and retries automatically.`;
   }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
@@ -312422,7 +312445,7 @@ var ExpertCouncilService = class {
       markedKeys.push(key);
     };
     markOne(modelKey2);
-    if (kind === "quota-exhausted") {
+    if (kind === "quota-exhausted" || kind === "rate-limited") {
       for (const sibling of providerSiblings)
         markOne(sibling);
     }
@@ -314844,7 +314867,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.5" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.6" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

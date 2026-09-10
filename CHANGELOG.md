@@ -2,6 +2,12 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.6 - 2026-09-10
+
+### Fixed
+
+- **Transient throttling no longer blackholes a token plan**: DashScope-style TPM/RPM throttling (`Allocated quota exceeded ... #token-limit`, `Throttling`, `rate limit`, `too many requests`) was misclassified as plan-quota exhaustion, marking every sibling model `quota-exhausted` for up to 6 hours and pushing routing to more expensive metered providers. Provider throttling evidence is now classified as a distinct `rate-limited` marker kind with a **2-minute** TTL (still provider-wide, since account-level TPM applies to all siblings), while genuine plan-cycle exhaustion (`... quota has been exhausted`, `insufficient_quota`, arrears wording) keeps the 6-hour `quota-exhausted` marker. Availability warnings and persisted `modelStatus` now report `rate-limited` explicitly.
+
 ## 0.7.5 - 2026-09-09
 
 ### Breaking
