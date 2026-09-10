@@ -313538,7 +313538,7 @@ async function pathExists2(target) {
     return false;
   }
 }
-async function detectProvisioningPlan(root, config2) {
+async function detectProvisioningPlan(root, config2, hostWorkspace) {
   if (config2.mode === "custom") {
     if (!config2.command?.length) {
       return { detail: "security.workspaceProvisioning.mode=custom requires a non-empty command." };
@@ -313560,10 +313560,34 @@ async function detectProvisioningPlan(root, config2) {
   if (await pathExists2(path25.join(root, "bun.lock")) || await pathExists2(path25.join(root, "bun.lockb"))) {
     return { packageManager: "bun", argv: ["bun", "install", "--frozen-lockfile"] };
   }
-  if (await pathExists2(path25.join(root, "uv.lock")) || await pathExists2(path25.join(root, "requirements.txt")) || await pathExists2(path25.join(root, "Cargo.toml")) || await pathExists2(path25.join(root, "go.mod"))) {
-    return { detail: "no supported provisioning for this ecosystem" };
+  if (await pathExists2(path25.join(root, "uv.lock"))) {
+    return { packageManager: "uv", argv: ["uv", "sync", "--frozen"] };
+  }
+  const pythonEcosystem = await pathExists2(path25.join(root, "pyproject.toml")) || await pathExists2(path25.join(root, "requirements.txt")) || await pathExists2(path25.join(root, "uv.lock")) || await pathExists2(path25.join(root, "setup.py")) || await pathExists2(path25.join(root, "Pipfile"));
+  if (pythonEcosystem) {
+    const hostInterpreter = await findHostPythonInterpreter(hostWorkspace);
+    if (hostInterpreter) {
+      return {
+        detail: `Python ecosystem detected; venv provisioning is unsupported \u2014 invoke the host workspace interpreter directly by absolute path: ${hostInterpreter}`
+      };
+    }
+    return { detail: "Python ecosystem detected but no host .venv interpreter was found; create one in the host workspace first." };
+  }
+  if (await pathExists2(path25.join(root, "Cargo.toml")) || await pathExists2(path25.join(root, "go.mod"))) {
+    return { detail: "no supported provisioning for this ecosystem (Rust/Go toolchains are not provisioned)" };
   }
   return { detail: "no supported provisioning for this ecosystem" };
+}
+async function findHostPythonInterpreter(hostWorkspace) {
+  if (!hostWorkspace)
+    return void 0;
+  const windows = process.platform === "win32";
+  for (const dir of [".venv", "venv"]) {
+    const python2 = windows ? path25.join(hostWorkspace, dir, "Scripts", "python.exe") : path25.join(hostWorkspace, dir, "bin", "python");
+    if (await pathExists2(python2))
+      return python2;
+  }
+  return void 0;
 }
 var ProvisioningSemaphore = class {
   limit;
@@ -313602,7 +313626,7 @@ async function provisionWorkspace(root, config2, options = {}) {
   if (config2.mode === "none") {
     return { status: "skipped", detail: "security.workspaceProvisioning.mode is none." };
   }
-  const plan = await detectProvisioningPlan(root, config2);
+  const plan = await detectProvisioningPlan(root, config2, options.hostWorkspace);
   const packageManager = safePackageManager(plan.packageManager);
   if (!plan.argv) {
     return {
@@ -313876,7 +313900,10 @@ var WorkspaceBoundary = class {
         await git(created, ["reset", "--hard", "HEAD"], this.config.workspaceProvisioning.removalTimeoutMs);
         await git(created, ["clean", "-fdxq", "-e", "node_modules"], this.config.workspaceProvisioning.removalTimeoutMs);
       }
-      const provisioning = await provisionWorkspace(created, this.config.workspaceProvisioning, { reused });
+      const provisioning = await provisionWorkspace(created, this.config.workspaceProvisioning, {
+        reused,
+        hostWorkspace: this.defaultWorkspace
+      });
       const limitations = [];
       if (provisioning.status === "failed") {
         limitations.push(`Worktree provisioning failed: ${provisioning.detail ?? "unknown error"}. Dependencies are not installed; do not attempt an install.`.slice(0, 2e3));
@@ -314218,6 +314245,9 @@ async function rolePrompt(role2, roleDirectory) {
 function dependencyGuidance(provisioning) {
   if (provisioning?.status === "ready") {
     return `The runtime provisioned this worktree (${provisioning.packageManager ?? "package manager"}); dependencies are installed. Self-verify with the repository's typecheck command and then its test command, and report both in \`tests\`. Do NOT run a package-manager install, and do NOT run a build/release/pack script \u2014 in this repository a build regenerates Git-tracked artifacts and would pollute the diff you hand back.`;
+  }
+  if (provisioning?.detail) {
+    return `Dependencies are NOT installed in this worktree. ${provisioning.detail} Report \`tests\` entries as not-run with the reason instead of attempting an install.`;
   }
   return "Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent \u2014 account for this before planning commands. Dependencies are NOT installed; report `tests` entries as not-run with the reason instead of attempting an install.";
 }
@@ -314814,7 +314844,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.8.0" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.5" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

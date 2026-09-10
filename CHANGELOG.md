@@ -2,7 +2,7 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
-## 0.8.0 - 2026-09-09
+## 0.7.5 - 2026-09-09
 
 ### Breaking
 
@@ -11,6 +11,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
 ### Added
 
 - **Composition-pinned reasoning levels**: `council-compositions.json` pool entries accept either a bare `"provider/id"` string or `{ "model": "provider/id", "reasoningLevel": "high" }`. A pinned level overrides the host's argument and the model profile — the roster is the deliberate choice. Bare entries keep requiring the host's explicit level.
+
+### Fixed
+
+- **Python/.venv expert tasks**: provisioning previously skipped Python ecosystems with a bare "unsupported" note, so experts had no way to reach the host's virtualenv. `uv.lock` projects now provision with `uv sync --frozen`; other Python ecosystems (pyproject.toml/requirements.txt/setup.py) surface the host workspace's `.venv` interpreter absolute path in the expert prompt, so the expert can invoke it directly instead of guessing (verified working in live testing).
 
 ## 0.7.4 - 2026-09-09
 

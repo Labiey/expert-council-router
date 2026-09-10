@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -702,9 +702,10 @@ describe("worktree provisioning", () => {
         argv: ["bun", "install", "--frozen-lockfile"],
       });
       await rm(path.join(root, "bun.lockb"));
-      await writeFile(path.join(root, "uv.lock"), "", "utf8");
-      await expect(detectProvisioningPlan(root, auto)).resolves.toMatchObject({
-        detail: "no supported provisioning for this ecosystem",
+      await writeFile(path.join(root, "uv.lock"), "version = 1\n", "utf8");
+      await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
+        packageManager: "uv",
+        argv: ["uv", "sync", "--frozen"],
       });
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -852,4 +853,29 @@ describe("council-config default path", () => {
       await rm(dir, { recursive: true, force: true });
     }
   });
+});
+
+describe("python host interpreter fallback", () => {
+  it("surfaces the host .venv interpreter path for Python ecosystems instead of a bare skip", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ec-py-worktree-"));
+    const host = await mkdtemp(path.join(tmpdir(), "ec-py-host-"));
+    try {
+      const auto = parseCouncilConfig({ security: { workspaceProvisioning: { mode: "auto" } } }).security.workspaceProvisioning;
+      await writeFile(path.join(root, "pyproject.toml"), "[project]\nname = 'x'\n", "utf8");
+      // No host interpreter: explicit guidance instead of a bare skip.
+      const without = await detectProvisioningPlan(root, auto, host);
+      expect(without.detail).toContain("no host .venv interpreter");
+      // Windows-style host interpreter present: its absolute path is surfaced.
+      const python = path.join(host, ".venv", process.platform === "win32" ? "Scripts" : "bin", process.platform === "win32" ? "python.exe" : "python");
+      await mkdir(path.dirname(python), { recursive: true });
+      await writeFile(python, "", "utf8");
+      const withVenv = await detectProvisioningPlan(root, auto, host);
+      expect(withVenv.detail).toContain("invoke the host workspace interpreter directly");
+      expect(withVenv.detail).toContain(python);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+      await rm(host, { recursive: true, force: true });
+    }
+  });
+
 });

@@ -356,6 +356,9 @@ function dependencyGuidance(provisioning?: WorkspaceProvisioningStatus): string 
   if (provisioning?.status === "ready") {
     return `The runtime provisioned this worktree (${provisioning.packageManager ?? "package manager"}); dependencies are installed. Self-verify with the repository's typecheck command and then its test command, and report both in \`tests\`. Do NOT run a package-manager install, and do NOT run a build/release/pack script — in this repository a build regenerates Git-tracked artifacts and would pollute the diff you hand back.`;
   }
+  if (provisioning?.detail) {
+    return `Dependencies are NOT installed in this worktree. ${provisioning.detail} Report \`tests\` entries as not-run with the reason instead of attempting an install.`;
+  }
   return "Isolated worktrees contain only Git-tracked files; untracked local artifacts (dependencies, environments, caches) are absent — account for this before planning commands. Dependencies are NOT installed; report `tests` entries as not-run with the reason instead of attempting an install.";
 }
 

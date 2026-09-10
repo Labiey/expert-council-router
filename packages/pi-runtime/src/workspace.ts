@@ -237,6 +237,7 @@ async function pathExists(target: string): Promise<boolean> {
 export async function detectProvisioningPlan(
   root: string,
   config: WorkspaceProvisioningConfig,
+  hostWorkspace?: string,
 ): Promise<ProvisioningPlan> {
   if (config.mode === "custom") {
     if (!config.command?.length) {
@@ -259,15 +260,45 @@ export async function detectProvisioningPlan(
   if (await pathExists(path.join(root, "bun.lock")) || await pathExists(path.join(root, "bun.lockb"))) {
     return { packageManager: "bun", argv: ["bun", "install", "--frozen-lockfile"] };
   }
-  if (
-    await pathExists(path.join(root, "uv.lock")) ||
+  if (await pathExists(path.join(root, "uv.lock"))) {
+    return { packageManager: "uv", argv: ["uv", "sync", "--frozen"] };
+  }
+  const pythonEcosystem =
+    await pathExists(path.join(root, "pyproject.toml")) ||
     await pathExists(path.join(root, "requirements.txt")) ||
-    await pathExists(path.join(root, "Cargo.toml")) ||
-    await pathExists(path.join(root, "go.mod"))
-  ) {
-    return { detail: "no supported provisioning for this ecosystem" };
+    await pathExists(path.join(root, "uv.lock")) ||
+    await pathExists(path.join(root, "setup.py")) ||
+    await pathExists(path.join(root, "Pipfile"));
+  if (pythonEcosystem) {
+    // Virtualenv provisioning is unsupported ( activating scripts embed absolute
+    // paths and a copied venv would drift), but the host workspace's existing
+    // .venv interpreter can be invoked directly by absolute path — Python
+    // resolves the real venv through the interpreter location.
+    const hostInterpreter = await findHostPythonInterpreter(hostWorkspace);
+    if (hostInterpreter) {
+      return {
+        detail: `Python ecosystem detected; venv provisioning is unsupported — invoke the host workspace interpreter directly by absolute path: ${hostInterpreter}`,
+      };
+    }
+    return { detail: "Python ecosystem detected but no host .venv interpreter was found; create one in the host workspace first." };
+  }
+  if (await pathExists(path.join(root, "Cargo.toml")) || await pathExists(path.join(root, "go.mod"))) {
+    return { detail: "no supported provisioning for this ecosystem (Rust/Go toolchains are not provisioned)" };
   }
   return { detail: "no supported provisioning for this ecosystem" };
+}
+
+/** Locate an existing virtualenv interpreter in the host workspace. */
+async function findHostPythonInterpreter(hostWorkspace: string | undefined): Promise<string | undefined> {
+  if (!hostWorkspace) return undefined;
+  const windows = process.platform === "win32";
+  for (const dir of [".venv", "venv"]) {
+    const python = windows
+      ? path.join(hostWorkspace, dir, "Scripts", "python.exe")
+      : path.join(hostWorkspace, dir, "bin", "python");
+    if (await pathExists(python)) return python;
+  }
+  return undefined;
 }
 
 class ProvisioningSemaphore {
@@ -312,13 +343,13 @@ async function isAlreadyProvisioned(root: string, packageManager?: string): Prom
 export async function provisionWorkspace(
   root: string,
   config: WorkspaceProvisioningConfig,
-  options: { runner?: BoundedCommandRunner; reused?: boolean } = {},
+  options: { runner?: BoundedCommandRunner; reused?: boolean; hostWorkspace?: string } = {},
 ): Promise<WorkspaceProvisioningStatus> {
   const started = Date.now();
   if (config.mode === "none") {
     return { status: "skipped", detail: "security.workspaceProvisioning.mode is none." };
   }
-  const plan = await detectProvisioningPlan(root, config);
+  const plan = await detectProvisioningPlan(root, config, options.hostWorkspace);
   const packageManager = safePackageManager(plan.packageManager);
   if (!plan.argv) {
     return {
@@ -613,7 +644,10 @@ export class WorkspaceBoundary {
         await git(created, ["reset", "--hard", "HEAD"], this.config.workspaceProvisioning.removalTimeoutMs);
         await git(created, ["clean", "-fdxq", "-e", "node_modules"], this.config.workspaceProvisioning.removalTimeoutMs);
       }
-      const provisioning = await provisionWorkspace(created, this.config.workspaceProvisioning, { reused });
+      const provisioning = await provisionWorkspace(created, this.config.workspaceProvisioning, {
+        reused,
+        hostWorkspace: this.defaultWorkspace,
+      });
       const limitations: string[] = [];
       if (provisioning.status === "failed") {
         limitations.push(
