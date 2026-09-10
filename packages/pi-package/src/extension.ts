@@ -335,22 +335,28 @@ export default function expertCouncilExtension(
       }));
       const receipts = assignments.map((assignment) => {
         const handle = council.startDelegation(assignment);
-        void handle.result.then(() => {
-          try {
-            const delivery = ctx.isIdle() ? "followUp" : "steer";
-            const notification = {
-              executionId: handle.executionId,
-              ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
-            };
-            pi.sendMessage({
-              customType: "expert-council-completed",
-              content: JSON.stringify(notification),
-              display: true,
-              details: notification,
-            }, { deliverAs: delivery, triggerTurn: true });
-          } catch {
-            // The originating Pi session may have been replaced or shut down.
-            // The result remains available through expert_result in the council service.
+        void handle.result.then(async () => {
+          const notification = {
+            executionId: handle.executionId,
+            ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
+          };
+          // The idle/streaming state can flip between the check and the send, and
+          // a session mid-transition can reject the first attempt; retry briefly so
+          // a completion notification is not silently lost. On final failure the
+          // result still remains available through expert_result.
+          for (let attempt = 0; attempt < 3; attempt += 1) {
+            try {
+              const delivery = ctx.isIdle() ? "followUp" : "steer";
+              pi.sendMessage({
+                customType: "expert-council-completed",
+                content: JSON.stringify(notification),
+                display: true,
+                details: notification,
+              }, { deliverAs: delivery, triggerTurn: true });
+              return;
+            } catch {
+              if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250));
+            }
           }
         });
         return {
@@ -462,11 +468,47 @@ export default function expertCouncilExtension(
   pi.registerTool({
     name: "expert_status",
     label: "Expert Status",
-    description: "Return compact council plans, execution states, and local aggregate outcomes.",
-    parameters: Type.Object({}),
-    async execute(_id, _params, signal, _update, ctx) {
+    description: "Return council plans, execution states, and local aggregate outcomes. view=summary (default) is a bounded running/recent/provider-slots snapshot; view=full adds telemetry and the model assessment; view=running is only live executions.",
+    parameters: Type.Object({
+      view: Type.Optional(Type.Union([Type.Literal("full"), Type.Literal("summary"), Type.Literal("running")])),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await getCouncil(ctx.cwd)).getStatus());
+      return output(await (await getCouncil(ctx.cwd)).getStatus(params.view ? { view: params.view } : undefined));
+    },
+  });
+
+  pi.registerTool({
+    name: "expert_availability_reset",
+    label: "Reset Expert Availability",
+    description: "Clear runtime availability markers by scope: '*' (every model), a bare provider name (all its models), or an exact provider/id key. Use after a transient failure was misrecorded or a provider recovers before the marker TTL expires.",
+    parameters: Type.Object({
+      scope: Type.String({ minLength: 1, maxLength: 200, description: "'*', a bare provider, or an exact provider/id model key." }),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).resetAvailability({ scope: params.scope }));
+    },
+  });
+
+  pi.registerTool({
+    name: "expert_verify",
+    label: "Verify Command",
+    description: "Run a bounded command on the plugin side inside a retained expert worktree (executionId) or a validated workspace, and return the real exit code and output tail. Turns 'the expert says it is green' into plugin-observed evidence.",
+    parameters: Type.Object({
+      executionId: Type.Optional(ExecutionIdentifier),
+      workspace: Type.Optional(WorkspacePath),
+      command: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), { minItems: 1, maxItems: 12 }),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 1_000, maximum: 600_000 })),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).verifyCommand({
+        ...(params.executionId ? { executionId: params.executionId } : {}),
+        ...(params.workspace ? { workspace: params.workspace } : {}),
+        command: params.command,
+        ...(params.timeoutMs ? { timeoutMs: params.timeoutMs } : {}),
+      }));
     },
   });
 

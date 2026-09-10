@@ -311411,6 +311411,37 @@ function presentCouncilPlan(plan, detail2 = "compact") {
   };
 }
 
+// packages/core/dist/result-clamp.js
+var MAX_SUMMARY = 4e3;
+var MAX_FILES_CHANGED = 1e3;
+var MAX_TEST_ENTRIES = 20;
+var MAX_TEST_TEXT = 2e3;
+var MAX_LIST_ENTRIES = 20;
+var MAX_UNAVAILABLE_MODELS = 64;
+function clampTest(test) {
+  return {
+    ...test,
+    ...test.summary !== void 0 ? { summary: test.summary.slice(0, MAX_TEST_TEXT) } : {},
+    ...test.outputTail !== void 0 ? { outputTail: test.outputTail.slice(0, MAX_TEST_TEXT) } : {}
+  };
+}
+function clampExpertResult(result) {
+  return {
+    ...result,
+    summary: result.summary.slice(0, MAX_SUMMARY),
+    ...result.filesChanged ? { filesChanged: result.filesChanged.slice(0, MAX_FILES_CHANGED) } : {},
+    ...result.tests ? { tests: result.tests.slice(0, MAX_TEST_ENTRIES).map(clampTest) } : {},
+    ...result.findings ? { findings: result.findings.slice(0, MAX_LIST_ENTRIES).map((entry) => entry.slice(0, MAX_TEST_TEXT)) } : {},
+    ...result.risks ? { risks: result.risks.slice(0, MAX_LIST_ENTRIES).map((entry) => entry.slice(0, MAX_TEST_TEXT)) } : {},
+    ...result.executionMetadata ? {
+      executionMetadata: {
+        ...result.executionMetadata,
+        ...result.executionMetadata.unavailableModels ? { unavailableModels: result.executionMetadata.unavailableModels.slice(0, MAX_UNAVAILABLE_MODELS) } : {}
+      }
+    } : {}
+  };
+}
+
 // packages/core/dist/route-policy.js
 var ROUTE_POLICY_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
 var DEFAULT_DAILY_TOKEN_CAP = 2e7;
@@ -311762,7 +311793,7 @@ var ExpertCouncilService = class {
         ...execution2,
         ...execution2.attemptHistory ? { attemptHistory: execution2.attemptHistory.map((attempt3) => ({ ...attempt3 })) } : {}
       })),
-      results: [...this.results.entries()].map(([executionId2, result]) => ({ executionId: executionId2, result })),
+      results: [...this.results.entries()].map(([executionId2, result]) => ({ executionId: executionId2, result: clampExpertResult(result) })),
       ...this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}
     };
   }
@@ -312031,9 +312062,6 @@ var ExpertCouncilService = class {
     if (request.councilId && !plan) {
       planWarnings.push(`Council plan ${request.councilId} is unavailable; routing used the current inventory.`);
     }
-    if (plan?.inventoryFingerprint && plan.inventoryFingerprint !== modelInventoryFingerprint(models)) {
-      planWarnings.push(`Council plan ${plan.id} was built against a different model inventory; routing was refreshed.`);
-    }
     const planned = plan?.experts.find((expert) => expert.role === request.role);
     noteProviderExclusions(initialExclusions);
     const routingConstraints = constraintsWithAssessment({ ...request.constraints, ...Object.keys(initialExclusions).length ? { providerExclusions: initialExclusions } : {} }, this.modelAssessment, runtimeCapabilities);
@@ -312112,6 +312140,7 @@ var ExpertCouncilService = class {
       }
       state2.attempts += 1;
       state2.model = current.model;
+      state2.timeoutMs = currentTimeoutMs;
       const attemptSnapshot = {
         attempt: state2.attempts,
         model: current.model,
@@ -312240,6 +312269,9 @@ var ExpertCouncilService = class {
       model: current.model,
       summary: "Execution ended without a runtime result."
     };
+    if (plan?.inventoryFingerprint && plan.inventoryFingerprint !== modelInventoryFingerprint(models) && planned && result.model !== "unassigned" && result.model !== planned.model) {
+      planWarnings.push(`Council plan ${plan.id} routing refreshed: ${planned.model} \u2192 ${result.model}.`);
+    }
     result.executionMetadata = {
       ...result.executionMetadata,
       executionId: id,
@@ -312386,7 +312418,8 @@ var ExpertCouncilService = class {
       if (effective.maxConcurrency > 0) {
         const inFlight = running.get(provider) ?? 0;
         if (inFlight >= effective.maxConcurrency) {
-          exclusions[provider] = `provider ${provider} concurrency limit reached (${inFlight}/${effective.maxConcurrency} running)`;
+          const remaining = Math.max(0, effective.maxConcurrency - inFlight);
+          exclusions[provider] = `provider ${provider} concurrency limit reached (inFlight=${inFlight}/${effective.maxConcurrency}, remaining=${remaining})`;
         }
       }
     }
@@ -312467,6 +312500,45 @@ var ExpertCouncilService = class {
     }
     void this.persistState().catch(() => void 0);
     return { kind, markedKeys };
+  }
+  /**
+   * Clear runtime availability markers and status entries by scope: "*" clears
+   * every key, a bare provider name clears keys equal to it or prefixed by
+   * `provider/`, and an exact `provider/id` key clears just that model. The
+   * in-memory assessment and the persisted shared assessment are updated
+   * together so routing stops excluding the cleared models immediately.
+   */
+  async resetAvailability(request) {
+    const scope = request.scope;
+    const matches = (key) => {
+      if (scope === "*")
+        return true;
+      if (scope.includes("/"))
+        return key === scope;
+      return key === scope || key.startsWith(`${scope}/`);
+    };
+    const availability = this.modelAssessment?.modelAvailability ?? {};
+    const status = this.modelAssessment?.modelStatus ?? {};
+    const cleared = [...new Set([...Object.keys(availability), ...Object.keys(status)].filter(matches))].sort();
+    if (!cleared.length)
+      return { cleared };
+    const strip2 = (assessment) => {
+      const nextAvailability = Object.fromEntries(Object.entries(assessment.modelAvailability ?? {}).filter(([key]) => !matches(key)));
+      const nextStatus = Object.fromEntries(Object.entries(assessment.modelStatus ?? {}).filter(([key]) => !matches(key)));
+      return {
+        ...assessment,
+        modelAvailability: Object.keys(nextAvailability).length ? nextAvailability : void 0,
+        modelStatus: Object.keys(nextStatus).length ? nextStatus : void 0
+      };
+    };
+    if (this.modelAssessment) {
+      this.modelAssessment = strip2(this.modelAssessment);
+    }
+    if (this.stateOptions.persistence?.updateModelAssessment) {
+      await this.stateOptions.persistence.updateModelAssessment((current) => current ? strip2(current) : void 0);
+    }
+    void this.persistState().catch(() => void 0);
+    return { cleared };
   }
   async refreshSharedAssessment() {
     if (!this.stateOptions.persistence?.readModelAssessment)
@@ -312562,6 +312634,16 @@ var ExpertCouncilService = class {
       return await this.runtime.inspectExecution(executionId2).catch(() => void 0);
     }
     return void 0;
+  }
+  /**
+   * Bounded verification command passthrough to the runtime. Always resolves:
+   * an unsupported runtime is a structured message, never a thrown error.
+   */
+  async verifyCommand(request) {
+    if (!this.runtime.verifyCommand) {
+      return { exitCode: null, message: "The runtime does not support command verification.", durationMs: 0 };
+    }
+    return await this.runtime.verifyCommand(request);
   }
   async getResult(executionId2) {
     if (!this.executions.has(executionId2)) {
@@ -312687,7 +312769,64 @@ var ExpertCouncilService = class {
     });
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
   }
-  async getStatus() {
+  /** Bounded running-execution views shared by the summary and running status views. */
+  runningExecutionViews() {
+    const now = Date.now();
+    return [...this.executions.values()].filter((execution2) => execution2.status === "running").map((execution2) => {
+      const elapsedMs = Math.max(0, now - Date.parse(execution2.startedAt));
+      return {
+        id: execution2.id,
+        role: execution2.role,
+        status: "running",
+        ...execution2.model ? { model: execution2.model } : {},
+        elapsedMs,
+        ...typeof execution2.timeoutMs === "number" ? { remainingMs: Math.max(0, execution2.timeoutMs - elapsedMs) } : {}
+      };
+    });
+  }
+  /**
+   * Live provider concurrency slots for the summary view, from the same limits
+   * document and running-count data computeProviderExclusions uses. Empty when
+   * per-provider caps are unwired (no readProviderLimits/usageLedger), which
+   * is documented here rather than synthesized from default limits.
+   */
+  async providerSlotViews() {
+    const limitsDocument = await this.readProviderLimitsDocument();
+    const providers = Object.keys(limitsDocument?.providers ?? {});
+    if (!providers.length)
+      return [];
+    const limits = resolveProviderLimits(limitsDocument);
+    const running = this.runningByProvider();
+    return providers.sort().map((provider) => {
+      const effective = limits[provider] ?? DEFAULT_PROVIDER_LIMITS;
+      const inFlight = running.get(provider) ?? 0;
+      return {
+        provider,
+        inFlight,
+        maxConcurrency: effective.maxConcurrency,
+        remaining: Math.max(0, effective.maxConcurrency - inFlight)
+      };
+    });
+  }
+  async getStatus(options) {
+    const view = options?.view ?? "full";
+    if (view === "running") {
+      return { running: this.runningExecutionViews() };
+    }
+    if (view === "summary") {
+      const recentCompleted = [...this.executions.values()].filter((execution2) => execution2.finishedAt).sort((a, b2) => Date.parse(b2.finishedAt) - Date.parse(a.finishedAt)).slice(0, 20).map((execution2) => ({
+        id: execution2.id,
+        role: execution2.role,
+        status: execution2.status,
+        ...execution2.model ? { model: execution2.model } : {},
+        ...execution2.finishedAt ? { finishedAt: execution2.finishedAt } : {}
+      }));
+      return {
+        running: this.runningExecutionViews(),
+        recentCompleted,
+        providerSlots: await this.providerSlotViews()
+      };
+    }
     return {
       plans: [...this.plans.values()].map((plan) => ({
         id: plan.id,
@@ -312791,7 +312930,14 @@ var execution = external_exports.object({
 var testResult = external_exports.object({
   command: boundedText(1e3).optional(),
   status: external_exports.enum(["passed", "failed", "not-run"]),
-  summary: boundedText(2e3).optional()
+  summary: boundedText(2e3).optional(),
+  exitCode: external_exports.number().int().min(0).max(255).optional(),
+  testsRun: external_exports.number().int().min(0).max(1e6).optional(),
+  failedCount: external_exports.number().int().min(0).max(1e6).optional(),
+  errorCount: external_exports.number().int().min(0).max(1e6).optional(),
+  skippedCount: external_exports.number().int().min(0).max(1e6).optional(),
+  durationMs: external_exports.number().finite().min(0).optional(),
+  outputTail: boundedText(2e3).optional()
 }).strict();
 var usage = external_exports.record(identifier, external_exports.union([external_exports.number().finite(), boundedText(1e3), external_exports.boolean(), external_exports.null()]));
 var expertResult = external_exports.object({
@@ -312814,7 +312960,7 @@ var expertResult = external_exports.object({
     workspace: boundedText(32768).optional(),
     isolated: external_exports.boolean().optional(),
     escalationCount: external_exports.number().int().min(0).max(100).optional(),
-    unavailableModels: external_exports.array(identifier).max(8).optional(),
+    unavailableModels: external_exports.array(identifier).max(64).optional(),
     provisioning: external_exports.object({
       status: external_exports.enum(["ready", "skipped", "failed"]),
       packageManager: identifier.optional(),
@@ -312825,7 +312971,9 @@ var expertResult = external_exports.object({
     verification: external_exports.array(external_exports.object({
       command: boundedText(1e3).optional(),
       status: external_exports.enum(["passed", "failed", "not-run"]),
-      summary: boundedText(2e3).optional()
+      summary: boundedText(2e3).optional(),
+      exitCode: external_exports.number().int().min(0).max(255).optional(),
+      outputTail: boundedText(2e3).optional()
     }).strict()).max(20).optional()
   }).passthrough().optional()
 }).strict();
@@ -318284,6 +318432,44 @@ var WorkspaceBoundary = class {
     }
     return resolved;
   }
+  /**
+   * Resolve and containment-check a workspace path for read-only use — the
+   * same validation the read-only branch of prepare() applies. Throws when the
+   * path is outside the configured allowed roots.
+   */
+  async resolveReadOnlyWorkspace(candidate2) {
+    return this.assertAllowed(candidate2);
+  }
+  /**
+   * Resolve a retained worktree root by execution id — the same per-execution
+   * matching (git worktree list + execution-id suffix inside the private worktree
+   * base) that cleanupExecution uses. Returns undefined when no retained
+   * worktree exists; never throws.
+   */
+  async retainedWorktree(executionId2) {
+    try {
+      validateExecutionId(executionId2);
+      if (this.config.workspaceStrategy === "read-only" || this.config.workspaceStrategy === "bounded-in-place") {
+        return void 0;
+      }
+      const gitRoot = await this.defaultGitRoot(this.defaultWorkspace);
+      const base = await this.secureWorktreeBase();
+      for (const listed of await this.listedWorktrees(gitRoot)) {
+        try {
+          const resolved = await canonical(listed);
+          if (resolved !== base && isWithin3(base, resolved) && worktreeMatchesExecutionId(resolved, executionId2)) {
+            assertOwnedAndPrivate(await stat10(resolved), `Worktree ${resolved}`);
+            return resolved;
+          }
+        } catch (error61) {
+          if (error61.code !== "ENOENT")
+            throw error61;
+        }
+      }
+    } catch {
+    }
+    return void 0;
+  }
   /** Find a worktree created for this execution id so a retry can reuse its provisioned state. */
   async findReusableWorktree(gitRoot, worktreeBase, executionId2) {
     for (const listed of await this.listedWorktrees(gitRoot)) {
@@ -318649,10 +318835,24 @@ function normalizeResult(parsed, request, rawText, changedFiles, workspace, usag
     if (item.status !== "passed" && item.status !== "failed" && item.status !== "not-run")
       return [];
     const testStatus = item.status;
+    const boundedInt = (value3, maximum) => typeof value3 === "number" && Number.isInteger(value3) && value3 >= 0 && value3 <= maximum ? value3 : void 0;
+    const exitCode = boundedInt(item.exitCode, 255);
+    const testsRun = boundedInt(item.testsRun, 1e6);
+    const failedCount = boundedInt(item.failedCount, 1e6);
+    const errorCount = boundedInt(item.errorCount, 1e6);
+    const skippedCount = boundedInt(item.skippedCount, 1e6);
+    const durationMs = typeof item.durationMs === "number" && Number.isFinite(item.durationMs) && item.durationMs >= 0 ? item.durationMs : void 0;
     return [{
       ...safeText(item.command, 1e3) ? { command: safeText(item.command, 1e3) } : {},
       status: testStatus,
-      ...safeText(item.summary, 2e3) ? { summary: safeText(item.summary, 2e3) } : {}
+      ...safeText(item.summary, 2e3) ? { summary: safeText(item.summary, 2e3) } : {},
+      ...exitCode !== void 0 ? { exitCode } : {},
+      ...testsRun !== void 0 ? { testsRun } : {},
+      ...failedCount !== void 0 ? { failedCount } : {},
+      ...errorCount !== void 0 ? { errorCount } : {},
+      ...skippedCount !== void 0 ? { skippedCount } : {},
+      ...durationMs !== void 0 ? { durationMs } : {},
+      ...safeText(item.outputTail, 2e3) ? { outputTail: safeText(item.outputTail, 2e3) } : {}
     }];
   }) : void 0;
   const stringArray = (value3) => Array.isArray(value3) ? value3.flatMap((item) => safeText(item, 2e3) ?? []).slice(0, 20) : void 0;
@@ -318700,7 +318900,10 @@ async function runVerification(workspace, config2, runner = runBoundedCommand) {
     entries.push({
       command: step.label.slice(0, 1e3),
       status: passed ? "passed" : "failed",
-      summary: summary.slice(0, 2e3)
+      summary: summary.slice(0, 2e3),
+      exitCode: outcome.exitCode,
+      outputTail: tailCommandOutput(`${outcome.stdout}
+${outcome.stderr}`, 1500)
     });
   }
   return entries;
@@ -318750,7 +318953,7 @@ ${request.task}
 - Do not reveal or request chain-of-thought.
 ${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}
 ` : ""}
-Return only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+Return only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
 }
 var PiExpertRuntime = class _PiExpertRuntime {
   sdk;
@@ -319001,6 +319204,9 @@ var PiExpertRuntime = class _PiExpertRuntime {
         if (entry.abortRequested && !entry.timedOut) {
           return await this.buildAbortedResult(entry, request, started);
         }
+        if (error61 instanceof ExecutionTimeoutError && entry.timedOut && !entry.abortRequested) {
+          return await this.buildTimedOutResult(entry, request, started, timeoutMs);
+        }
         throw error61;
       } finally {
         if (timer)
@@ -319016,11 +319222,15 @@ var PiExpertRuntime = class _PiExpertRuntime {
       const sessionError = finalSessionError(session);
       if (sessionError) {
         const usage2 = sessionUsage(session);
+        const evidence = await this.collectFailureEvidence(session, workspace);
         return {
           status: "failed",
           role: request.role,
           model: request.model,
-          summary: safeText(sessionError, 4e3) ?? "Expert session failed.",
+          summary: safeText(`[Failure] ${sessionError}
+
+${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
+          ...evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {},
           ...workspace.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {},
           executionMetadata: {
             attempts: request.attempt,
@@ -319045,11 +319255,17 @@ var PiExpertRuntime = class _PiExpertRuntime {
       result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
       return result;
     } catch (error61) {
+      const evidence = await this.collectFailureEvidence(session, workspace);
+      const baseSummary = safeText(error61 instanceof Error ? error61.message : String(error61), 4e3) ?? "Expert execution failed.";
+      const summary = evidence.lastText ? safeText(`${baseSummary}
+
+${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
       return {
         status: "failed",
         role: request.role,
         model: request.model,
-        summary: safeText(error61 instanceof Error ? error61.message : String(error61), 4e3) ?? "Expert execution failed.",
+        summary,
+        ...evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {},
         ...workspace?.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {},
         executionMetadata: {
           attempts: request.attempt,
@@ -319120,6 +319336,50 @@ var PiExpertRuntime = class _PiExpertRuntime {
       ...filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}
     };
   }
+  /**
+   * Preserve failure evidence from a dead session: changed files from the
+   * prepared workspace (undefined for read-only/no-worktree runs or when the
+   * diff fails) and the last assistant text. Best-effort at every step.
+   */
+  async collectFailureEvidence(session, workspace) {
+    let filesChanged;
+    if (workspace) {
+      try {
+        filesChanged = (await this.boundary.changedFiles(workspace)).slice(0, 1e3);
+      } catch {
+        filesChanged = void 0;
+      }
+    }
+    const lastText = session ? finalAssistantText(session) : "";
+    return {
+      ...filesChanged?.length ? { filesChanged } : {},
+      ...lastText ? { lastText } : {}
+    };
+  }
+  /** Build the evidence-preserving failed result for a timed-out expert execution. */
+  async buildTimedOutResult(entry, request, started, timeoutMs) {
+    const evidence = await this.collectFailureEvidence(entry.session, entry.workspace);
+    const usage2 = sessionUsage(entry.session);
+    const summary = safeText(`[Failure] Expert execution timed out after ${timeoutMs}ms.${evidence.lastText ? `
+
+${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed out after ${timeoutMs}ms.`;
+    return {
+      status: "failed",
+      role: request.role,
+      model: request.model,
+      summary,
+      ...evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {},
+      executionMetadata: {
+        attempts: request.attempt,
+        failureType: "timeout",
+        workspace: entry.workspace.root,
+        isolated: entry.workspace.isolated,
+        provisioning: entry.workspace.provisioning,
+        durationMs: Date.now() - started,
+        ...usage2 ? { usage: usage2 } : {}
+      }
+    };
+  }
   /** Build the preserved-progress result for a Main-Agent abort. */
   async buildAbortedResult(entry, request, started) {
     const rawText = finalAssistantText(entry.session);
@@ -319184,6 +319444,52 @@ ${finalAssistantText(entry.session) ?? ""}`.trim(), 4e3) ?? `[Task stopped by ex
   }
   async cleanupExecution(executionId2) {
     return this.boundary.cleanupExecution(executionId2);
+  }
+  /**
+   * Run one bounded verification command on behalf of the Main Agent: inside a
+   * retained worktree (resolved by executionId) or a containment-validated
+   * workspace path. No string shell: the first argv item is executed directly
+   * through the same execFile-based bounded runner the provisioning path uses,
+   * with the scrubbed provisioning environment and a clamped timeout.
+   */
+  async verifyCommand(request) {
+    const started = Date.now();
+    const rejected = (message) => ({ exitCode: null, durationMs: Date.now() - started, message });
+    const command = request.command;
+    if (!Array.isArray(command) || command.length < 1 || command.length > 12) {
+      return rejected("verifyCommand requires a command array of 1 to 12 items.");
+    }
+    if (command.some((item) => typeof item !== "string" || item.length < 1 || item.length > 500 || item.includes("\0"))) {
+      return rejected("Each verifyCommand item must be a non-empty string of at most 500 characters without NUL.");
+    }
+    let directory;
+    if (request.executionId !== void 0) {
+      directory = await this.boundary.retainedWorktree(request.executionId);
+    }
+    if (!directory && request.workspace !== void 0) {
+      try {
+        directory = await this.boundary.resolveReadOnlyWorkspace(request.workspace);
+      } catch (error61) {
+        return rejected(`Workspace rejected: ${error61 instanceof Error ? error61.message : String(error61)}`);
+      }
+    }
+    if (!directory) {
+      return rejected(request.executionId !== void 0 ? `No retained worktree was found for execution ${request.executionId} and no workspace was supplied.` : "verifyCommand requires an executionId with a retained worktree or a workspace inside the allowed roots.");
+    }
+    const timeoutMs = Math.min(Math.max(Math.round(request.timeoutMs ?? 12e4), 1e3), 6e5);
+    const outcome = await runBoundedCommand([...command], {
+      cwd: directory,
+      timeoutMs,
+      env: scrubProvisioningEnv(process.env)
+    });
+    return {
+      exitCode: outcome.timedOut ? null : outcome.exitCode,
+      outputTail: tailCommandOutput(`${outcome.stdout}
+${outcome.stderr}`, 2e3),
+      durationMs: Date.now() - started,
+      ...outcome.timedOut ? { message: `Command was killed after ${timeoutMs}ms.` } : {},
+      ...!outcome.timedOut && outcome.error ? { message: outcome.error.slice(0, 500) } : {}
+    };
   }
 };
 
@@ -319388,6 +319694,15 @@ var MCP_INPUT_SCHEMAS = {
       type: failureType2,
       summary: external_exports.string().min(1).max(2e3)
     })).min(1).max(8)
+  },
+  expert_availability_reset: {
+    scope: boundedText2(200)
+  },
+  expert_verify: {
+    executionId: executionIdentifier.optional(),
+    workspace: boundedText2(32768).optional(),
+    command: external_exports.array(external_exports.string().min(1).max(500)).min(1).max(12),
+    timeoutMs: external_exports.number().int().min(1e3).max(6e5).optional()
   }
 };
 function response(value3) {
@@ -319410,7 +319725,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.8" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.9" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {
@@ -319588,12 +319903,35 @@ function createMcpServerWithProvider(councilProvider) {
   });
   server2.registerTool("expert_status", {
     title: "Expert Council Status",
-    description: "Return compact durable plans, execution states, and local aggregate outcomes.",
-    inputSchema: {},
+    description: "Return council plans, execution states, and local aggregate outcomes. view=summary (default) is a bounded running/recent/slots snapshot; view=full adds telemetry and the model assessment; view=running is only live executions.",
+    inputSchema: { view: external_exports.enum(["full", "summary", "running"]).default("summary") },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false }
-  }, async (_input, extra) => {
+  }, async (input2, extra) => {
     const council = await councilProvider(extra);
-    return response(await withMcpTimeout(council.getStatus()));
+    return response(await withMcpTimeout(council.getStatus({ view: input2.view })));
+  });
+  server2.registerTool("expert_availability_reset", {
+    title: "Reset Expert Availability",
+    description: "Clear runtime availability markers by scope: '*' (every model), a bare provider name (all its models), or an exact provider/id key. Use after a transient failure was misrecorded or a provider recovers before the marker TTL expires.",
+    inputSchema: MCP_INPUT_SCHEMAS.expert_availability_reset,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+  }, async (input2, extra) => {
+    const council = await councilProvider(extra);
+    return response(await withMcpTimeout(council.resetAvailability({ scope: input2.scope })));
+  });
+  server2.registerTool("expert_verify", {
+    title: "Verify Command",
+    description: "Run a bounded command on the plugin side inside a retained expert worktree (executionId) or a validated workspace, and return the real exit code and output tail. Turns 'the expert says it is green' into plugin-observed evidence.",
+    inputSchema: MCP_INPUT_SCHEMAS.expert_verify,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+  }, async (input2, extra) => {
+    const council = await councilProvider(extra);
+    return response(await withMcpTimeout(council.verifyCommand({
+      ...input2.executionId ? { executionId: input2.executionId } : {},
+      ...input2.workspace ? { workspace: input2.workspace } : {},
+      command: input2.command,
+      ...input2.timeoutMs ? { timeoutMs: input2.timeoutMs } : {}
+    }), Math.max(MCP_TOOL_TIMEOUT_MS, 6e4)));
   });
   return server2;
 }

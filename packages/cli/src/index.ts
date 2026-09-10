@@ -57,7 +57,7 @@ function positional(args: string[]): string[] {
 
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
-  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
+  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -153,9 +153,43 @@ export async function runCli(
         });
         break;
       }
-      case "status":
-        result = await service.getStatus();
+      case "status": {
+        const view = option(args, "--view") ?? "full";
+        if (view !== "full" && view !== "summary" && view !== "running") {
+          throw new Error("status --view must be full, summary, or running");
+        }
+        result = await service.getStatus({ view: view as "full" | "summary" | "running" });
         break;
+      }
+      case "reset": {
+        const scope = values[0];
+        if (!scope) throw new Error("reset requires a scope: '*', a provider, or provider/id");
+        result = await service.resetAvailability({ scope: bounded(scope, "scope", 200) });
+        break;
+      }
+      case "verify": {
+        const execId = option(args, "--exec");
+        const ws = option(args, "--workspace");
+        const commandJson = option(args, "--command");
+        if (!commandJson) throw new Error("verify requires --command JSON_ARRAY");
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(commandJson);
+        } catch {
+          throw new Error("verify --command must be a JSON array of strings");
+        }
+        if (!Array.isArray(parsed) || parsed.length < 1 || parsed.length > 12 || parsed.some((item) => typeof item !== "string")) {
+          throw new Error("verify --command must be a JSON array of 1-12 strings");
+        }
+        const verifyTimeout = integerOption(args, "--timeout-ms", 1_000, 600_000);
+        result = await service.verifyCommand({
+          ...(execId ? { executionId: bounded(execId, "exec", 200) } : {}),
+          ...(ws ? { workspace: ws } : {}),
+          command: parsed as string[],
+          ...(verifyTimeout ? { timeoutMs: verifyTimeout } : {}),
+        });
+        break;
+      }
       case "feedback": {
         const executionId = values[0];
         if (!executionId || !/^[a-zA-Z0-9_-]{1,200}$/.test(executionId)) throw new Error("feedback requires a valid execution ID");

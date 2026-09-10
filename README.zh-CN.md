@@ -18,7 +18,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.7.6）已包含：
+当前版本（0.7.9）已包含：
 
 - 与宿主无关的 Core：配置校验、模型归一化、按模型/供应商计费倍率、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
@@ -27,6 +27,12 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - **运行时验证门**：供给完成后自动运行仓库 typecheck 与测试，失败把成功结果降级为 `partial` 并触发修正重试，全程零主代理开销。
 - **专家主动停止工具 `report_and_stop`**：专家判定任务无法完成（缺工具/缺环境/权限拒绝）时立即提交结构化报告（阻塞原因、发现、风险、建议下一步）并以 `partial` 结果终止，委派循环不重试不升级，变更工作树保留待检。
 - **专家与主会话同生命周期**（`security.expertLifetime`，默认 `host-bound`）：主会话退出或被替换时自动中止所有运行中的专家，孤儿专家不再烧额度；`detached` 可恢复旧行为。
+- **失败结果保留产物**：超时、会话错误、抛错失败的结果都附带 `filesChanged` 与最后助手输出，长任务超时不再返回空结果。
+- **持久化写侧钳制**：超长数组与文本在唯一持久化入口截断，啰嗦专家再也不能写出不可重载的 state 文件。
+- **`expert_availability_reset`**：按 `*`/供应商/`provider/id` 即时清除误标或已恢复的可用性标记，无需改文件或重启。
+- **`expert_verify`**：插件侧在保留 worktree 或受校验工作区运行有界命令并返回真实退出码与输出尾部；`tests[]` 现携带退出码、计数、耗时与输出尾部。
+- **`expert_status` 视图**：默认的有界 `summary`（运行中含剩余预算、近期完成、供应商并发槽）、`running`、以及旧全量 `full`，大幅降低观测上下文开销。
+- **完成通知可靠性**：Pi 扩展在 idle/streaming 竞态时短暂重试完成消息，不再静默丢弃。
 - `timeoutMs` 与 `reasoningLevel` 均为必填派遣参数：主代理必须按任务与模型显式选择；组合名单可按角色/模型钉定思考档位并覆盖派遣参数。
 - 专家 fail-fast 纪律：发现工具或环境不可能完成任务时立即以结构化 `missing_context`/`permission_error` 终止并实时回传，委派循环不做无谓重试。
 - 持久化理事会组合：`council-compositions.json` 命名名单（角色可配多模型与思考档位）、首问组合菜单、会话绑定、`model` 钉定与同角色并发派遣。
@@ -34,7 +40,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 运行时可用性标记分级：模型失效（24 小时）、配额周期耗尽（6 小时、全 plan 传播）、**瞬时限流 TPM/RPM（2 分钟）** 三档 TTL，自动过期重试，不再把限流误当配额耗尽拉黑。
 - `council-config.json` 运营者配置默认在数据目录发现（无需环境变量），`expert_inspect` 返回路径与生效模式供主代理代为编辑。
 - 支持 JSON 输出的 CLI。
-- 包含 10 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
+- 包含 12 个异步语义工具、事件驱动完成等待、验收反馈闭环及显式 worktree 清理能力的 MCP Server。
 - 原生 Pi Package。
 - 提供商会话错误透传：`403 AccessDenied` 等上游拒绝不再被吞掉，会以真实诊断和正确失败类型返回主代理。
 - 跨进程共享模型评估：多实例并行时，可用性标记无需重启即可互相可见。
@@ -109,7 +115,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -647,7 +653,7 @@ packages/codex-integration/plugin/expert-council/
 `v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -673,7 +679,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json

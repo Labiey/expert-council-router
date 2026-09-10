@@ -28,6 +28,8 @@ export const MCP_TOOL_NAMES = [
   "expert_cleanup",
   "expert_escalate",
   "expert_status",
+  "expert_availability_reset",
+  "expert_verify",
 ] as const;
 
 const role = z.enum([
@@ -139,6 +141,15 @@ export const MCP_INPUT_SCHEMAS = {
       summary: z.string().min(1).max(2_000),
     })).min(1).max(8),
   },
+  expert_availability_reset: {
+    scope: boundedText(200),
+  },
+  expert_verify: {
+    executionId: executionIdentifier.optional(),
+    workspace: boundedText(32_768).optional(),
+    command: z.array(z.string().min(1).max(500)).min(1).max(12),
+    timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+  },
 } as const;
 
 function response(value: unknown) {
@@ -172,7 +183,7 @@ type CouncilProvider = (requestContext?: unknown) => Promise<ExpertCouncil>;
 
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
   const server = new McpServer(
-    { name: "expert-council", version: "0.7.8" },
+    { name: "expert-council", version: "0.7.9" },
     { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
   );
   // A stdio server process serves exactly one host conversation, so this
@@ -407,13 +418,44 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
     "expert_status",
     {
       title: "Expert Council Status",
-      description: "Return compact durable plans, execution states, and local aggregate outcomes.",
-      inputSchema: {},
+      description: "Return council plans, execution states, and local aggregate outcomes. view=summary (default) is a bounded running/recent/slots snapshot; view=full adds telemetry and the model assessment; view=running is only live executions.",
+      inputSchema: { view: z.enum(["full", "summary", "running"]).default("summary") },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async (_input, extra) => {
+    async (input, extra) => {
       const council = await councilProvider(extra);
-      return response(await withMcpTimeout(council.getStatus()));
+      return response(await withMcpTimeout(council.getStatus({ view: input.view })));
+    },
+  );
+  server.registerTool(
+    "expert_availability_reset",
+    {
+      title: "Reset Expert Availability",
+      description: "Clear runtime availability markers by scope: '*' (every model), a bare provider name (all its models), or an exact provider/id key. Use after a transient failure was misrecorded or a provider recovers before the marker TTL expires.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_availability_reset,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input, extra) => {
+      const council = await councilProvider(extra);
+      return response(await withMcpTimeout(council.resetAvailability({ scope: input.scope })));
+    },
+  );
+  server.registerTool(
+    "expert_verify",
+    {
+      title: "Verify Command",
+      description: "Run a bounded command on the plugin side inside a retained expert worktree (executionId) or a validated workspace, and return the real exit code and output tail. Turns 'the expert says it is green' into plugin-observed evidence.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_verify,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input, extra) => {
+      const council = await councilProvider(extra);
+      return response(await withMcpTimeout(council.verifyCommand({
+        ...(input.executionId ? { executionId: input.executionId } : {}),
+        ...(input.workspace ? { workspace: input.workspace } : {}),
+        command: input.command,
+        ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
+      }), Math.max(MCP_TOOL_TIMEOUT_MS, 60_000)));
     },
   );
   return server;

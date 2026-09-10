@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.7.8) includes:
+The current version (0.7.9) includes:
 
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -26,6 +26,12 @@ The current version (0.7.8) includes:
 - A **runtime verification gate**: after provisioning, the repository typecheck and tests run automatically; a failing gate downgrades a successful result to `partial` and engages the corrected-retry path — zero Main Agent overhead.
 - **`report_and_stop` expert tool**: when an expert determines the task cannot be completed (missing tool, absent environment, denied permission), it submits a structured stop report — blocker, findings, risks, `recommendedNextAction` — delivered as a `partial` result that terminates the delegation loop without retry or escalation, with the mutation worktree retained for inspection.
 - **Host-bound expert lifetime** (`security.expertLifetime`, default `host-bound`): running experts are aborted automatically when the host session quits or is replaced, so orphaned experts never burn quota with no receiver; `detached` restores the old behavior.
+- **Failure results keep artifacts**: timed-out, session-error, and thrown-error results include `filesChanged` and the last assistant text, so a long timeout no longer returns an empty result.
+- **State write-side clamp**: oversized arrays and text are truncated at the single persistence choke point, so a verbose expert can no longer write an unreadable state file.
+- **`expert_availability_reset`**: clear misrecorded or recovered availability markers by `*`/provider/`provider/id` without editing files or restarting.
+- **`expert_verify`**: run a bounded command plugin-side in a retained worktree or validated workspace and get the real exit code and output tail; `tests[]` now carry exit codes, counts, durations, and output tails.
+- **`expert_status` views**: a bounded `summary` default (running with remaining budget, recent completions, provider slots), `running`, and legacy `full` — cutting observation-context cost.
+- **Reliable completion notifications**: the package retries the finish message briefly on the idle/streaming race instead of dropping it.
 - `timeoutMs` and `reasoningLevel` as required delegation arguments, chosen deliberately per task and model; compositions can pin per-role/per-model reasoning levels that override the argument.
 - Expert fail-fast discipline: when the assigned tools or workspace make a task impossible, experts stop immediately with a structured `missing_context`/`permission_error` result that is relayed in real time instead of burning retries.
 - Persistent council compositions: named rosters in `council-compositions.json` (roles may pin multiple models and reasoning levels), a first-build composition menu, session bindings, `model` pinning, and concurrent same-role dispatch.
@@ -33,7 +39,7 @@ The current version (0.7.8) includes:
 - Tiered runtime availability markers: dead models (24h), plan-quota exhaustion (6h, provider-wide), and **transient TPM/RPM throttling (2 minutes)** — throttling is no longer misread as quota exhaustion.
 - `council-config.json` operator configuration discovered by default in the data directory (no environment variable); `expert_inspect` returns its path and the effective mode so the Main Agent can edit it on request.
 - A CLI with JSON output.
-- An MCP Server with 10 async semantic tools, event-driven completion waits, a feedback loop, and explicit worktree cleanup.
+- An MCP Server with 12 async semantic tools, event-driven completion waits, a feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
 - Provider session-error pass-through: upstream refusals such as `403 AccessDenied` reach the Main Agent with real diagnostics and the correct failure type.
 - Cross-process shared model assessment: availability markers are visible to parallel instances without restarts.
@@ -108,7 +114,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -651,7 +657,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -677,7 +683,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json

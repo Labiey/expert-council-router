@@ -2,6 +2,46 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.9 - 2026-09-11
+
+### Added
+
+- **`expert_availability_reset`**: clear runtime availability markers by scope — `*` (every model), a bare provider (all its models), or an exact `provider/id` key — in memory and the persisted shared assessment together. Use it when a transient failure was misrecorded or a provider recovers before the marker TTL expires; no more hand-editing `model-assessment.json` or restarting the host.
+- **`expert_verify`**: run a bounded command on the plugin side inside a retained expert worktree (`executionId`) or a validated `workspace`, returning the real exit code and an output tail. Argv is passed without a shell, the child environment is allowlist-scrubbed, and the run is time-boxed.
+- **`expert_status` views**: `view="summary"` (default) returns running executions with `elapsedMs`/`remainingMs`, the last 20 completed executions, and live provider concurrency slots; `view="running"` is only live executions; `view="full"` preserves the legacy payload including telemetry and the model assessment.
+- **Richer test evidence**: `tests[]` entries now carry optional `exitCode`, `testsRun`, `failedCount`, `errorCount`, `skippedCount`, `durationMs`, and `outputTail`; the runtime verification gate records `exitCode` and `outputTail` per step, and the expert prompt requires a command plus exit code for any test claimed to have run.
+
+### Fixed
+
+- **Failure results keep artifacts**: timed-out, session-error, and thrown-error expert results now include `filesChanged` (from the retained worktree) and the last assistant text, so a 30-minute timeout no longer returns an empty result and already-written work is discoverable without manually inspecting the worktree.
+- **State write-side clamp**: `clampExpertResult` truncates oversized arrays and text at the single persistence choke point, and `unavailableModels`' bound rose from 8 to 64. A verbose expert can no longer write a state file that fails to reload and breaks the council tools until a restart (the class of bug behind the v0.7.7/v0.7.8 regressions).
+- **`resetAvailability("*")` full-clear**: clearing every marker now actually removes the `modelAvailability`/`modelStatus` maps instead of leaving the originals in place.
+- **Routing-drift noise**: the "built against a different model inventory" note now fires only when the delegation actually selects a different model than the plan (naming both), instead of on every delegation after any inventory change.
+
+### Changed
+
+- **Completion-notification reliability**: the Pi package retries the completion message briefly when the idle/streaming race or a mid-transition session rejects the first send, reducing silently-lost notifications.
+
+## 0.7.9（中文）
+
+### 新增
+
+- **`expert_availability_reset`**：按作用域即时清除运行时可用性标记——`*`（全部）、裸供应商名（该供应商全部模型）、或精确 `provider/id`；内存与持久化共享评估一并更新。误标或供应商在 TTL 前恢复时使用，无需手改 `model-assessment.json` 或重启宿主。
+- **`expert_verify`**：插件侧在保留的专家 worktree（`executionId`）或受校验 `workspace` 内运行有界命令，返回真实退出码与输出尾部；argv 不经 shell、子进程环境白名单化、限时。
+- **`expert_status` 视图**：`view="summary"`（默认）返回运行中执行（含 `elapsedMs`/`remainingMs`）、最近 20 条完成、供应商并发槽；`view="running"` 仅运行中；`view="full"` 保留含遥测与模型评估的旧全量。
+- **测试证据强化**：`tests[]` 新增可选 `exitCode`/`testsRun`/`failedCount`/`errorCount`/`skippedCount`/`durationMs`/`outputTail`；验证门每步记录 `exitCode` 与 `outputTail`；专家 prompt 要求任何声称已运行的测试必须带命令与退出码。
+
+### 修复
+
+- **失败结果保留产物**：超时、会话错误、抛错失败的专家结果现在附带 `filesChanged`（取自保留的 worktree）与最后助手输出——30 分钟超时不再返回空结果，已写成果无需手动翻 worktree 即可发现。
+- **持久化写侧钳制**：`clampExpertResult` 在唯一持久化入口截断超长数组与文本，`unavailableModels` 上限 8→64；啰嗦的专家再也不能写出重载失败、把理事会工具卡到重启的 state 文件（v0.7.7/v0.7.8 那类回归的根因）。
+- **`resetAvailability("*")` 全量清除**：清除全部标记时真正删除 `modelAvailability`/`modelStatus` 映射，不再保留原始条目。
+- **路由漂移噪声**："built against a different model inventory" 提示仅在实际选出与计划不同的模型时触发（并点名两个模型），不再因任何库存变化就在每次委派上刷屏。
+
+### 变更
+
+- **完成通知可靠性**：Pi 扩展在 idle/streaming 竞态或会话切换首投被拒时短暂重试完成消息，减少静默丢失。
+
 ## 0.7.8 - 2026-09-10
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/pi-runtime",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "description": "Pi-backed model discovery and least-privilege expert execution for Expert Council",
   "type": "module",
   "main": "./dist/index.js",
@@ -31,7 +31,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@expert-council/core": "0.7.8",
+    "@expert-council/core": "0.7.9",
     "typebox": "^1.3.7"
   },
   "peerDependencies": {
