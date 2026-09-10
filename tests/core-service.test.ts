@@ -741,6 +741,53 @@ describe("Main-Agent abort", () => {
     expect(attempts).toBe(1);
   });
 
+  it("shutdownAll persists terminal aborted results for running executions before returning", async () => {
+    let release: ((result: ExpertResult) => void) | undefined;
+    const gate = new Promise<ExpertResult>((resolve) => {
+      release = resolve;
+    });
+    const runtime = new MockRuntime(abortModels);
+    let attemptStarted = false;
+    runtime.executeExpert = async (request) => {
+      attemptStarted = true;
+      return gate;
+    };
+    const saves: Array<CouncilStateSnapshot | undefined> = [];
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: abortInitialState(markAssessment),
+      persistence: {
+        save: async (snapshot) => {
+          saves.push(snapshot);
+        },
+      },
+    });
+    const handle = service.startDelegation({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    while (!attemptStarted) await new Promise((resolve) => setTimeout(resolve, 5));
+    const stopped = await service.shutdownAll!("Host session is shutting down.");
+    expect(stopped).toBe(1);
+    const lookup = await service.getResult(handle.executionId);
+    expect(lookup.status).toBe("completed");
+    expect(lookup.result).toMatchObject({
+      status: "aborted",
+      summary: "Expert execution aborted: Host session is shutting down.",
+    });
+    expect(lookup.result.executionMetadata).toMatchObject({ failureType: "aborted", attempts: 1 });
+    // The terminal state must be durably persisted before shutdownAll returns.
+    const persisted = saves.at(-1);
+    const persistedEntry = persisted?.executions.find((entry) => entry.id === handle.executionId);
+    expect(persistedEntry?.status).toBe("aborted");
+    expect(persisted?.results.some((entry) => entry.executionId === handle.executionId && entry.result.status === "aborted")).toBe(true);
+    // The runtime session abort is still requested.
+    expect(runtime.abortCalls).toEqual([{ executionId: handle.executionId, reason: "Host session is shutting down." }]);
+    // Survival semantics: if the process actually survives (session replaced
+    // but no quit), the real late result overwrites the shutdown placeholder.
+    release!({ status: "success", role: "scout", model: "p/dead", summary: "actually finished" });
+    const lateResult = await handle.result;
+    expect(lateResult.status).toBe("success");
+    const finalLookup = await service.getResult(handle.executionId);
+    expect(finalLookup.result?.summary).toBe("actually finished");
+  });
+
   it("reports not-found and already-finished abort outcomes", async () => {
     const runtime = new MockRuntime(abortModels, [
       { status: "success", role: "scout", model: "p/alive", summary: "ok" },

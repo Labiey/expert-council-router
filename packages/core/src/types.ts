@@ -777,6 +777,13 @@ export interface ExpertCouncil {
   inspectExecution(executionId: string): Promise<ExecutionProgress | undefined>;
   /** Deliberately stop a running expert execution while preserving its progress; never retried or escalated. */
   abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
+  /**
+   * Host-session teardown path: abort every running execution AND persist the
+   * terminal aborted results before returning, so the state file never keeps a
+   * running record for an expert whose host died. Returns the number of
+   * executions stopped. Optional: hosts without teardown hooks never call it.
+   */
+  shutdownAll?(reason: string): Promise<number>;
   waitForResults(request: ExpertWaitRequest): Promise<ExpertWaitResult>;
   cleanup(executionId: string): Promise<ExpertCleanupResult>;
   recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult>;

@@ -120,6 +120,7 @@ const expertResult = z.object({
     executionId: identifier.optional(),
     attempts: z.number().int().min(0).max(100).optional(),
     failureType: failureType.optional(),
+    stoppedByExpert: z.boolean().optional(),
     usage: usage.optional(),
     durationMs: z.number().finite().min(0).optional(),
     workspace: boundedText(32_768).optional(),
@@ -138,7 +139,12 @@ const expertResult = z.object({
       status: z.enum(["passed", "failed", "not-run"]),
       summary: boundedText(2_000).optional(),
     }).strict()).max(20).optional(),
-  }).strict().optional(),
+  })
+    // Forward compatibility: executionMetadata is the fast-moving extension
+    // surface — a schema lag on a new optional field must never render the
+    // whole persisted state unreadable (0.7.7 regression with stoppedByExpert).
+    .passthrough()
+    .optional(),
 }).strict();
 
 export const councilStateSnapshotSchema = z.object({

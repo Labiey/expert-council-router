@@ -2,6 +2,26 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.8 - 2026-09-10
+
+### Fixed
+
+- **State forward compatibility (0.7.7 regression)**: the persisted-state schema rejected `results.*.result.executionMetadata.stoppedByExpert` as an unknown key, so a state file written by 0.7.7 (any `report_and_stop` result) made the entire council state unreadable after a host restart. The schema now accepts the field, and `executionMetadata` is parsed with `passthrough()` so a schema lag on a future metadata field can never again render the whole state unreadable. Strictness is preserved on the top-level result shape.
+
+### Changed
+
+- **Host shutdown now persists terminal results**: `session_shutdown` previously relied on the delegation promise chain to write aborted results — a promise chain that may never resume while the process is exiting, leaving `running` records for dead experts. A new `ExpertCouncil.shutdownAll` aborts every running execution, writes its terminal `aborted` result, awaits the state flush, and only then returns; the extension uses it during teardown. If the process actually survives, a real late result still overwrites the placeholder.
+
+## 0.7.8（中文）
+
+### 修复
+
+- **状态前向兼容（0.7.7 回归）**：持久化 state 的 schema 将 `executionMetadata.stoppedByExpert` 判为未知键——0.7.7 写过 `report_and_stop` 结果的 state 文件在宿主重启后**整体不可读**。现在 schema 接受该字段，且 `executionMetadata` 改为 `passthrough()` 解析：未来再给元数据加字段时，schema 滞后不会再次让整个 state 报废。顶层 result 形状仍保持严格。
+
+### 变更
+
+- **宿主关闭现在会落盘终局结果**：此前 `session_shutdown` 依赖委派 promise 链写 aborted 结果——而进程退出时该链可能永远不恢复，给死掉的专家留下 `running` 记录。新增 `ExpertCouncil.shutdownAll`：中止所有运行中执行、写入终局 `aborted` 结果、等待 state 刷盘后才返回；扩展在 teardown 时使用它。若进程实际存活，真实迟到结果仍会覆盖占位结果。
+
 ## 0.7.7 - 2026-09-10
 
 ### Added

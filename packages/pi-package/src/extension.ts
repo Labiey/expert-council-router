@@ -482,6 +482,14 @@ export default function expertCouncilExtension(
       const loaded = await loadCouncilConfig(paths.councilConfigPath, paths.councilConfigPath);
       if (loaded.config.security.expertLifetime === "detached") return;
       const council = await getCouncil(ctx.cwd);
+      // Preferred: shutdownAll persists the terminal aborted results before
+      // returning, so the state file never keeps a running record for an
+      // expert whose host session died (the delegation promise chain may
+      // never resume during teardown).
+      if (typeof council.shutdownAll === "function") {
+        await council.shutdownAll("Host session is shutting down.");
+        return;
+      }
       const status = await council.getStatus();
       const running = status.executions.filter((entry) => entry.status === "running");
       await Promise.allSettled(

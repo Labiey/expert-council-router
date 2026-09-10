@@ -617,6 +617,9 @@ export class ExpertCouncilService implements ExpertCouncil {
     const maxAttempts = this.config.retry.maxAttempts;
 
     while (state.attempts < maxAttempts) {
+      // A host shutdown already persisted the terminal aborted result; the
+      // loop must not overwrite it with its own before-the-next-attempt copy.
+      if (this.results.has(id)) break;
       if (state.abortRequested) {
         lastResult = {
           status: "aborted",
@@ -1115,6 +1118,53 @@ export class ExpertCouncilService implements ExpertCouncil {
       progress = await this.inspectExecution(request.executionId).catch(() => undefined);
     }
     return { executionId: request.executionId, status, reason: request.reason, progress };
+  }
+
+  /**
+   * Teardown-time variant of abortExecution for the host session's death: it
+   * does not rely on the delegation promise chain to write the terminal
+   * result (the process may exit before that chain resumes). Each running
+   * execution gets its aborted result persisted synchronously before this
+   * method returns. If the process actually survives (e.g. a session
+   * replacement), a later real result overwrites the aborted one.
+   */
+  async shutdownAll(reason: string): Promise<number> {
+    const running = [...this.executions.entries()].filter(([, state]) => state.status === "running");
+    let stopped = 0;
+    for (const [id, state] of running) {
+      if (this.results.has(id)) continue;
+      state.abortRequested = true;
+      state.abortReason = reason;
+      state.status = "aborted";
+      state.finishedAt = new Date().toISOString();
+      const attempt = state.attemptHistory?.[state.attemptHistory.length - 1];
+      if (attempt && attempt.status === "running") attempt.status = "aborted";
+      this.results.set(id, {
+        status: "aborted",
+        role: state.role,
+        model: state.model ?? "unknown",
+        summary: `Expert execution aborted: ${reason}`,
+        executionMetadata: {
+          executionId: id,
+          attempts: state.attempts,
+          failureType: "aborted",
+          ...(state.startedAt ? { durationMs: Date.parse(state.finishedAt) - Date.parse(state.startedAt) || undefined } : {}),
+        },
+      });
+      stopped += 1;
+    }
+    if (stopped > 0) {
+      try {
+        await this.persistState();
+      } catch {
+        // The state write races process exit; the in-memory terminal state is
+        // still authoritative for the remaining lifetime.
+      }
+    }
+    for (const [id] of running) {
+      void this.runtime.abortExecution?.({ executionId: id, reason }).catch(() => undefined);
+    }
+    return stopped;
   }
 
   async inspectExecution(executionId: string): Promise<ExecutionProgress | undefined> {

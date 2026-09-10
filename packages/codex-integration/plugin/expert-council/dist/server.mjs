@@ -312082,6 +312082,8 @@ var ExpertCouncilService = class {
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
     while (state2.attempts < maxAttempts) {
+      if (this.results.has(id))
+        break;
       if (state2.abortRequested) {
         lastResult = {
           status: "aborted",
@@ -312509,6 +312511,52 @@ var ExpertCouncilService = class {
     }
     return { executionId: request.executionId, status, reason: request.reason, progress };
   }
+  /**
+   * Teardown-time variant of abortExecution for the host session's death: it
+   * does not rely on the delegation promise chain to write the terminal
+   * result (the process may exit before that chain resumes). Each running
+   * execution gets its aborted result persisted synchronously before this
+   * method returns. If the process actually survives (e.g. a session
+   * replacement), a later real result overwrites the aborted one.
+   */
+  async shutdownAll(reason) {
+    const running = [...this.executions.entries()].filter(([, state2]) => state2.status === "running");
+    let stopped = 0;
+    for (const [id, state2] of running) {
+      if (this.results.has(id))
+        continue;
+      state2.abortRequested = true;
+      state2.abortReason = reason;
+      state2.status = "aborted";
+      state2.finishedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const attempt3 = state2.attemptHistory?.[state2.attemptHistory.length - 1];
+      if (attempt3 && attempt3.status === "running")
+        attempt3.status = "aborted";
+      this.results.set(id, {
+        status: "aborted",
+        role: state2.role,
+        model: state2.model ?? "unknown",
+        summary: `Expert execution aborted: ${reason}`,
+        executionMetadata: {
+          executionId: id,
+          attempts: state2.attempts,
+          failureType: "aborted",
+          ...state2.startedAt ? { durationMs: Date.parse(state2.finishedAt) - Date.parse(state2.startedAt) || void 0 } : {}
+        }
+      });
+      stopped += 1;
+    }
+    if (stopped > 0) {
+      try {
+        await this.persistState();
+      } catch {
+      }
+    }
+    for (const [id] of running) {
+      void this.runtime.abortExecution?.({ executionId: id, reason }).catch(() => void 0);
+    }
+    return stopped;
+  }
   async inspectExecution(executionId2) {
     if (this.runtime.inspectExecution) {
       return await this.runtime.inspectExecution(executionId2).catch(() => void 0);
@@ -312760,6 +312808,7 @@ var expertResult = external_exports.object({
     executionId: identifier.optional(),
     attempts: external_exports.number().int().min(0).max(100).optional(),
     failureType: failureType.optional(),
+    stoppedByExpert: external_exports.boolean().optional(),
     usage: usage.optional(),
     durationMs: external_exports.number().finite().min(0).optional(),
     workspace: boundedText(32768).optional(),
@@ -312778,7 +312827,7 @@ var expertResult = external_exports.object({
       status: external_exports.enum(["passed", "failed", "not-run"]),
       summary: boundedText(2e3).optional()
     }).strict()).max(20).optional()
-  }).strict().optional()
+  }).passthrough().optional()
 }).strict();
 var councilStateSnapshotSchema = external_exports.object({
   version: external_exports.literal(1),
@@ -319361,7 +319410,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.7" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.8" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

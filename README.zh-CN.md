@@ -109,7 +109,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -647,7 +647,7 @@ packages/codex-integration/plugin/expert-council/
 `v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -673,7 +673,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.8 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
