@@ -56,7 +56,7 @@ function positional(args: string[]): string[] {
 }
 
 function help(): string {
-  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
+  return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
   expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
 }
 
@@ -134,6 +134,10 @@ export async function runCli(
         if (timeoutMs === undefined) {
           throw new Error("delegate requires --timeout-ms <ms> (1000–3600000): set an explicit budget from task difficulty");
         }
+        const reasoningLevel = bounded(option(args, "--reasoning-level") ?? "", "reasoning level", 40);
+        if (!reasoningLevel) {
+          throw new Error("delegate requires --reasoning-level <level> (e.g. low/medium/high): choose it from the task and model");
+        }
         const modelText = option(args, "--model");
         if (modelText && !/^[^/]+\/[^/]+$/.test(modelText)) {
           throw new Error("--model must be a provider/id model key");
@@ -144,6 +148,7 @@ export async function runCli(
           sessionKey: option(args, "--session-key") ?? undefined,
           ...(option(args, "--workspace") ? { workspace: bounded(option(args, "--workspace")!, "workspace", 32_768) } : {}),
           ...(modelText ? { model: bounded(modelText, "model", 200) } : {}),
+          reasoningLevel,
           timeoutMs,
         });
         break;

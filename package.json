@@ -1,6 +1,6 @@
 {
   "name": "expert-council-monorepo",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "private": true,
   "description": "Dynamic, cost-aware multi-model expert orchestration for Pi and Codex",
   "license": "MIT",

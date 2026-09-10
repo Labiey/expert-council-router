@@ -213,8 +213,8 @@ describe("MCP semantic surface", () => {
       { role: "scout", task: "map files" },
     ]).success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
-      { role: "scout", task: "map files", timeoutMs: 600_000 },
-      { role: "reviewer", task: "review findings", timeoutMs: 600_000 },
+      { role: "scout", task: "map files", reasoningLevel: "low", timeoutMs: 600_000 },
+      { role: "reviewer", task: "review findings", reasoningLevel: "medium", timeoutMs: 600_000 },
     ]).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_feedback.verificationPassed.safeParse(true).success).toBe(true);
   });
@@ -252,7 +252,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -269,7 +269,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });
@@ -446,7 +446,7 @@ describe("cost policy reminders", () => {
       await client.connect(clientTransport);
       const first = await client.callTool({
         name: "expert_delegate",
-        arguments: { role: "scout", task: "Inspect a tiny file", timeoutMs: 60000 },
+        arguments: { role: "scout", task: "Inspect a tiny file", reasoningLevel: "low", timeoutMs: 60000 },
       });
       expect(JSON.stringify(first.content)).toContain("Ask the user once whether to optimize for economy, balanced, or speed");
 
@@ -459,7 +459,7 @@ describe("cost policy reminders", () => {
 
       const second = await client.callTool({
         name: "expert_delegate",
-        arguments: { role: "scout", task: "Inspect another tiny file", timeoutMs: 60000 },
+        arguments: { role: "scout", task: "Inspect another tiny file", reasoningLevel: "low", timeoutMs: 60000 },
       });
       expect(JSON.stringify(second.content)).not.toContain("Ask the user once whether to optimize");
     } finally {
@@ -643,7 +643,7 @@ describe("Pi adapter registration", () => {
 
     const delegated = await tools.get("expert_delegate")!.execute(
       "call",
-      { role: "reviewer", task: "review", timeoutMs: 60_000, ...(taskDescription ? { taskDescription } : {}) },
+      { role: "reviewer", task: "review", reasoningLevel: "medium", timeoutMs: 60_000, ...(taskDescription ? { taskDescription } : {}) },
       undefined,
       undefined,
       { cwd: ".", isIdle: () => idle },
@@ -799,7 +799,7 @@ describe("council composition surface", () => {
     expect(MCP_INPUT_SCHEMAS.expert_delegate.model.safeParse("p/m").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.model.safeParse("nope").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
-      { role: "scout", task: "map files", timeoutMs: 600_000, model: "p/m" },
+      { role: "scout", task: "map files", reasoningLevel: "low", timeoutMs: 600_000, model: "p/m" },
     ]).success).toBe(true);
   });
 

@@ -310253,13 +310253,18 @@ function sanitizeSessionKey(value3) {
   const cleaned = value3.replace(controlCharacters, "").trim();
   return cleaned && cleaned.length <= 200 ? cleaned : void 0;
 }
+var reasoningLevelSchema = external_exports.string().min(1).max(40).refine((value3) => !controlCharacters.test(value3), "reasoningLevel must not contain control characters");
+var compositionEntrySchema = external_exports.union([
+  external_exports.string().min(1).max(200),
+  external_exports.object({ model: external_exports.string().min(1).max(200), reasoningLevel: reasoningLevelSchema.optional() })
+]);
 var compositionSchema = external_exports.object({
   name: external_exports.string().min(1).max(MAX_COMPOSITION_NAME_LENGTH),
   // Partial by design: an omitted or empty role routes normally. Enum-record
   // would require every key, so use a strict object over the 7 roles.
   roles: external_exports.strictObject(Object.fromEntries(expertRoleSchema.options.map((role2) => [
     role2,
-    external_exports.array(external_exports.string().min(1).max(200)).max(100).optional()
+    external_exports.array(compositionEntrySchema).max(100).optional()
   ]))).optional()
 });
 var compositionSessionSchema = external_exports.union([
@@ -310299,11 +310304,21 @@ function parseCompositionDocument(input2) {
         ]);
       }
     }
-    for (const [role2, rawKeys] of Object.entries(entry.roles ?? {})) {
-      const keys = rawKeys ?? [];
-      const cleaned = [
-        ...new Set(keys.map(sanitizeCompositionModelKey).filter((value3) => Boolean(value3)))
-      ].slice(0, MAX_COMPOSITION_MODELS_PER_ROLE);
+    for (const [role2, rawEntries] of Object.entries(entry.roles ?? {})) {
+      const entries = rawEntries ?? [];
+      const cleaned = [];
+      const seenModels = /* @__PURE__ */ new Set();
+      for (const raw of entries) {
+        const rawModel = typeof raw === "string" ? raw : raw.model;
+        const model = sanitizeCompositionModelKey(rawModel);
+        if (!model || seenModels.has(model))
+          continue;
+        seenModels.add(model);
+        const reasoningLevel = typeof raw === "object" ? raw.reasoningLevel : void 0;
+        cleaned.push(reasoningLevel ? { model, reasoningLevel } : { model });
+        if (cleaned.length >= MAX_COMPOSITION_MODELS_PER_ROLE)
+          break;
+      }
       if (cleaned.length)
         roles[role2] = cleaned;
     }
@@ -310356,9 +310371,25 @@ function compositionPools(composition) {
   for (const role2 of EXPERT_ROLES) {
     const list2 = composition.roles[role2];
     if (list2?.length)
-      pools[role2] = [...list2];
+      pools[role2] = list2.map((entry) => entry.model);
   }
   return pools;
+}
+function compositionReasoningLevels(composition) {
+  const levels = {};
+  for (const role2 of EXPERT_ROLES) {
+    const list2 = composition.roles[role2];
+    if (!list2?.length)
+      continue;
+    const byModel = {};
+    for (const entry of list2) {
+      if (entry.reasoningLevel)
+        byModel[entry.model] = entry.reasoningLevel;
+    }
+    if (Object.keys(byModel).length)
+      levels[role2] = byModel;
+  }
+  return levels;
 }
 function compositionRolesSummary(composition) {
   return Object.fromEntries(EXPERT_ROLES.filter((role2) => composition.roles[role2]?.length).map((role2) => [
@@ -310373,7 +310404,7 @@ function resolveCompositionForSession(document2, sessionKey) {
   const composition = compositionByName(document2, binding.name);
   if (!composition)
     return void 0;
-  return { name: composition.name, pools: compositionPools(composition) };
+  return { name: composition.name, pools: compositionPools(composition), reasoningLevels: compositionReasoningLevels(composition) };
 }
 function bindCompositionSession(document2, sessionKey, name, now = Date.now()) {
   const key = sanitizeSessionKey(sessionKey);
@@ -314699,6 +314730,7 @@ var executionIdentifier = external_exports.string().min(1).max(200).regex(/^[a-z
 var delegationAssignment = external_exports.object({
   role,
   task: taskText.describe("A bounded semantic assignment"),
+  reasoningLevel: external_exports.string().min(1).max(40).describe("Reasoning level for the expert session (e.g. low/medium/high); a composition entry that pins one for the selected model overrides this"),
   taskDescription: boundedText2(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
@@ -314728,6 +314760,7 @@ var MCP_INPUT_SCHEMAS = {
     workspace: workspacePath.optional(),
     model: modelKey.optional().describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
     timeoutMs: external_exports.number().int().min(1e3).max(36e5).describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
+    reasoningLevel: external_exports.string().min(1).max(40).describe("Required reasoning level for the expert session (e.g. low/medium/high), chosen from the task and model; a composition entry that pins one for the selected model overrides this"),
     assignments: external_exports.array(delegationAssignment).min(1).max(8).optional().describe("Use for two or more independent assignments so all are dispatched before the host turn ends")
   },
   expert_wait: {
@@ -314781,7 +314814,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.4" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.8.0" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

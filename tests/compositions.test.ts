@@ -36,8 +36,8 @@ describe("council composition parsing", () => {
     expect(parsed.version).toBe(1);
     expect(parsed.compositions.map((composition) => composition.name)).toEqual(["daily-cheap", "quality", "empty"]);
     expect(parsed.compositions[0]?.roles["implementation-worker"]).toEqual([
-      "zai/glm-5.3-flash",
-      "deepseek/deepseek-v4-flash",
+      { model: "zai/glm-5.3-flash" },
+      { model: "deepseek/deepseek-v4-flash" },
     ]);
     expect(parsed.sessions?.["session-1"]).toEqual({ name: "daily-cheap" });
     // A composition with no roles is kept (it auto-routes every role).
@@ -71,7 +71,7 @@ describe("council composition parsing", () => {
         },
       }],
     });
-    expect(parsed.compositions[0]?.roles.scout).toEqual(["p/good", "p/ok"]);
+    expect(parsed.compositions[0]?.roles.scout).toEqual([{ model: "p/good" }, { model: "p/ok" }]);
   });
 
   it("bounds names, pool size, and composition count", () => {
@@ -165,5 +165,42 @@ describe("composition menu", () => {
     });
     expect(menu[0]).toEqual({ name: "a", rolesSummary: {} });
     expect(compositionMenu(undefined)).toEqual([menu.at(-1)]);
+  });
+});
+
+describe("composition reasoning levels", () => {
+  it("parses object entries with reasoning levels and keeps bare strings", () => {
+    const parsed = parseCompositionDocument({
+      compositions: [{
+        name: "tiered",
+        roles: {
+          planner: [
+            { model: "p/max", reasoningLevel: "high" },
+            "p/flash",
+          ],
+        },
+      }],
+    });
+    expect(parsed.compositions[0]?.roles.planner).toEqual([
+      { model: "p/max", reasoningLevel: "high" },
+      { model: "p/flash" },
+    ]);
+  });
+
+  it("exposes pinned levels through compositionReasoningLevels", async () => {
+    const { compositionReasoningLevels } = await import("../packages/core/src/compositions.js");
+    const parsed = parseCompositionDocument({
+      compositions: [{
+        name: "tiered",
+        roles: {
+          planner: [{ model: "p/max", reasoningLevel: "high" }, "p/flash"],
+          scout: [{ model: "p/flash", reasoningLevel: "low" }],
+        },
+      }],
+    });
+    expect(compositionReasoningLevels(parsed.compositions[0]!)).toEqual({
+      planner: { "p/max": "high" },
+      scout: { "p/flash": "low" },
+    });
   });
 });

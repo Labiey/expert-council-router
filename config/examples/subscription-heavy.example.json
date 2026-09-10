@@ -22,5 +22,20 @@
   },
   "routing": {
     "maxExperts": 4
+  },
+  "profiles": {
+    "models": {
+      "qwen-token-plan-cn/qwen3.8-flash": {
+        "preferredReasoningByRole": {
+          "planner": "high",
+          "scout": "low",
+          "architecture-oracle": "high",
+          "implementation-worker": "high",
+          "reviewer": "medium",
+          "verifier": "low",
+          "debugger": "medium"
+        }
+      }
+    }
   }
 }

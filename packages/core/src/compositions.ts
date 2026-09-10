@@ -5,6 +5,8 @@ import type {
   CompositionDocument,
   CompositionMenuEntry,
   CompositionPools,
+  CompositionPoolEntry,
+  CompositionReasoningLevels,
   CompositionSessionBinding,
   ExpertRole,
 } from "./types.js";
@@ -50,6 +52,18 @@ function sanitizeSessionKey(value: string): string | undefined {
   return cleaned && cleaned.length <= 200 ? cleaned : undefined;
 }
 
+const reasoningLevelSchema = z
+  .string()
+  .min(1)
+  .max(40)
+  .refine((value) => !controlCharacters.test(value), "reasoningLevel must not contain control characters");
+
+/** A pool entry is either a bare `provider/id` key or an object with an optional reasoning level. */
+const compositionEntrySchema = z.union([
+  z.string().min(1).max(200),
+  z.object({ model: z.string().min(1).max(200), reasoningLevel: reasoningLevelSchema.optional() }),
+]);
+
 const compositionSchema = z.object({
   name: z.string().min(1).max(MAX_COMPOSITION_NAME_LENGTH),
   // Partial by design: an omitted or empty role routes normally. Enum-record
@@ -59,7 +73,7 @@ const compositionSchema = z.object({
       Object.fromEntries(
         (expertRoleSchema.options as readonly ExpertRole[]).map((role) => [
           role,
-          z.array(z.string().min(1).max(200)).max(100).optional(),
+          z.array(compositionEntrySchema).max(100).optional(),
         ]),
       ),
     )
@@ -105,7 +119,7 @@ export function parseCompositionDocument(input: unknown): CompositionDocument {
       continue;
     }
     seen.add(name);
-    const roles: Partial<Record<ExpertRole, string[]>> = {};
+    const roles: Partial<Record<ExpertRole, CompositionPoolEntry[]>> = {};
     for (const role of Object.keys(entry.roles ?? {})) {
       if (!EXPERT_ROLES.includes(role as ExpertRole)) {
         throw new ConfigValidationError([
@@ -113,11 +127,19 @@ export function parseCompositionDocument(input: unknown): CompositionDocument {
         ]);
       }
     }
-    for (const [role, rawKeys] of Object.entries(entry.roles ?? {})) {
-      const keys = rawKeys ?? [];
-      const cleaned = [
-        ...new Set(keys.map(sanitizeCompositionModelKey).filter((value): value is string => Boolean(value))),
-      ].slice(0, MAX_COMPOSITION_MODELS_PER_ROLE);
+    for (const [role, rawEntries] of Object.entries(entry.roles ?? {})) {
+      const entries = rawEntries ?? [];
+      const cleaned: CompositionPoolEntry[] = [];
+      const seenModels = new Set<string>();
+      for (const raw of entries) {
+        const rawModel = typeof raw === "string" ? raw : raw.model;
+        const model = sanitizeCompositionModelKey(rawModel);
+        if (!model || seenModels.has(model)) continue;
+        seenModels.add(model);
+        const reasoningLevel = typeof raw === "object" ? raw.reasoningLevel : undefined;
+        cleaned.push(reasoningLevel ? { model, reasoningLevel } : { model });
+        if (cleaned.length >= MAX_COMPOSITION_MODELS_PER_ROLE) break;
+      }
       if (cleaned.length) roles[role as ExpertRole] = cleaned;
     }
     compositions.push({ name, roles });
@@ -183,9 +205,24 @@ export function compositionPools(composition: Composition): CompositionPools {
   const pools = Object.fromEntries(EXPERT_ROLES.map((role) => [role, [] as string[]])) as CompositionPools;
   for (const role of EXPERT_ROLES) {
     const list = composition.roles[role];
-    if (list?.length) pools[role] = [...list];
+    if (list?.length) pools[role] = list.map((entry) => entry.model);
   }
   return pools;
+}
+
+/** Per-role model -> reasoning level from a composition; entries without a level are absent. */
+export function compositionReasoningLevels(composition: Composition): CompositionReasoningLevels {
+  const levels: CompositionReasoningLevels = {};
+  for (const role of EXPERT_ROLES) {
+    const list = composition.roles[role];
+    if (!list?.length) continue;
+    const byModel: Record<string, string> = {};
+    for (const entry of list) {
+      if (entry.reasoningLevel) byModel[entry.model] = entry.reasoningLevel;
+    }
+    if (Object.keys(byModel).length) levels[role] = byModel;
+  }
+  return levels;
 }
 
 /** Compact role -> model-count summary for menus and inspect output. */
@@ -206,12 +243,12 @@ export function compositionRolesSummary(composition: Composition): Record<string
 export function resolveCompositionForSession(
   document: CompositionDocument | undefined,
   sessionKey: string,
-): { name: string; pools: CompositionPools } | undefined {
+): { name: string; pools: CompositionPools; reasoningLevels: CompositionReasoningLevels } | undefined {
   const binding = document?.sessions?.[sessionKey];
   if (!binding) return undefined;
   const composition = compositionByName(document, binding.name);
   if (!composition) return undefined;
-  return { name: composition.name, pools: compositionPools(composition) };
+  return { name: composition.name, pools: compositionPools(composition), reasoningLevels: compositionReasoningLevels(composition) };
 }
 
 /** Per-role pools of the session-bound composition, or undefined when none resolves. */

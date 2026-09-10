@@ -64,6 +64,8 @@ const executionIdentifier = z.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/)
 const delegationAssignment = z.object({
   role,
   task: taskText.describe("A bounded semantic assignment"),
+  reasoningLevel: z.string().min(1).max(40)
+    .describe("Reasoning level for the expert session (e.g. low/medium/high); a composition entry that pins one for the selected model overrides this"),
   taskDescription: boundedText(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
@@ -99,6 +101,8 @@ export const MCP_INPUT_SCHEMAS = {
       .describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
     timeoutMs: z.number().int().min(1_000).max(3_600_000)
       .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
+    reasoningLevel: z.string().min(1).max(40)
+      .describe("Required reasoning level for the expert session (e.g. low/medium/high), chosen from the task and model; a composition entry that pins one for the selected model overrides this"),
     assignments: z.array(delegationAssignment).min(1).max(8).optional()
       .describe("Use for two or more independent assignments so all are dispatched before the host turn ends"),
   },
@@ -168,7 +172,7 @@ type CouncilProvider = (requestContext?: unknown) => Promise<ExpertCouncil>;
 
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
   const server = new McpServer(
-    { name: "expert-council", version: "0.7.4" },
+    { name: "expert-council", version: "0.8.0" },
     { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
   );
   // A stdio server process serves exactly one host conversation, so this

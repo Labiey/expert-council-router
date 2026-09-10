@@ -97,6 +97,7 @@ function sessionAssemblyPreference(ctx: { sessionManager?: { getBranch?: () => r
 const DelegationAssignment = Type.Object({
   role: Role,
   task: TaskText,
+  reasoningLevel: Type.String({ minLength: 1, maxLength: 40 }),
   taskDescription: Type.Optional(Type.String({
     minLength: 1,
     maxLength: 500,
@@ -275,6 +276,7 @@ export default function expertCouncilExtension(
         description: "Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch.",
       })),
       timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
+      reasoningLevel: Type.String({ minLength: 1, maxLength: 40 }),
       assignments: Type.Optional(Type.Array(DelegationAssignment, { minItems: 1, maxItems: 8 })),
     }, { additionalProperties: false }),
     prepareArguments(args) {
@@ -317,11 +319,13 @@ export default function expertCouncilExtension(
         ...(params.councilId ? { councilId: params.councilId } : {}),
         ...(params.workspace ? { workspace: params.workspace } : {}),
         ...(params.model ? { model: params.model } : {}),
+        reasoningLevel: params.reasoningLevel,
         timeoutMs: params.timeoutMs,
       }];
       const assignments = requestedAssignments.map((assignment): DelegationRequest => ({
         role: assignment.role as ExpertRole,
         task: assignment.task,
+        reasoningLevel: assignment.reasoningLevel,
         sessionKey: sessionKeyOf(ctx),
         ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
         ...(assignment.councilId ? { councilId: assignment.councilId } : {}),

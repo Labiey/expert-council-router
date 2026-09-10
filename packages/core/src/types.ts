@@ -390,6 +390,11 @@ export interface DelegationRequest {
   /** Explicit expert execution deadline in milliseconds (1_000–3_600_000). */
   timeoutMs: number;
   constraints?: RoutingConstraints;
+  /**
+   * Required reasoning level for the expert session (e.g. low/medium/high).
+   * A composition entry that pins a level for the selected model overrides it.
+   */
+  reasoningLevel?: string;
   /** Session key selecting which persisted route-policy session entry applies; defaults to "default". */
   sessionKey?: string;
   /**
@@ -616,11 +621,18 @@ export interface ResourceRoutePolicyView {
   sourcePath?: string;
 }
 
+/** One pool entry: a model key plus an optional per-entry reasoning level. */
+export interface CompositionPoolEntry {
+  model: string;
+  /** Reasoning level applied when this model is dispatched for the role; omit to require the host's explicit level. */
+  reasoningLevel?: string;
+}
+
 /** One saved council composition: a named roster mapping roles to model pools. */
 export interface Composition {
   name: string;
-  /** Only roles with at least one model key are present; a missing/empty role auto-routes. */
-  roles: Partial<Record<ExpertRole, string[]>>;
+  /** Only roles with at least one entry are present; a missing/empty role auto-routes. */
+  roles: Partial<Record<ExpertRole, CompositionPoolEntry[]>>;
 }
 
 /** Persisted session -> composition binding entry. */
@@ -641,6 +653,8 @@ export interface CompositionDocument {
 
 /** Per-role candidate pools resolved from a composition; an empty array means auto-route. */
 export type CompositionPools = Record<ExpertRole, string[]>;
+/** Per-role model -> reasoning-level mapping from a composition; entries without a level are absent. */
+export type CompositionReasoningLevels = Partial<Record<ExpertRole, Record<string, string>>>;
 
 /** One entry of the first-build composition menu: a saved composition or the auto option. */
 export interface CompositionMenuEntry {

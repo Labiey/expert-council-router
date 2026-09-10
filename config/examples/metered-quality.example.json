@@ -23,5 +23,20 @@
   "retry": {
     "maxAttempts": 3,
     "maxEscalations": 1
+  },
+  "profiles": {
+    "models": {
+      "deepseek/deepseek-v4-pro": {
+        "preferredReasoningByRole": {
+          "planner": "high",
+          "scout": "low",
+          "architecture-oracle": "high",
+          "implementation-worker": "medium",
+          "reviewer": "medium",
+          "verifier": "low",
+          "debugger": "medium"
+        }
+      }
+    }
   }
 }

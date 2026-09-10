@@ -3,7 +3,30 @@
     "providers": {}
   },
   "profiles": {
-    "models": {}
+    "models": {
+      "qwen-token-plan-cn/qwen3.8-flash": {
+        "preferredReasoningByRole": {
+          "planner": "high",
+          "scout": "low",
+          "architecture-oracle": "high",
+          "implementation-worker": "high",
+          "reviewer": "medium",
+          "verifier": "low",
+          "debugger": "medium"
+        }
+      },
+      "deepseek/deepseek-v4-pro": {
+        "preferredReasoningByRole": {
+          "planner": "high",
+          "scout": "low",
+          "architecture-oracle": "high",
+          "implementation-worker": "medium",
+          "reviewer": "medium",
+          "verifier": "low",
+          "debugger": "medium"
+        }
+      }
+    }
   },
   "routing": {
     "maxExperts": 4,

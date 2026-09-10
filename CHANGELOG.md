@@ -2,6 +2,16 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.0 - 2026-09-09
+
+### Breaking
+
+- `reasoningLevel` is now a required argument on every expert delegation (service, MCP schema, Pi package, CLI), mirroring `timeoutMs`: the Main Agent must choose it deliberately from the task and model (planning/architecture usually `high`; cheap flash executors tolerate `high` while expensive full-size executors fit `medium`; exploration and verification usually `low`).
+
+### Added
+
+- **Composition-pinned reasoning levels**: `council-compositions.json` pool entries accept either a bare `"provider/id"` string or `{ "model": "provider/id", "reasoningLevel": "high" }`. A pinned level overrides the host's argument and the model profile — the roster is the deliberate choice. Bare entries keep requiring the host's explicit level.
+
 ## 0.7.4 - 2026-09-09
 
 ### Added

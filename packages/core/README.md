@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current release (0.7.4) includes:
+The current release (0.8.0) includes:
 
 - A host-independent Core: configuration validation, model normalization, billing policy, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -100,7 +100,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -215,6 +215,45 @@ The removed tier vocabulary is still accepted and mapped deterministically so ex
 | `scarce` | `5.0` |
 
 The legacy `usagePreference` field is ignored and dropped; it no longer affects routing.
+
+### Operator config (`council-config.json`)
+
+`council-config.json` is the operator configuration file. It is optional and discovered by default in the shared data directory (the same folder as `model-assessment.json` and `route-policy.json`) — no environment variable is required. Resolution order:
+
+1. `configPath` option or `EXPERT_COUNCIL_CONFIG` environment variable — highest precedence, and the file **must** exist;
+2. `<data directory>/council-config.json` — read when present, silently skipped when absent;
+3. otherwise everything runs on built-in defaults (`workspaceProvisioning.mode = "none"`).
+
+The file accepts the full operator schema: `security`, `billing`, `profiles`, and `routing`. Typical example:
+
+```json
+{
+  "security": {
+    "workspaceProvisioning": {
+      "mode": "auto",
+      "timeoutMs": 600000,
+      "maxConcurrent": 1,
+      "scrubEnv": true,
+      "removalTimeoutMs": 300000,
+      "verifyCommand": ["npm", "run", "typecheck"]
+    },
+    "worktreeRetentionMs": 86400000
+  },
+  "routing": {
+    "maxExperts": 4
+  }
+}
+```
+
+Field notes:
+
+- `security.workspaceProvisioning.mode` — `"none"` (default, no installs), `"auto"` (lockfile-detected install per ecosystem), or `"custom"` (runs `command` verbatim).
+- `security.workspaceProvisioning.verifyCommand` — a single command as a flat argv array, run after a provisioned mutation expert finishes instead of the default typecheck-then-test pair.
+- `security.workspaceProvisioning.scrubEnv` — when `true` (default), provisioning and verification children receive an allowlisted environment only; `~/.npmrc` registry tokens can still reach the child (documented residual).
+- `security.worktreeRetentionMs` — how long provisioned worktrees are retained for review before the retention prune (default 24h).
+- `billing` / `profiles` / `routing` — the same schemas as `model-assessment.json` billing entries, model capability profiles, and role weights.
+
+**Main-Agent editing contract**: `expert_inspect` returns the file location and the effective provisioning mode under `operatorConfig`. When the user asks to change provisioning behavior, the Main Agent edits the file directly and tells the user a host session restart is required for the change to apply. A malformed JSON or invalid enum is a hard error at startup (an operator typo never silently disables a security setting).
 
 ### Worktree provisioning
 
@@ -604,7 +643,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -630,7 +669,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.4 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -641,7 +680,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all ten `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.7.4` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all ten `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.0` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 
@@ -667,7 +706,7 @@ Replace `vX.Y.Z` with the intended release. Users who deliberately track the def
 ### Behavior highlights
 
 - The bundled `.mcp.json` raises the host tool-call ceiling to 3660 seconds so a single bounded `expert_wait` can block until completion; the Skill still requires explicit per-operation deadlines rather than treating that ceiling as a default budget.
-- On the first council of a conversation the Main Agent establishes exactly one cost policy with you (economy, balanced, or speed); until then `expert_build` and `expert_delegate` responses carry reminders to ask.
+- On the first build of a conversation with neither `composition` nor `costPolicy`, `expert_build` returns a composition menu (up to three saved rosters plus an `auto` option); choosing `auto` establishes the cost policy (economy, balanced, or speed) for the session. Until a menu choice is made, `expert_build` responses keep asking.
 - Writable experts mutate inside a detached Git worktree under the trusted workspace; changes come back for Main Agent review and are never auto-merged.
 
 ### Removal

@@ -299,6 +299,7 @@ describe("retry and escalation", () => {
 
     const result = await service.delegate({
       role: "implementation-worker",
+      reasoningLevel: "medium",
       task: "Rename a local symbol",
       councilId: plan.id,
       timeoutMs: 60_000,
@@ -559,6 +560,7 @@ describe("runtime availability marking", () => {
       {
         status: "failed",
         role: "scout",
+        reasoningLevel: "medium",
         model: "p/dead",
         summary: "Provider returned 429 rate limit exceeded.",
         executionMetadata: { failureType: "provider_error" },
@@ -617,6 +619,7 @@ describe("runtime availability marking", () => {
       {
         status: "failed",
         role: "scout",
+        reasoningLevel: "medium",
         model: "p/dead",
         summary: "Provider API returned model_not_found for p/dead.",
         executionMetadata: { failureType: "provider_error" },
@@ -659,6 +662,7 @@ describe("Main-Agent abort", () => {
       {
         status: "aborted",
         role: "scout",
+        reasoningLevel: "medium",
         model: "p/dead",
         summary: "Expert execution aborted by the Main Agent. Abort reason: wrong direction.",
         filesChanged: ["notes.md"],
@@ -716,6 +720,7 @@ describe("Main-Agent abort", () => {
           executionId: request.executionId,
           status: "running" as const,
           role: "scout",
+          reasoningLevel: "medium",
           model: "p/dead",
           startedAt: new Date().toISOString(),
           elapsedMs: 25,
@@ -757,6 +762,7 @@ describe("quota-exhausted model status", () => {
       {
         status: "failed",
         role: "scout",
+        reasoningLevel: "medium",
         model: "p/dead",
         summary: "403 AccessDenied: insufficient_quota - You exceeded your current quota.",
         executionMetadata: { failureType: "provider_error" },
@@ -804,6 +810,7 @@ describe("quota-exhausted model status", () => {
       {
         status: "failed",
         role: "scout",
+        reasoningLevel: "medium",
         model: "q/one",
         summary: "Insufficient balance: the token plan for this provider is depleted.",
         executionMetadata: { failureType: "provider_error" },
@@ -1077,6 +1084,7 @@ describe("required delegation timeouts", () => {
       {
         status: "failed",
         role: "scout",
+        reasoningLevel: "medium",
         model: "p/dead",
         summary: "The required environment is absent from the isolated worktree.",
         executionMetadata: { failureType: "missing_context" },
@@ -1106,6 +1114,7 @@ describe("429 quota exhaustion classification", () => {
       {
         status: "failed",
         role: "scout",
+        reasoningLevel: "medium",
         model: "plan/one",
         summary: '429: {"message":"Your token-plan 1-week quota has been exhausted.","type":"insufficient_quota"}',
         executionMetadata: { failureType: "unknown" },
@@ -1250,6 +1259,7 @@ describe("persistent council compositions", () => {
     ]);
     const result = await compositionService(runtime, { compositions: boundDocument }).delegate({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect a tiny file",
       timeoutMs: 60_000,
       model: "cheap/two",
@@ -1262,6 +1272,7 @@ describe("persistent council compositions", () => {
     const runtime = new MockRuntime(compositionModels);
     const result = await compositionService(runtime, { compositions: boundDocument }).delegate({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect a tiny file",
       timeoutMs: 60_000,
       model: "strong/one",
@@ -1277,6 +1288,7 @@ describe("persistent council compositions", () => {
     const runtime = new MockRuntime(compositionModels);
     const result = await compositionService(runtime, { compositions: boundDocument }).delegate({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect a tiny file",
       timeoutMs: 60_000,
       model: "ghost/model",
@@ -1319,6 +1331,7 @@ describe("provider usage ledger and caps", () => {
     const runtime = new MockRuntime([model("p", "one")], [{
       status: "success",
       role: "scout",
+      reasoningLevel: "medium",
       model: "p/one",
       summary: "ok",
       executionMetadata: {
@@ -1439,6 +1452,7 @@ describe("worktree verification gate", () => {
     const gated = applyVerificationGate({
       status: "success",
       role: "implementation-worker",
+      reasoningLevel: "medium",
       model: "p/one",
       summary: "implemented the change",
       executionMetadata: {

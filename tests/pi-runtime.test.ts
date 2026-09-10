@@ -398,6 +398,7 @@ describe("Pi runtime adapter", () => {
     const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect files",
       model: "p/m",
       tools: ["read"],
@@ -437,6 +438,7 @@ describe("Pi runtime adapter", () => {
     const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect files",
       model: "p/m",
       tools: ["read"],
@@ -479,6 +481,7 @@ describe("Pi runtime adapter", () => {
     const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect files",
       model: "p/m",
       tools: ["read"],
@@ -511,6 +514,7 @@ describe("Pi runtime adapter", () => {
     expect(await runtime.listAvailableModels()).toHaveLength(1);
     const result = await runtime.executeExpert({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect files",
       model: "p/m",
       tools: ["read"],
@@ -544,6 +548,7 @@ describe("Pi runtime adapter", () => {
     const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect files",
       model: "p/m",
       tools: ["read"],
@@ -595,6 +600,7 @@ describe("zombie-session abort regression", () => {
     const pending = runtime.executeExpert({
       executionId: "exec_zombie",
       role: "scout",
+      reasoningLevel: "medium",
       task: "Inspect a tiny file",
       model: "p/m",
       tools: ["read"],
