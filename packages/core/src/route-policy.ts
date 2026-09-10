@@ -1,3 +1,10 @@
+/**
+ * Route-policy support: the Zod schema and sanitization for persisted
+ * route-policy documents, default token/concurrency limits for unlisted
+ * providers, document pruning, and per-session effective policy resolution
+ * (system entry merged with the session entry, deny always winning).
+ */
+
 import { z } from "zod";
 import { ConfigValidationError } from "./config.js";
 import type { ProviderLimits, ProviderLimitsDocument, ProviderLimitsEntry, RoutePolicy, RoutePolicyDocument, RoutePolicyEntry } from "./types.js";

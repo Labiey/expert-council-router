@@ -622,6 +622,10 @@ describe("billing cost multipliers", () => {
 });
 
 describe("route policy provider limits", () => {
+  it("exports the documented default daily token cap", () => {
+    expect(DEFAULT_DAILY_TOKEN_CAP).toBe(20_000_000);
+  });
+
   it("round-trips a providers section through sanitize and prune", () => {
     const document = parseRoutePolicyDocument({
       version: 1,
