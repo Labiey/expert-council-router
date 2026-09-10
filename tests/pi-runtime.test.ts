@@ -354,6 +354,89 @@ describe("Pi runtime adapter", () => {
     expect(detached.security.expertLifetime).toBe("detached");
   });
 
+  it("returns an evidence-bearing failed result when an expert times out", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({
+        session: {
+          prompt: () => new Promise(() => {}),
+          waitForIdle: async () => {},
+          dispose: () => {},
+          abort: async () => {},
+          state: { messages: [] },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const result = await runtime.executeExpert({
+      role: "implementation-worker", task: "hang", model: "p/m", tools: ["read"], skills: [],
+      reasoningLevel: "low", readOnly: false, workspace: process.cwd(), timeoutMs: 1_500, attempt: 1,
+    });
+    expect(result.status).toBe("failed");
+    expect(result.executionMetadata?.failureType).toBe("timeout");
+    expect(result.summary).toContain("timed out");
+    expect(result.filesChanged === undefined || Array.isArray(result.filesChanged)).toBe(true);
+  });
+
+  it("returns an evidence-bearing failed result when the expert session throws", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({
+        session: {
+          prompt: async () => { throw new Error("boom"); },
+          waitForIdle: async () => {},
+          dispose: () => {},
+          state: { messages: [] },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const result = await runtime.executeExpert({
+      role: "implementation-worker", task: "throw", model: "p/m", tools: ["read"], skills: [],
+      reasoningLevel: "low", readOnly: false, workspace: process.cwd(), timeoutMs: 5_000, attempt: 1,
+    });
+    expect(result.status).toBe("failed");
+    expect(result.summary).toContain("boom");
+  });
+
+  it("runs a bounded verification command and reports the real exit code", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({ session: { prompt: async () => {}, waitForIdle: async () => {}, dispose: () => {}, state: { messages: [] } } }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const ok = await runtime.verifyCommand!({ workspace: process.cwd(), command: [process.execPath, "-e", "process.exit(3)"] });
+    expect(ok.exitCode).toBe(3);
+    expect(typeof ok.durationMs).toBe("number");
+    const tooMany = await runtime.verifyCommand!({ workspace: process.cwd(), command: Array.from({ length: 13 }, () => "x") });
+    expect(tooMany.exitCode).toBeNull();
+    expect(tooMany.message).toMatch(/1 to 12/);
+    const outside = await runtime.verifyCommand!({ workspace: path.parse(process.cwd()).root, command: [process.execPath, "-e", "process.exit(0)"] });
+    expect(outside.exitCode).toBeNull();
+    expect(outside.message).toMatch(/Workspace rejected|outside|allowed/i);
+  });
+
   it("loads no extensions and exposes only user or explicitly allowlisted project Skills", async () => {
     let loaderOptions: Record<string, unknown> | undefined;
     let settingsOptions: { projectTrusted?: boolean } | undefined;

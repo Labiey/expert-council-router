@@ -1545,3 +1545,111 @@ describe("worktree verification gate", () => {
     expect(runtime.requests[1]?.priorFailure?.summary).toContain("Diagnose that cause, change the approach");
   });
 });
+
+describe("resetAvailability", () => {
+  const seed = (): ModelAssessmentSnapshot => ({
+    asOf: "2026-09-01T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: { "p/a": { coding: 8 }, "p/b": { coding: 8 }, "q/c": { coding: 8 } },
+    modelAvailability: {
+      "p/a": { callable: false, kind: "unavailable", observedAt: "2026-09-01T00:00:00.000Z", reason: "gone", source: "runtime-failure" },
+      "p/b": { callable: false, kind: "quota-exhausted", observedAt: "2026-09-01T00:00:00.000Z", reason: "out", source: "runtime-failure" },
+      "q/c": { callable: false, kind: "unavailable", observedAt: "2026-09-01T00:00:00.000Z", reason: "gone", source: "runtime-failure" },
+    },
+    modelStatus: {
+      "p/a": { state: "unavailable", observedAt: "2026-09-01T00:00:00.000Z" },
+      "p/b": { state: "quota-exhausted", observedAt: "2026-09-01T00:00:00.000Z" },
+      "q/c": { state: "unavailable", observedAt: "2026-09-01T00:00:00.000Z" },
+    },
+  });
+  const build = () => {
+    let persisted = seed();
+    const runtime = new MockRuntime([model("p", "a"), model("p", "b"), model("q", "c")]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: { version: 1, plans: [], executions: [], results: [], modelAssessment: seed() },
+      persistence: {
+        save: async () => {},
+        updateModelAssessment: async (mutate) => {
+          const next = mutate(persisted);
+          if (next) persisted = next;
+        },
+      },
+    });
+    return { service, getPersisted: () => persisted };
+  };
+  it("clears an exact provider/id scope", async () => {
+    const { service } = build();
+    expect((await service.resetAvailability({ scope: "p/a" })).cleared).toEqual(["p/a"]);
+  });
+  it("clears a bare provider scope across its models", async () => {
+    const { service } = build();
+    expect((await service.resetAvailability({ scope: "p" })).cleared).toEqual(["p/a", "p/b"]);
+  });
+  it("clears every marker for '*' and persists the removal", async () => {
+    const { service, getPersisted } = build();
+    expect((await service.resetAvailability({ scope: "*" })).cleared).toEqual(["p/a", "p/b", "q/c"]);
+    expect(getPersisted().modelAvailability).toBeUndefined();
+    expect(getPersisted().modelStatus).toBeUndefined();
+    expect((await service.getStatus()).modelAssessment?.modelAvailability).toBeUndefined();
+  });
+});
+
+describe("status views", () => {
+  it("full view keeps the legacy payload while summary and running are bounded", async () => {
+    const runtime = new MockRuntime([model("p", "one")], [{ status: "success", role: "scout", model: "p/one", summary: "ok" }]);
+    const service = new ExpertCouncilService(runtime, {});
+    await service.delegate({ role: "scout", task: "x", timeoutMs: 60_000, reasoningLevel: "low" });
+    const full = await service.getStatus();
+    expect(Array.isArray(full.executions)).toBe(true);
+    const summary = await service.getStatus({ view: "summary" });
+    expect(summary.recentCompleted.some((e) => e.status === "success" && e.model === "p/one")).toBe(true);
+    const running = await service.getStatus({ view: "running" });
+    expect(running.running).toEqual([]);
+  });
+  it("reports elapsedMs and remainingMs for a running execution", async () => {
+    const blocked = new Promise<never>(() => {});
+    const runtime = new MockRuntime([model("p", "one")], [blocked]);
+    const service = new ExpertCouncilService(runtime, {});
+    const handle = service.startDelegation({ role: "scout", task: "x", timeoutMs: 60_000, reasoningLevel: "low" });
+    for (let i = 0; i < 200 && runtime.requests.length === 0; i += 1) await new Promise((r) => setTimeout(r, 5));
+    const entry = (await service.getStatus({ view: "summary" })).running.find((e) => e.id === handle.executionId);
+    expect(entry?.remainingMs).toBeTypeOf("number");
+    expect(entry?.elapsedMs).toBeTypeOf("number");
+    await service.abortExecution({ executionId: handle.executionId, reason: "cleanup" });
+    handle.result.catch(() => {});
+  });
+  it("concurrency exclusion reason reports remaining slots", async () => {
+    const blocked = new Promise<never>(() => {});
+    const runtime = new MockRuntime([model("busy", "one"), model("free", "one")], [
+      blocked,
+      { status: "success", role: "scout", model: "free/one", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      usageLedger: { load: async () => instantiateLedger(), record: async (p, t, n) => applyUsage(instantiateLedger(), p, t, n) },
+      readProviderLimits: async () => ({ providers: { busy: { maxConcurrency: 1 }, free: { maxConcurrency: 1 } } }),
+    });
+    const first = service.startDelegation({ role: "scout", task: "x", timeoutMs: 60_000, reasoningLevel: "low" });
+    for (let i = 0; i < 200 && runtime.requests.length === 0; i += 1) await new Promise((r) => setTimeout(r, 5));
+    const second = await service.delegate({ role: "scout", task: "y", timeoutMs: 60_000, reasoningLevel: "low" });
+    expect(second.risks?.join(" ")).toContain("remaining=0");
+    await service.abortExecution({ executionId: first.executionId, reason: "cleanup" });
+    first.result.catch(() => {});
+  });
+});
+
+describe("routing-drift note", () => {
+  it("stays silent when the inventory changed but the same model is still selected", async () => {
+    const models = [model("cheap", "one")];
+    const runtime = new MockRuntime(models);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const plan = await service.buildCouncil({ task: "Rename a local symbol" });
+    expect(plan.experts.find((e) => e.role === "implementation-worker")?.model).toBe("cheap/one");
+    // Add a weaker model: the fingerprint changes but cheap/one remains the selection.
+    models.push(model("weak", "three"));
+    const result = await service.delegate({
+      role: "implementation-worker", reasoningLevel: "medium", task: "Rename a local symbol", councilId: plan.id, timeoutMs: 60_000,
+    });
+    expect(result.model).toBe("cheap/one");
+    expect((result.risks ?? []).join(" ")).not.toContain("routing refreshed");
+  });
+});

@@ -1120,8 +1120,8 @@ export class ExpertCouncilService implements ExpertCouncil {
       );
       return {
         ...assessment,
-        ...(Object.keys(nextAvailability).length ? { modelAvailability: nextAvailability } : {}),
-        ...(Object.keys(nextStatus).length ? { modelStatus: nextStatus } : {}),
+        modelAvailability: Object.keys(nextAvailability).length ? nextAvailability : undefined,
+        modelStatus: Object.keys(nextStatus).length ? nextStatus : undefined,
       };
     };
     if (this.modelAssessment) {
