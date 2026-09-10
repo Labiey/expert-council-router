@@ -541,6 +541,47 @@ export class WorkspaceBoundary {
     return resolved;
   }
 
+  /**
+   * Resolve and containment-check a workspace path for read-only use — the
+   * same validation the read-only branch of prepare() applies. Throws when the
+   * path is outside the configured allowed roots.
+   */
+  async resolveReadOnlyWorkspace(candidate: string): Promise<string> {
+    return this.assertAllowed(candidate);
+  }
+
+  /**
+   * Resolve a retained worktree root by execution id — the same per-execution
+   * matching (git worktree list + execution-id suffix inside the private worktree
+   * base) that cleanupExecution uses. Returns undefined when no retained
+   * worktree exists; never throws.
+   */
+  async retainedWorktree(executionId: string): Promise<string | undefined> {
+    try {
+      validateExecutionId(executionId);
+      if (this.config.workspaceStrategy === "read-only" || this.config.workspaceStrategy === "bounded-in-place") {
+        return undefined;
+      }
+      const gitRoot = await this.defaultGitRoot(this.defaultWorkspace);
+      const base = await this.secureWorktreeBase();
+      for (const listed of await this.listedWorktrees(gitRoot)) {
+        try {
+          const resolved = await canonical(listed);
+          if (resolved !== base && isWithin(base, resolved) && worktreeMatchesExecutionId(resolved, executionId)) {
+            assertOwnedAndPrivate(await stat(resolved), `Worktree ${resolved}`);
+            return resolved;
+          }
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        }
+      }
+    } catch {
+      // Best-effort resolution: an unreadable repository or worktree base means
+      // there is no usable retained worktree for this execution.
+    }
+    return undefined;
+  }
+
   /** Find a worktree created for this execution id so a retry can reuse its provisioned state. */
   private async findReusableWorktree(gitRoot: string, worktreeBase: string, executionId: string): Promise<string | undefined> {
     for (const listed of await this.listedWorktrees(gitRoot)) {

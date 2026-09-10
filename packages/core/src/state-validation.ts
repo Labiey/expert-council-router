@@ -99,6 +99,13 @@ const testResult = z.object({
   command: boundedText(1_000).optional(),
   status: z.enum(["passed", "failed", "not-run"]),
   summary: boundedText(2_000).optional(),
+  exitCode: z.number().int().min(0).max(255).optional(),
+  testsRun: z.number().int().min(0).max(1_000_000).optional(),
+  failedCount: z.number().int().min(0).max(1_000_000).optional(),
+  errorCount: z.number().int().min(0).max(1_000_000).optional(),
+  skippedCount: z.number().int().min(0).max(1_000_000).optional(),
+  durationMs: z.number().finite().min(0).optional(),
+  outputTail: boundedText(2_000).optional(),
 }).strict();
 
 const usage = z.record(
@@ -126,7 +133,7 @@ const expertResult = z.object({
     workspace: boundedText(32_768).optional(),
     isolated: z.boolean().optional(),
     escalationCount: z.number().int().min(0).max(100).optional(),
-    unavailableModels: z.array(identifier).max(8).optional(),
+    unavailableModels: z.array(identifier).max(64).optional(),
     provisioning: z.object({
       status: z.enum(["ready", "skipped", "failed"]),
       packageManager: identifier.optional(),
@@ -138,6 +145,8 @@ const expertResult = z.object({
       command: boundedText(1_000).optional(),
       status: z.enum(["passed", "failed", "not-run"]),
       summary: boundedText(2_000).optional(),
+      exitCode: z.number().int().min(0).max(255).optional(),
+      outputTail: boundedText(2_000).optional(),
     }).strict()).max(20).optional(),
   })
     // Forward compatibility: executionMetadata is the fast-moving extension

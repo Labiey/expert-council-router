@@ -6,6 +6,7 @@ export * from "./failures.js";
 export * from "./normalization.js";
 export * from "./model-assessment.js";
 export * from "./presentation.js";
+export * from "./result-clamp.js";
 export * from "./roles.js";
 export * from "./route-policy.js";
 export * from "./routing.js";

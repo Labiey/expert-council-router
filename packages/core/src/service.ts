@@ -29,6 +29,7 @@ import {
 } from "./model-assessment.js";
 import { listRoles } from "./roles.js";
 import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy, resolveProviderLimits, DEFAULT_PROVIDER_LIMITS } from "./route-policy.js";
+import { clampExpertResult } from "./result-clamp.js";
 import { effectiveCostMultiplier, rankModels, resolveBillingEntry, routePolicyExcludes } from "./routing.js";
 import { MemoryTelemetryStore } from "./telemetry.js";
 import { detectBreach, instantiateLedger, providerUsage } from "./usage-caps.js";
@@ -39,6 +40,15 @@ import type {
   CouncilStateOptions,
   CouncilStateSnapshot,
   CouncilStatus,
+  CouncilStatusSummary,
+  CouncilStatusView,
+  CouncilStatusViewResult,
+  ProviderSlotView,
+  ResetAvailabilityRequest,
+  ResetAvailabilityResult,
+  RunningExecutionView,
+  VerifyCommandRequest,
+  VerifyCommandResult,
   CompositionDocument,
   CompositionPools,
   DelegationHandle,
@@ -218,7 +228,7 @@ export class ExpertCouncilService implements ExpertCouncil {
         ...execution,
         ...(execution.attemptHistory ? { attemptHistory: execution.attemptHistory.map((attempt) => ({ ...attempt })) } : {}),
       })),
-      results: [...this.results.entries()].map(([executionId, result]) => ({ executionId, result })),
+      results: [...this.results.entries()].map(([executionId, result]) => ({ executionId, result: clampExpertResult(result) })),
       ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
     };
   }
@@ -547,9 +557,6 @@ export class ExpertCouncilService implements ExpertCouncil {
     if (request.councilId && !plan) {
       planWarnings.push(`Council plan ${request.councilId} is unavailable; routing used the current inventory.`);
     }
-    if (plan?.inventoryFingerprint && plan.inventoryFingerprint !== modelInventoryFingerprint(models)) {
-      planWarnings.push(`Council plan ${plan.id} was built against a different model inventory; routing was refreshed.`);
-    }
     const planned = plan?.experts.find((expert) => expert.role === request.role);
     noteProviderExclusions(initialExclusions);
     const routingConstraints = constraintsWithAssessment(
@@ -654,6 +661,9 @@ export class ExpertCouncilService implements ExpertCouncil {
       }
       state.attempts += 1;
       state.model = current.model;
+      // Record the budget in effect for this attempt (already ×1.5-scaled by a
+      // previous timeout) so status views can report the remaining time.
+      state.timeoutMs = currentTimeoutMs;
       const attemptSnapshot: ExecutionAttemptSnapshot = {
         attempt: state.attempts,
         model: current.model,
@@ -816,6 +826,17 @@ export class ExpertCouncilService implements ExpertCouncil {
       model: current.model,
       summary: "Execution ended without a runtime result.",
     };
+    // Plan-drift note: report a routing change only when the delegation really
+    // selected a different model than the plan; an equal selection is silence.
+    if (
+      plan?.inventoryFingerprint &&
+      plan.inventoryFingerprint !== modelInventoryFingerprint(models) &&
+      planned &&
+      result.model !== "unassigned" &&
+      result.model !== planned.model
+    ) {
+      planWarnings.push(`Council plan ${plan.id} routing refreshed: ${planned.model} → ${result.model}.`);
+    }
     result.executionMetadata = {
       ...result.executionMetadata,
       executionId: id,
@@ -976,7 +997,8 @@ export class ExpertCouncilService implements ExpertCouncil {
       if (effective.maxConcurrency > 0) {
         const inFlight = running.get(provider) ?? 0;
         if (inFlight >= effective.maxConcurrency) {
-          exclusions[provider] = `provider ${provider} concurrency limit reached (${inFlight}/${effective.maxConcurrency} running)`;
+          const remaining = Math.max(0, effective.maxConcurrency - inFlight);
+          exclusions[provider] = `provider ${provider} concurrency limit reached (inFlight=${inFlight}/${effective.maxConcurrency}, remaining=${remaining})`;
         }
       }
     }
@@ -1069,6 +1091,47 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
     void this.persistState().catch(() => undefined);
     return { kind, markedKeys };
+  }
+
+  /**
+   * Clear runtime availability markers and status entries by scope: "*" clears
+   * every key, a bare provider name clears keys equal to it or prefixed by
+   * `provider/`, and an exact `provider/id` key clears just that model. The
+   * in-memory assessment and the persisted shared assessment are updated
+   * together so routing stops excluding the cleared models immediately.
+   */
+  async resetAvailability(request: ResetAvailabilityRequest): Promise<ResetAvailabilityResult> {
+    const scope = request.scope;
+    const matches = (key: string): boolean => {
+      if (scope === "*") return true;
+      if (scope.includes("/")) return key === scope;
+      return key === scope || key.startsWith(`${scope}/`);
+    };
+    const availability = this.modelAssessment?.modelAvailability ?? {};
+    const status = this.modelAssessment?.modelStatus ?? {};
+    const cleared = [...new Set([...Object.keys(availability), ...Object.keys(status)].filter(matches))].sort();
+    if (!cleared.length) return { cleared };
+    const strip = (assessment: ModelAssessmentSnapshot): ModelAssessmentSnapshot => {
+      const nextAvailability = Object.fromEntries(
+        Object.entries(assessment.modelAvailability ?? {}).filter(([key]) => !matches(key)),
+      );
+      const nextStatus = Object.fromEntries(
+        Object.entries(assessment.modelStatus ?? {}).filter(([key]) => !matches(key)),
+      );
+      return {
+        ...assessment,
+        ...(Object.keys(nextAvailability).length ? { modelAvailability: nextAvailability } : {}),
+        ...(Object.keys(nextStatus).length ? { modelStatus: nextStatus } : {}),
+      };
+    };
+    if (this.modelAssessment) {
+      this.modelAssessment = strip(this.modelAssessment);
+    }
+    if (this.stateOptions.persistence?.updateModelAssessment) {
+      await this.stateOptions.persistence.updateModelAssessment((current) => (current ? strip(current) : undefined));
+    }
+    void this.persistState().catch(() => undefined);
+    return { cleared };
   }
 
   private async refreshSharedAssessment(): Promise<void> {
@@ -1172,6 +1235,17 @@ export class ExpertCouncilService implements ExpertCouncil {
       return await this.runtime.inspectExecution(executionId).catch(() => undefined);
     }
     return undefined;
+  }
+
+  /**
+   * Bounded verification command passthrough to the runtime. Always resolves:
+   * an unsupported runtime is a structured message, never a thrown error.
+   */
+  async verifyCommand(request: VerifyCommandRequest): Promise<VerifyCommandResult> {
+    if (!this.runtime.verifyCommand) {
+      return { exitCode: null, message: "The runtime does not support command verification.", durationMs: 0 };
+    }
+    return await this.runtime.verifyCommand(request);
   }
 
   async getResult(executionId: string): Promise<ExpertResultLookup> {
@@ -1316,7 +1390,71 @@ export class ExpertCouncilService implements ExpertCouncil {
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
   }
 
-  async getStatus(): Promise<CouncilStatus> {
+  /** Bounded running-execution views shared by the summary and running status views. */
+  private runningExecutionViews(): RunningExecutionView[] {
+    const now = Date.now();
+    return [...this.executions.values()]
+      .filter((execution) => execution.status === "running")
+      .map((execution) => {
+        const elapsedMs = Math.max(0, now - Date.parse(execution.startedAt));
+        return {
+          id: execution.id,
+          role: execution.role,
+          status: "running" as const,
+          ...(execution.model ? { model: execution.model } : {}),
+          elapsedMs,
+          ...(typeof execution.timeoutMs === "number" ? { remainingMs: Math.max(0, execution.timeoutMs - elapsedMs) } : {}),
+        };
+      });
+  }
+
+  /**
+   * Live provider concurrency slots for the summary view, from the same limits
+   * document and running-count data computeProviderExclusions uses. Empty when
+   * per-provider caps are unwired (no readProviderLimits/usageLedger), which
+   * is documented here rather than synthesized from default limits.
+   */
+  private async providerSlotViews(): Promise<ProviderSlotView[]> {
+    const limitsDocument = await this.readProviderLimitsDocument();
+    const providers = Object.keys(limitsDocument?.providers ?? {});
+    if (!providers.length) return [];
+    const limits = resolveProviderLimits(limitsDocument);
+    const running = this.runningByProvider();
+    return providers.sort().map((provider) => {
+      const effective = limits[provider] ?? DEFAULT_PROVIDER_LIMITS;
+      const inFlight = running.get(provider) ?? 0;
+      return {
+        provider,
+        inFlight,
+        maxConcurrency: effective.maxConcurrency,
+        remaining: Math.max(0, effective.maxConcurrency - inFlight),
+      };
+    });
+  }
+
+  async getStatus<V extends CouncilStatusView = "full">(options?: { view?: V }): Promise<CouncilStatusViewResult<V>> {
+    const view = options?.view ?? "full";
+    if (view === "running") {
+      return { running: this.runningExecutionViews() } as CouncilStatusViewResult<V>;
+    }
+    if (view === "summary") {
+      const recentCompleted = [...this.executions.values()]
+        .filter((execution) => execution.finishedAt)
+        .sort((a, b) => Date.parse(b.finishedAt!) - Date.parse(a.finishedAt!))
+        .slice(0, 20)
+        .map((execution) => ({
+          id: execution.id,
+          role: execution.role,
+          status: execution.status,
+          ...(execution.model ? { model: execution.model } : {}),
+          ...(execution.finishedAt ? { finishedAt: execution.finishedAt } : {}),
+        }));
+      return {
+        running: this.runningExecutionViews(),
+        recentCompleted,
+        providerSlots: await this.providerSlotViews(),
+      } as CouncilStatusViewResult<V>;
+    }
     return {
       plans: [...this.plans.values()].map((plan) => ({
         id: plan.id,
@@ -1330,7 +1468,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       })),
       telemetry: await this.telemetry.aggregate(),
       ...(this.modelAssessment ? { modelAssessment: this.modelAssessment } : {}),
-    };
+    } as CouncilStatusViewResult<V>;
   }
 
   async recordOutcome(outcome: ExpertOutcome): Promise<void> {

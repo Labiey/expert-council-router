@@ -17,6 +17,8 @@ import {
   type RuntimeBillingDiscovery,
   type RuntimeCapabilities,
   type SkillInfo,
+  type VerifyCommandRequest,
+  type VerifyCommandResult,
   type WorkspaceProvisioningConfig,
 } from "@expert-council/core";
 import {
@@ -236,10 +238,27 @@ function normalizeResult(
         const item = test as Record<string, unknown>;
         if (item.status !== "passed" && item.status !== "failed" && item.status !== "not-run") return [];
         const testStatus = item.status as "passed" | "failed" | "not-run";
+        const boundedInt = (value: unknown, maximum: number): number | undefined =>
+          typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= maximum ? value : undefined;
+        const exitCode = boundedInt(item.exitCode, 255);
+        const testsRun = boundedInt(item.testsRun, 1_000_000);
+        const failedCount = boundedInt(item.failedCount, 1_000_000);
+        const errorCount = boundedInt(item.errorCount, 1_000_000);
+        const skippedCount = boundedInt(item.skippedCount, 1_000_000);
+        const durationMs = typeof item.durationMs === "number" && Number.isFinite(item.durationMs) && item.durationMs >= 0
+          ? item.durationMs
+          : undefined;
         return [{
           ...(safeText(item.command, 1_000) ? { command: safeText(item.command, 1_000) } : {}),
           status: testStatus,
           ...(safeText(item.summary, 2_000) ? { summary: safeText(item.summary, 2_000) } : {}),
+          ...(exitCode !== undefined ? { exitCode } : {}),
+          ...(testsRun !== undefined ? { testsRun } : {}),
+          ...(failedCount !== undefined ? { failedCount } : {}),
+          ...(errorCount !== undefined ? { errorCount } : {}),
+          ...(skippedCount !== undefined ? { skippedCount } : {}),
+          ...(durationMs !== undefined ? { durationMs } : {}),
+          ...(safeText(item.outputTail, 2_000) ? { outputTail: safeText(item.outputTail, 2_000) } : {}),
         }];
       })
     : undefined;
@@ -291,6 +310,8 @@ export interface VerificationEntry {
   command?: string;
   status: "passed" | "failed" | "not-run";
   summary?: string;
+  exitCode?: number;
+  outputTail?: string;
 }
 
 export interface VerificationStep {
@@ -327,6 +348,8 @@ async function runVerification(
       command: step.label.slice(0, 1_000),
       status: passed ? "passed" : "failed",
       summary: summary.slice(0, 2_000),
+      exitCode: outcome.exitCode,
+      outputTail: tailCommandOutput(`${outcome.stdout}\n${outcome.stderr}`, 1_500),
     });
   }
   return entries;
@@ -368,7 +391,7 @@ function executionPrompt(
   roleInstructions: string,
   provisioning?: WorkspaceProvisioningStatus,
 ): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
 }
 
 /** Structured stop report submitted by the expert through `report_and_stop`. */
@@ -698,6 +721,12 @@ export class PiExpertRuntime implements ExpertRuntime {
         if (entry.abortRequested && !entry.timedOut) {
           return await this.buildAbortedResult(entry, request, started);
         }
+        // A genuine timeout keeps the session's evidence instead of degrading
+        // into a bare thrown error: changed files and the last assistant text
+        // are attached to a structured failed result (never retried as a crash).
+        if (error instanceof ExecutionTimeoutError && entry.timedOut && !entry.abortRequested) {
+          return await this.buildTimedOutResult(entry, request, started, timeoutMs);
+        }
         throw error;
       } finally {
         if (timer) clearTimeout(timer);
@@ -715,11 +744,13 @@ export class PiExpertRuntime implements ExpertRuntime {
       const sessionError = finalSessionError(session);
       if (sessionError) {
         const usage = sessionUsage(session);
+        const evidence = await this.collectFailureEvidence(session, workspace);
         return {
           status: "failed",
           role: request.role,
           model: request.model,
-          summary: safeText(sessionError, 4_000) ?? "Expert session failed.",
+          summary: safeText(`[Failure] ${sessionError}\n\n${evidence.lastText ?? ""}`.trim(), 4_000) ?? "Expert session failed.",
+          ...(evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {}),
           ...(workspace.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {}),
           executionMetadata: {
             attempts: request.attempt,
@@ -753,11 +784,17 @@ export class PiExpertRuntime implements ExpertRuntime {
       result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
       return result;
     } catch (error) {
+      const evidence = await this.collectFailureEvidence(session, workspace);
+      const baseSummary = safeText(error instanceof Error ? error.message : String(error), 4_000) ?? "Expert execution failed.";
+      const summary = evidence.lastText
+        ? safeText(`${baseSummary}\n\n${evidence.lastText}`.trim(), 4_000) ?? baseSummary
+        : baseSummary;
       return {
         status: "failed",
         role: request.role,
         model: request.model,
-        summary: safeText(error instanceof Error ? error.message : String(error), 4_000) ?? "Expert execution failed.",
+        summary,
+        ...(evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {}),
         ...(workspace?.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {}),
         executionMetadata: {
           attempts: request.attempt,
@@ -835,6 +872,61 @@ export class PiExpertRuntime implements ExpertRuntime {
       workspace: entry.workspace.root,
       isolated: entry.workspace.isolated,
       ...(filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}),
+    };
+  }
+
+  /**
+   * Preserve failure evidence from a dead session: changed files from the
+   * prepared workspace (undefined for read-only/no-worktree runs or when the
+   * diff fails) and the last assistant text. Best-effort at every step.
+   */
+  private async collectFailureEvidence(
+    session?: PiSessionLike,
+    workspace?: PreparedWorkspace,
+  ): Promise<{ filesChanged?: string[]; lastText?: string }> {
+    let filesChanged: string[] | undefined;
+    if (workspace) {
+      try {
+        filesChanged = (await this.boundary.changedFiles(workspace)).slice(0, 1_000);
+      } catch {
+        filesChanged = undefined;
+      }
+    }
+    const lastText = session ? finalAssistantText(session) : "";
+    return {
+      ...(filesChanged?.length ? { filesChanged } : {}),
+      ...(lastText ? { lastText } : {}),
+    };
+  }
+
+  /** Build the evidence-preserving failed result for a timed-out expert execution. */
+  private async buildTimedOutResult(
+    entry: ActiveExpertSession,
+    request: ExpertExecutionRequest,
+    started: number,
+    timeoutMs: number,
+  ): Promise<ExpertResult> {
+    const evidence = await this.collectFailureEvidence(entry.session, entry.workspace);
+    const usage = sessionUsage(entry.session);
+    const summary = safeText(
+      `[Failure] Expert execution timed out after ${timeoutMs}ms.${evidence.lastText ? `\n\n${evidence.lastText}` : ""}`.trim(),
+      4_000,
+    ) ?? `[Failure] Expert execution timed out after ${timeoutMs}ms.`;
+    return {
+      status: "failed",
+      role: request.role,
+      model: request.model,
+      summary,
+      ...(evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {}),
+      executionMetadata: {
+        attempts: request.attempt,
+        failureType: "timeout",
+        workspace: entry.workspace.root,
+        isolated: entry.workspace.isolated,
+        provisioning: entry.workspace.provisioning,
+        durationMs: Date.now() - started,
+        ...(usage ? { usage } : {}),
+      },
     };
   }
 
@@ -916,5 +1008,55 @@ export class PiExpertRuntime implements ExpertRuntime {
 
   async cleanupExecution(executionId: string) {
     return this.boundary.cleanupExecution(executionId);
+  }
+
+  /**
+   * Run one bounded verification command on behalf of the Main Agent: inside a
+   * retained worktree (resolved by executionId) or a containment-validated
+   * workspace path. No string shell: the first argv item is executed directly
+   * through the same execFile-based bounded runner the provisioning path uses,
+   * with the scrubbed provisioning environment and a clamped timeout.
+   */
+  async verifyCommand(request: VerifyCommandRequest): Promise<VerifyCommandResult> {
+    const started = Date.now();
+    const rejected = (message: string): VerifyCommandResult => ({ exitCode: null, durationMs: Date.now() - started, message });
+    const command = request.command;
+    if (!Array.isArray(command) || command.length < 1 || command.length > 12) {
+      return rejected("verifyCommand requires a command array of 1 to 12 items.");
+    }
+    if (command.some((item) => typeof item !== "string" || item.length < 1 || item.length > 500 || item.includes("\0"))) {
+      return rejected("Each verifyCommand item must be a non-empty string of at most 500 characters without NUL.");
+    }
+    let directory: string | undefined;
+    if (request.executionId !== undefined) {
+      directory = await this.boundary.retainedWorktree(request.executionId);
+    }
+    if (!directory && request.workspace !== undefined) {
+      try {
+        directory = await this.boundary.resolveReadOnlyWorkspace(request.workspace);
+      } catch (error) {
+        return rejected(`Workspace rejected: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (!directory) {
+      return rejected(
+        request.executionId !== undefined
+          ? `No retained worktree was found for execution ${request.executionId} and no workspace was supplied.`
+          : "verifyCommand requires an executionId with a retained worktree or a workspace inside the allowed roots.",
+      );
+    }
+    const timeoutMs = Math.min(Math.max(Math.round(request.timeoutMs ?? 120_000), 1_000), 600_000);
+    const outcome = await runBoundedCommand([...command], {
+      cwd: directory,
+      timeoutMs,
+      env: scrubProvisioningEnv(process.env),
+    });
+    return {
+      exitCode: outcome.timedOut ? null : outcome.exitCode,
+      outputTail: tailCommandOutput(`${outcome.stdout}\n${outcome.stderr}`, 2_000),
+      durationMs: Date.now() - started,
+      ...(outcome.timedOut ? { message: `Command was killed after ${timeoutMs}ms.` } : {}),
+      ...(!outcome.timedOut && outcome.error ? { message: outcome.error.slice(0, 500) } : {}),
+    };
   }
 }

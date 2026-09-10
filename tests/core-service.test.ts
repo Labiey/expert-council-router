@@ -305,7 +305,7 @@ describe("retry and escalation", () => {
       timeoutMs: 60_000,
     });
     expect(result.model).toBe("quality/two");
-    expect(result.risks?.join(" ")).toContain("different model inventory");
+    expect(result.risks?.join(" ")).toContain("routing refreshed");
     expect(result.risks?.join(" ")).toContain("no longer eligible");
   });
 

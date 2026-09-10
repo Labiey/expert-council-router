@@ -121,6 +121,20 @@ export interface TestResult {
   command?: string;
   status: "passed" | "failed" | "not-run";
   summary?: string;
+  /** Exit code of the test command when it ran (integer 0–255). */
+  exitCode?: number;
+  /** Total tests executed, when the runner reports it (integer 0–1_000_000). */
+  testsRun?: number;
+  /** Failing tests, when the runner reports it (integer 0–1_000_000). */
+  failedCount?: number;
+  /** Errored tests, when the runner reports it (integer 0–1_000_000). */
+  errorCount?: number;
+  /** Skipped tests, when the runner reports it (integer 0–1_000_000). */
+  skippedCount?: number;
+  /** Wall-clock duration of the test command in milliseconds (finite, ≥ 0). */
+  durationMs?: number;
+  /** Last lines of the real test output, bounded to 2000 characters. */
+  outputTail?: string;
 }
 
 export interface ExpertResult {
@@ -155,12 +169,22 @@ export interface ExpertResult {
       detail?: string;
     };
     /** Runtime verification gate entries (typecheck/test), populated only for provisioned mutation worktrees. */
-    verification?: Array<{ command?: string; status: "passed" | "failed" | "not-run"; summary?: string }>;
+    verification?: Array<{
+      command?: string;
+      status: "passed" | "failed" | "not-run";
+      summary?: string;
+      /** Exit code of the verification command when it ran (integer 0–255). */
+      exitCode?: number;
+      /** Last lines of the real verification output, bounded to 2000 characters. */
+      outputTail?: string;
+    }>;
   };
 }
 
 export interface ExpertRuntime {
   listAvailableModels(): Promise<AvailableModel[]>;
+  /** Run a bounded verification command inside a retained worktree or validated workspace. */
+  verifyCommand?(request: VerifyCommandRequest): Promise<VerifyCommandResult>;
   listProviderBilling?(): Promise<Record<string, RuntimeBillingDiscovery>>;
   executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult>;
   listSkills(): Promise<SkillInfo[]>;
@@ -222,6 +246,38 @@ export interface ExpertCleanupResult {
   /** Every retry/escalation worktree removed for this execution. */
   workspaces?: string[];
   removedCount?: number;
+  message?: string;
+}
+
+/** Clear runtime availability markers by scope: "*", a bare provider, or an exact "provider/id" key. */
+export interface ResetAvailabilityRequest {
+  scope: string;
+}
+
+export interface ResetAvailabilityResult {
+  /** Sorted unique model keys removed from the availability markers and status map. */
+  cleared: string[];
+}
+
+/** Bounded verification command run by the runtime on behalf of the Main Agent. */
+export interface VerifyCommandRequest {
+  /** Retained worktree of this execution is used as the command directory when present. */
+  executionId?: string;
+  /** Explicit workspace path; must pass the same containment validation as read-only delegation. */
+  workspace?: string;
+  /** Command argv; 1–12 items, each a non-empty string of at most 500 characters without NUL. */
+  command: string[];
+  /** Command deadline in milliseconds, clamped to [1_000, 600_000]; default 120_000. */
+  timeoutMs?: number;
+}
+
+export interface VerifyCommandResult {
+  /** Process exit code, or null when the command was killed by the timeout or the request was rejected. */
+  exitCode: number | null;
+  /** Last lines of the combined output, bounded to 2000 characters. */
+  outputTail?: string;
+  durationMs: number;
+  /** Rejection reason or timeout note; absent on a clean run. */
   message?: string;
 }
 
@@ -682,12 +738,59 @@ export interface CouncilStatus {
   modelAssessment?: ModelAssessmentSnapshot;
 }
 
+/** Requested shape of a getStatus call; "full" preserves the legacy payload. */
+export type CouncilStatusView = "full" | "summary" | "running";
+
+/** Result type mapped from the requested status view; "full" (default) is the legacy payload. */
+export type CouncilStatusViewResult<V extends CouncilStatusView> =
+  V extends "summary" ? CouncilStatusSummary
+    : V extends "running" ? { running: RunningExecutionView[] }
+      : CouncilStatus;
+
+/** One running execution in the bounded status views. */
+export interface RunningExecutionView {
+  id: string;
+  role: ExpertRole;
+  status: "running";
+  model?: string;
+  /** Milliseconds elapsed since the execution started. */
+  elapsedMs: number;
+  /** Remaining budget before the current attempt's timeoutMs, when known. */
+  remainingMs?: number;
+}
+
+/** One finished execution in the summary status view. */
+export interface CompletedExecutionView {
+  id: string;
+  role: ExpertRole;
+  status: ExecutionStateSnapshot["status"];
+  model?: string;
+  finishedAt?: string;
+}
+
+/** Live provider concurrency slot usage in the summary status view. */
+export interface ProviderSlotView {
+  provider: string;
+  inFlight: number;
+  maxConcurrency: number;
+  remaining: number;
+}
+
+/** Bounded getStatus summary: running work, recent completions, provider slots. */
+export interface CouncilStatusSummary {
+  running: RunningExecutionView[];
+  recentCompleted: CompletedExecutionView[];
+  providerSlots: ProviderSlotView[];
+}
+
 export interface ExecutionStateSnapshot {
   id: string;
   role: ExpertRole;
   status: "running" | "success" | "partial" | "failed" | "aborted";
   model?: string;
   attempts: number;
+  /** Per-attempt execution budget in effect for the latest attempt (1_000–3_600_000). */
+  timeoutMs?: number;
   /** Set when the Main Agent requested an abort; the delegation loop skips the next attempt. */
   abortRequested?: boolean;
   abortReason?: string;
@@ -788,6 +891,10 @@ export interface ExpertCouncil {
   cleanup(executionId: string): Promise<ExpertCleanupResult>;
   recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult>;
   escalate(request: EscalationRequest): Promise<EscalationDecision>;
-  getStatus(): Promise<CouncilStatus>;
+  getStatus<V extends CouncilStatusView = "full">(options?: { view?: V }): Promise<CouncilStatusViewResult<V>>;
   recordOutcome(outcome: ExpertOutcome): Promise<void>;
+  /** Clear runtime availability markers by scope: "*", a bare provider, or an exact "provider/id" key. */
+  resetAvailability(request: ResetAvailabilityRequest): Promise<ResetAvailabilityResult>;
+  /** Bounded verification command passthrough to the runtime; always resolves. */
+  verifyCommand(request: VerifyCommandRequest): Promise<VerifyCommandResult>;
 }
