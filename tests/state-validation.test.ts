@@ -124,6 +124,29 @@ describe("council state snapshot schema", () => {
     expect(parsed.results[0]?.result.executionMetadata?.verification?.[0]).toMatchObject({ exitCode: 0 });
   });
 
+  it("accepts the timeoutMs execution field and tolerates unknown execution keys (0.7.9 regression)", () => {
+    const snapshot = {
+      version: 1,
+      plans: [],
+      executions: [
+        {
+          id: "exec_1",
+          role: "implementation-worker",
+          status: "success",
+          model: "p/m",
+          attempts: 1,
+          startedAt: "2026-09-11T00:00:00.000Z",
+          finishedAt: "2026-09-11T00:01:00.000Z",
+          timeoutMs: 1_200_000,
+          someFutureExecutionField: 42,
+        },
+      ],
+      results: [],
+    };
+    const parsed = parseCouncilStateSnapshot(snapshot);
+    expect((parsed.executions[0] as { timeoutMs?: number }).timeoutMs).toBe(1_200_000);
+  });
+
   it("truncates oversized free-text and list fields without mutating the input", () => {
     const input: ExpertResult = {
       status: "success",

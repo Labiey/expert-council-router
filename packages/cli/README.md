@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.7.9) includes:
+The current version (0.7.9.1) includes:
 
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
@@ -114,7 +114,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9.1 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -657,7 +657,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9.1 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -683,7 +683,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.9.1 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json

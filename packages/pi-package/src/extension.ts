@@ -474,7 +474,7 @@ export default function expertCouncilExtension(
     }),
     async execute(_id, params, signal, _update, ctx) {
       signal?.throwIfAborted();
-      return output(await (await getCouncil(ctx.cwd)).getStatus(params.view ? { view: params.view } : undefined));
+      return output(await (await getCouncil(ctx.cwd)).getStatus({ view: params.view ?? "summary" }));
     },
   });
 

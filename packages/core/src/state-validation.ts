@@ -93,7 +93,13 @@ const execution = z.object({
   taskCategory: taskClass.optional(),
   startedAt: timestamp,
   finishedAt: timestamp.optional(),
-}).strict();
+  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+})
+  // Forward compatibility (same lesson as executionMetadata and the 0.7.9
+  // timeoutMs regression): the execution snapshot is an extension surface, so a
+  // schema lag on a new optional field must never render the whole state file
+  // unreadable. Unknown keys are tolerated; known keys are still validated.
+  .passthrough();
 
 const testResult = z.object({
   command: boundedText(1_000).optional(),

@@ -254,7 +254,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9.1 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -271,7 +271,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.9.1 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });
@@ -511,6 +511,27 @@ describe("Pi adapter registration", () => {
     const names: string[] = [];
     piExtension({ registerTool: (tool: { name: string }) => names.push(tool.name), on: () => {} } as never);
     expect(names).toEqual(MCP_TOOL_NAMES.filter((name) => name !== "expert_wait"));
+  });
+
+  it("defaults the Pi-package expert_status to the bounded summary view", async () => {
+    type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
+    const tools = new Map<string, Tool>();
+    let capturedView: unknown = "UNSET";
+    const council = {
+      ...mockCouncil(),
+      getStatus: async (options?: { view?: string }) => {
+        capturedView = options?.view;
+        return { running: [], recentCompleted: [], providerSlots: [] };
+      },
+    };
+    piExtension({
+      registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
+      on: () => {},
+    } as never, { councilFor: async () => council as never });
+    await tools.get("expert_status")!.execute("c1", {}, undefined, undefined, { cwd: "." });
+    expect(capturedView).toBe("summary");
+    await tools.get("expert_status")!.execute("c2", { view: "full" }, undefined, undefined, { cwd: "." });
+    expect(capturedView).toBe("full");
   });
 
   it("refuses to build before the mandatory model assessment is complete", async () => {

@@ -312925,8 +312925,9 @@ var execution = external_exports.object({
   attemptHistory: external_exports.array(attempt2).max(100).optional(),
   taskCategory: taskClass.optional(),
   startedAt: timestamp,
-  finishedAt: timestamp.optional()
-}).strict();
+  finishedAt: timestamp.optional(),
+  timeoutMs: external_exports.number().int().min(1e3).max(36e5).optional()
+}).passthrough();
 var testResult = external_exports.object({
   command: boundedText(1e3).optional(),
   status: external_exports.enum(["passed", "failed", "not-run"]),
@@ -319725,7 +319726,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.9" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.9.1" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

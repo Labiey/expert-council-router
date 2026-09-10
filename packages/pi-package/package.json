@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/pi-package",
-  "version": "0.7.9",
+  "version": "0.7.9.1",
   "description": "Expert Council: cost-aware multi-model expert orchestration for Pi — assemble a council of scout, oracle, implementation-worker, and reviewer experts and delegate bounded tasks",
   "type": "module",
   "main": "./dist/extension.js",
@@ -44,8 +44,8 @@
     ]
   },
   "dependencies": {
-    "@expert-council/core": "0.7.9",
-    "@expert-council/pi-runtime": "0.7.9"
+    "@expert-council/core": "0.7.9.1",
+    "@expert-council/pi-runtime": "0.7.9.1"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84.0 <1",

@@ -1,6 +1,6 @@
 {
   "name": "@expert-council/mcp-server",
-  "version": "0.7.9",
+  "version": "0.7.9.1",
   "description": "Small semantic MCP surface for Expert Council",
   "type": "module",
   "main": "./dist/index.js",
@@ -33,8 +33,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@expert-council/core": "0.7.9",
-    "@expert-council/pi-runtime": "0.7.9",
+    "@expert-council/core": "0.7.9.1",
+    "@expert-council/pi-runtime": "0.7.9.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "zod": "^4.5.4"
   }

@@ -2,6 +2,20 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.9.1 - 2026-09-11
+
+### Fixed
+
+- **State reload corruption from the `timeoutMs` execution field (0.7.9 regression)**: 0.7.9 added `ExecutionStateSnapshot.timeoutMs` (for the status-view remaining time) but did not add it to the strict persisted-execution schema, so any execution that ran wrote a `timeoutMs` the loader rejected — making the entire `state.json` unreadable after a host restart or in a fresh process ("Unrecognized key: timeoutMs"). The field is now in the schema, and the execution snapshot uses `passthrough()` so a schema lag on a future optional execution field can never again wedge the whole state (the same forward-compatibility guarantee already applied to `executionMetadata`).
+- **Pi-package `expert_status` now defaults to the bounded `summary` view.** In 0.7.9 the MCP server defaulted `view` to `summary`, but the Pi package passed an omitted `view` straight through as `undefined`, so the core fell back to the full legacy payload — every `expert_status` call from a Pi Main Agent dumped all executions' attempt histories, telemetry, and the entire model assessment, the exact context cost the views feature exists to prevent. The Pi package now defaults to `summary` (explicit `full`/`running` still honored), matching the MCP server.
+
+## 0.7.9.1（中文）
+
+### 修复
+
+- **`timeoutMs` 执行字段导致的状态重载损坏（0.7.9 回归）**：0.7.9 为状态视图的剩余时间新增了 `ExecutionStateSnapshot.timeoutMs`，却没同步进严格的持久化执行 schema——于是任何运行过的执行都写入了加载器拒绝的 `timeoutMs`，宿主重启或新进程里整个 `state.json` 不可读（"Unrecognized key: timeoutMs"）。现在该字段已入 schema，且执行快照改用 `passthrough()`，未来再给执行快照加可选字段时 schema 滞后再也不能卡死整个 state（与 `executionMetadata` 已有的前向兼容保证一致）。
+- **Pi 包 `expert_status` 现默认有界 `summary` 视图**。0.7.9 中 MCP 端把 `view` 默认设为 `summary`，但 Pi 包把省略的 `view` 原样传成 `undefined`，core 于是回落全量旧负载——Pi 主代理每次 `expert_status` 都会打出全部执行的 attemptHistory、遥测与整份模型评估，正是视图功能要消除的上下文开销。现在 Pi 包默认 `summary`（显式 `full`/`running` 仍生效），与 MCP 端一致。
+
 ## 0.7.9 - 2026-09-11
 
 ### Added
