@@ -1,6 +1,6 @@
 {
   "name": "expert-council",
-  "version": "0.7.9.1",
+  "version": "0.7.10",
   "description": "Cost-aware dynamic Pi expert orchestration for substantial Codex tasks.",
   "author": {
     "name": "Expert Council Contributors"

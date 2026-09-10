@@ -2,14 +2,14 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
-## 0.7.9.1 - 2026-09-11
+## 0.7.10 - 2026-09-11
 
 ### Fixed
 
 - **State reload corruption from the `timeoutMs` execution field (0.7.9 regression)**: 0.7.9 added `ExecutionStateSnapshot.timeoutMs` (for the status-view remaining time) but did not add it to the strict persisted-execution schema, so any execution that ran wrote a `timeoutMs` the loader rejected — making the entire `state.json` unreadable after a host restart or in a fresh process ("Unrecognized key: timeoutMs"). The field is now in the schema, and the execution snapshot uses `passthrough()` so a schema lag on a future optional execution field can never again wedge the whole state (the same forward-compatibility guarantee already applied to `executionMetadata`).
 - **Pi-package `expert_status` now defaults to the bounded `summary` view.** In 0.7.9 the MCP server defaulted `view` to `summary`, but the Pi package passed an omitted `view` straight through as `undefined`, so the core fell back to the full legacy payload — every `expert_status` call from a Pi Main Agent dumped all executions' attempt histories, telemetry, and the entire model assessment, the exact context cost the views feature exists to prevent. The Pi package now defaults to `summary` (explicit `full`/`running` still honored), matching the MCP server.
 
-## 0.7.9.1（中文）
+## 0.7.10（中文）
 
 ### 修复
 
