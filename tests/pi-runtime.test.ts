@@ -282,8 +282,76 @@ describe("Pi runtime adapter", () => {
       cacheWriteTokens: 2,
       estimatedCost: 0.02,
     });
-    expect(sessionOptions?.tools).toEqual(["read", "grep"]);
+    expect(sessionOptions?.tools).toEqual(["read", "grep", "report_and_stop"]);
+    expect((sessionOptions?.customTools as Array<{ name: string }> | undefined)?.[0]?.name).toBe("report_and_stop");
     expect(sessionOptions?.model).toBe(nativeModel);
+  });
+
+  it("delivers a structured partial result when the expert calls report_and_stop", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    let stopTool: { execute: (id: string, params: Record<string, unknown>) => Promise<unknown> } | undefined;
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>;
+        stopTool = custom.find((tool) => tool.name === "report_and_stop");
+        expect(stopTool).toBeDefined();
+        expect((options.tools as string[]).includes("report_and_stop")).toBe(true);
+        return {
+          session: {
+            prompt: async () => {
+              await stopTool!.execute("t1", {
+                reason: "The worktree has no installed dependencies and the task requires running the test suite.",
+                findings: ["src/entry.ts exports run()", "tests use vitest"],
+                risks: ["retrying without provisioning will fail identically"],
+                recommendedNextAction: "Dispatch with workspace provisioning enabled or run outside the isolated worktree.",
+              });
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            state: { messages: [] },
+          },
+        };
+      },
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({}),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    const result = await runtime.executeExpert({
+      role: "implementation-worker",
+      task: "Run the test suite",
+      model: "p/m",
+      tools: ["read", "bash"],
+      skills: [],
+      reasoningLevel: "low",
+      readOnly: false,
+      workspace: process.cwd(),
+      timeoutMs: 5_000,
+      attempt: 1,
+    });
+    expect(result.status).toBe("partial");
+    expect(result.summary).toContain("[Task stopped by expert]");
+    expect(result.summary).toContain("no installed dependencies");
+    expect(result.findings).toEqual(["src/entry.ts exports run()", "tests use vitest"]);
+    expect(result.recommendedNextAction).toBe("Dispatch with workspace provisioning enabled or run outside the isolated worktree.");
+    expect(result.executionMetadata).toMatchObject({ failureType: "missing_context", stoppedByExpert: true, attempts: 1 });
+  });
+
+  it("keeps expert sessions alive under security.expertLifetime detached and aborts them by default (host-bound)", async () => {
+    const config = parseCouncilConfig({});
+    expect(config.security.expertLifetime).toBe("host-bound");
+    const detached = parseCouncilConfig({ security: { expertLifetime: "detached" } });
+    expect(detached.security.expertLifetime).toBe("detached");
   });
 
   it("loads no extensions and exposes only user or explicitly allowlisted project Skills", async () => {

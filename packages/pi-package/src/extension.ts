@@ -11,7 +11,7 @@ import {
   type FailureType,
   type ModelAssessmentSnapshot,
 } from "@expert-council/core";
-import { createExpertCouncil } from "@expert-council/pi-runtime";
+import { createExpertCouncil, defaultCouncilStoragePaths, loadCouncilConfig } from "@expert-council/pi-runtime";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 
@@ -468,5 +468,30 @@ export default function expertCouncilExtension(
       signal?.throwIfAborted();
       return output(await (await getCouncil(ctx.cwd)).getStatus());
     },
+  });
+
+  // Expert sessions share the host session's lifetime by default
+  // (security.expertLifetime: "host-bound"): when Pi tears this session down
+  // (quit, or replacement by new/resume/fork), running experts are aborted so
+  // they never outlive the conversation burning quota with no receiver for
+  // their results. "detached" keeps them running to completion; their results
+  // still land in the persisted state for a later expert_result lookup.
+  pi.on("session_shutdown", async (_event, ctx) => {
+    try {
+      const paths = defaultCouncilStoragePaths(ctx.cwd);
+      const loaded = await loadCouncilConfig(paths.councilConfigPath, paths.councilConfigPath);
+      if (loaded.config.security.expertLifetime === "detached") return;
+      const council = await getCouncil(ctx.cwd);
+      const status = await council.getStatus();
+      const running = status.executions.filter((entry) => entry.status === "running");
+      await Promise.allSettled(
+        running.map((entry) =>
+          council.abortExecution({ executionId: entry.id, reason: "Host session is shutting down." }),
+        ),
+      );
+    } catch {
+      // Best-effort during teardown; the persisted state still records the
+      // executions so a later expert_result can report their last known state.
+    }
   });
 }

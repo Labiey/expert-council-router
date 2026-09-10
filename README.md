@@ -17,13 +17,15 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.7.6) includes:
+The current version (0.7.7) includes:
 
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
 - Per-expert hard tool allowlists and installed-Skill filtering.
 - Detached Git worktree isolation for writable experts, plus **automatic dependency provisioning** from the repository lockfile (npm/pnpm/bun/uv) with `--ignore-scripts`, an allowlisted child environment, per-execution worktree reuse, and direct host `.venv` interpreter paths surfaced for Python ecosystems.
 - A **runtime verification gate**: after provisioning, the repository typecheck and tests run automatically; a failing gate downgrades a successful result to `partial` and engages the corrected-retry path — zero Main Agent overhead.
+- **`report_and_stop` expert tool**: when an expert determines the task cannot be completed (missing tool, absent environment, denied permission), it submits a structured stop report — blocker, findings, risks, `recommendedNextAction` — delivered as a `partial` result that terminates the delegation loop without retry or escalation, with the mutation worktree retained for inspection.
+- **Host-bound expert lifetime** (`security.expertLifetime`, default `host-bound`): running experts are aborted automatically when the host session quits or is replaced, so orphaned experts never burn quota with no receiver; `detached` restores the old behavior.
 - `timeoutMs` and `reasoningLevel` as required delegation arguments, chosen deliberately per task and model; compositions can pin per-role/per-model reasoning levels that override the argument.
 - Expert fail-fast discipline: when the assigned tools or workspace make a task impossible, experts stop immediately with a structured `missing_context`/`permission_error` result that is relayed in real time instead of burning retries.
 - Persistent council compositions: named rosters in `council-compositions.json` (roles may pin multiple models and reasoning levels), a first-build composition menu, session bindings, `model` pinning, and concurrent same-role dispatch.
@@ -106,7 +108,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -649,7 +651,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -675,7 +677,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json

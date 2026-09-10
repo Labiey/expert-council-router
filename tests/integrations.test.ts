@@ -252,7 +252,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -269,7 +269,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });
@@ -507,7 +507,7 @@ describe("Pi adapter registration", () => {
 
   it("registers only the semantic Expert Council tools", () => {
     const names: string[] = [];
-    piExtension({ registerTool: (tool: { name: string }) => names.push(tool.name) } as never);
+    piExtension({ registerTool: (tool: { name: string }) => names.push(tool.name), on: () => {} } as never);
     expect(names).toEqual(MCP_TOOL_NAMES.filter((name) => name !== "expert_wait"));
   });
 
@@ -531,6 +531,7 @@ describe("Pi adapter registration", () => {
       },
     };
     piExtension({
+      on: () => {},
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
       appendEntry: () => {},
     } as never, { councilFor: async () => council });
@@ -564,6 +565,7 @@ describe("Pi adapter registration", () => {
     };
     const sessionEntries: Array<{ type: string; customType: string; data: unknown }> = [];
     piExtension({
+      on: () => {},
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
       appendEntry: (customType: string, data: unknown) => sessionEntries.push({ type: "custom", customType, data }),
     } as never, { councilFor: async () => council });
@@ -635,6 +637,7 @@ describe("Pi adapter registration", () => {
     };
     let idle = false;
     piExtension({
+      on: () => {},
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
       sendMessage: (message: { content: string }, options: { deliverAs: string; triggerTurn: boolean }) => {
         messages.push({ message, options });
@@ -694,6 +697,7 @@ describe("Pi adapter registration", () => {
       },
     };
     piExtension({
+      on: () => {},
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
       appendEntry: () => {},
     } as never, { councilFor: async () => council });
@@ -731,6 +735,7 @@ describe("Pi adapter registration", () => {
       },
     };
     piExtension({
+      on: () => {},
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
       sendMessage: () => {},
     } as never, { councilFor: async () => council });
@@ -762,6 +767,7 @@ describe("Pi adapter registration", () => {
       },
     };
     piExtension({
+      on: () => {},
       registerTool: (tool: { name: string; execute: Tool["execute"] }) => tools.set(tool.name, tool),
       sendMessage: () => {},
     } as never, { councilFor: async () => council });

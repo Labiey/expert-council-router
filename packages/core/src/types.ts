@@ -144,6 +144,8 @@ export interface ExpertResult {
     escalationCount?: number;
     /** Models whose runtime failure marked them unavailable in the persisted model assessment during this execution. */
     unavailableModels?: string[];
+    /** True when the expert itself stopped via report_and_stop (task impossible with the assigned tools/workspace). */
+    stoppedByExpert?: boolean;
     /** Outcome of runtime worktree provisioning for this attempt. */
     provisioning?: {
       status: "ready" | "skipped" | "failed";

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { Type } from "typebox";
 import path from "node:path";
 import {
   inferFailureType,
@@ -367,7 +368,15 @@ function executionPrompt(
   roleInstructions: string,
   provisioning?: WorkspaceProvisioningStatus,
 ): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run.`;
+}
+
+/** Structured stop report submitted by the expert through `report_and_stop`. */
+export interface ExpertStopReport {
+  reason: string;
+  findings?: string[];
+  risks?: string[];
+  recommendedNextAction?: string;
 }
 
 interface ActiveExpertSession {
@@ -378,9 +387,13 @@ interface ActiveExpertSession {
   model: string;
   abortRequested: boolean;
   timedOut: boolean;
+  /** Set when the expert itself reported the task impossible via report_and_stop. */
+  stopRequested: boolean;
   reason?: string;
   /** Resolved by abortExecution to force the execution race to settle. */
   forceSettle?: () => void;
+  /** Resolved by the report_and_stop tool with the expert's structured report. */
+  forceStop?: (report: ExpertStopReport) => void;
 }
 
 export class PiExpertRuntime implements ExpertRuntime {
@@ -543,6 +556,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         role: request.role,
         model: request.model,
         abortRequested: false,
+        stopRequested: false,
         timedOut: false,
       };
       this.activeSessions.set(executionKey, entry);
@@ -567,11 +581,66 @@ export class PiExpertRuntime implements ExpertRuntime {
         throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
       }
 
+      // report_and_stop gives the expert a deterministic way to end a task it
+      // cannot complete, with a structured report, instead of burning the
+      // budget on silent exploration.
+      let settleStop: ((report: ExpertStopReport) => void) | undefined;
+      const stopReported = new Promise<ExpertStopReport>((resolve) => {
+        settleStop = resolve;
+      });
+      entry.forceStop = (report: ExpertStopReport) => settleStop?.(report);
+      const stopTool = {
+        name: "report_and_stop",
+        description:
+          "Report that the assigned task cannot be completed with the assigned tools and workspace, and stop immediately. " +
+          "Use it when a required tool is missing, the environment lacks a dependency (no installed dependencies, absent files, no network path), " +
+          "permissions are denied, or you determine that continued work cannot reach the goal. " +
+          "Do NOT use it for mere difficulty: try a reasonable alternative approach first. " +
+          "After the tool confirms, end your turn with a one-paragraph summary; do not continue the task.",
+        parameters: Type.Object({
+          reason: Type.String({
+            description: "The exact blocker and why it is not resolvable with the assigned tools and workspace.",
+          }),
+          findings: Type.Optional(Type.Array(Type.String(), {
+            description: "Useful discoveries made so far (paths, symbols, root causes).",
+          })),
+          risks: Type.Optional(Type.Array(Type.String(), {
+            description: "Risks the Main Agent should know before re-dispatching.",
+          })),
+          recommendedNextAction: Type.String({
+            description: "The single most useful next step for the Main Agent (e.g. provide X, run Y, or dispatch Z instead).",
+          }),
+        }),
+        execute: async (_toolCallId: string, params: { reason?: unknown; findings?: unknown; risks?: unknown; recommendedNextAction?: unknown }) => {
+          entry!.stopRequested = true;
+          const text = (value: unknown, limit: number): string => String(value ?? "").slice(0, limit);
+          const lines = (value: unknown): string[] | undefined =>
+            Array.isArray(value)
+              ? value.map((item) => String(item).slice(0, 500)).filter((item) => item.length > 0).slice(0, 20)
+              : undefined;
+          settleStop?.({
+            reason: text(params.reason, 4_000) || "Expert reported the task cannot be completed.",
+            ...(lines(params.findings) ? { findings: lines(params.findings) } : {}),
+            ...(lines(params.risks) ? { risks: lines(params.risks) } : {}),
+            ...(text(params.recommendedNextAction, 1_000)
+              ? { recommendedNextAction: text(params.recommendedNextAction, 1_000) }
+              : {}),
+          });
+          return {
+            content: [{
+              type: "text",
+              text: "Stop report recorded. End your turn now with a one-paragraph summary of what you did and learned. Do not continue the task.",
+            }],
+            details: {},
+          };
+        },
+      };
       const created = await this.sdk.createAgentSession({
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools,
+        tools: [...tools, "report_and_stop"],
+        customTools: [stopTool],
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
       });
@@ -609,10 +678,18 @@ export class PiExpertRuntime implements ExpertRuntime {
           reject(new ExecutionTimeoutError(`Expert execution timed out after ${timeoutMs}ms.`));
         }, timeoutMs);
       });
+      let stopDelivered: ExpertStopReport | undefined;
+      const stopOutcome = stopReported.then((report) => {
+        stopDelivered = report;
+      });
       try {
-        await Promise.race([execution, timeout, abortSettled]);
+        await Promise.race([execution, timeout, abortSettled, stopOutcome]);
       } catch (error) {
         if (error instanceof ExecutionTimeoutError) {
+          const aborting = session.abort?.();
+          void aborting?.catch(() => undefined);
+        }
+        if (stopDelivered) {
           const aborting = session.abort?.();
           void aborting?.catch(() => undefined);
         }
@@ -627,6 +704,12 @@ export class PiExpertRuntime implements ExpertRuntime {
       }
       if (entry.abortRequested) {
         return await this.buildAbortedResult(entry, request, started);
+      }
+      // The expert itself stopped via report_and_stop: deliver its structured
+      // report as a partial result. `missing_context` semantics terminate the
+      // delegation loop (no retry/escalation) while the worktree stays intact.
+      if (stopDelivered) {
+        return await this.buildStoppedResult(entry, request, started, stopDelivered);
       }
       const rawText = finalAssistantText(session);
       const sessionError = finalSessionError(session);
@@ -785,6 +868,46 @@ export class PiExpertRuntime implements ExpertRuntime {
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         failureType: "aborted",
+        durationMs: Date.now() - started,
+        ...(usage ? { usage } : {}),
+      },
+    };
+  }
+
+  /** Build the preserved-progress result for an expert-initiated report_and_stop. */
+  private async buildStoppedResult(
+    entry: ActiveExpertSession,
+    request: ExpertExecutionRequest,
+    started: number,
+    report: ExpertStopReport,
+  ): Promise<ExpertResult> {
+    let changedFiles: string[] = [];
+    try {
+      changedFiles = await this.boundary.changedFiles(entry.workspace);
+    } catch {
+      // Read-only workspaces have no diff to preserve.
+    }
+    const usage = sessionUsage(entry.session);
+    const summary = safeText(
+      `[Task stopped by expert] ${report.reason}\n\n${finalAssistantText(entry.session) ?? ""}`.trim(),
+      4_000,
+    ) ?? `[Task stopped by expert] ${report.reason}`;
+    return {
+      status: "partial",
+      role: request.role,
+      model: request.model,
+      summary,
+      ...(changedFiles.length ? { filesChanged: changedFiles.slice(0, 1_000) } : {}),
+      ...(report.findings?.length ? { findings: report.findings } : {}),
+      ...(report.risks?.length ? { risks: report.risks } : {}),
+      ...(report.recommendedNextAction ? { recommendedNextAction: report.recommendedNextAction } : {}),
+      executionMetadata: {
+        attempts: request.attempt,
+        workspace: entry.workspace.root,
+        isolated: entry.workspace.isolated,
+        provisioning: entry.workspace.provisioning,
+        failureType: "missing_context",
+        stoppedByExpert: true,
         durationMs: Date.now() - started,
         ...(usage ? { usage } : {}),
       },

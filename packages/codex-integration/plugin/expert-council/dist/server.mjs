@@ -2589,7 +2589,7 @@ var init_utils = __esm({
 function is_non_nullish_primitive(v2) {
   return typeof v2 === "string" || typeof v2 === "number" || typeof v2 === "boolean" || typeof v2 === "symbol" || typeof v2 === "bigint";
 }
-function inner_stringify(object3, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder3, filter2, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
+function inner_stringify(object3, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder4, filter2, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
   let obj = object3;
   let tmp_sc = sideChannel;
   let step = 0;
@@ -2622,19 +2622,19 @@ function inner_stringify(object3, prefix, generateArrayPrefix, commaRoundTrip, a
   }
   if (obj === null) {
     if (strictNullHandling) {
-      return encoder3 && !encodeValuesOnly ? (
+      return encoder4 && !encodeValuesOnly ? (
         // @ts-expect-error
-        encoder3(prefix, defaults.encoder, charset, "key", format)
+        encoder4(prefix, defaults.encoder, charset, "key", format)
       ) : prefix;
     }
     obj = "";
   }
   if (is_non_nullish_primitive(obj) || is_buffer(obj)) {
-    if (encoder3) {
-      const key_value = encodeValuesOnly ? prefix : encoder3(prefix, defaults.encoder, charset, "key", format);
+    if (encoder4) {
+      const key_value = encodeValuesOnly ? prefix : encoder4(prefix, defaults.encoder, charset, "key", format);
       return [
         formatter?.(key_value) + "=" + // @ts-expect-error
-        formatter?.(encoder3(obj, defaults.encoder, charset, "value", format))
+        formatter?.(encoder4(obj, defaults.encoder, charset, "value", format))
       ];
     }
     return [formatter?.(prefix) + "=" + formatter?.(String(obj))];
@@ -2645,8 +2645,8 @@ function inner_stringify(object3, prefix, generateArrayPrefix, commaRoundTrip, a
   }
   let obj_keys;
   if (generateArrayPrefix === "comma" && isArray(obj)) {
-    if (encodeValuesOnly && encoder3) {
-      obj = maybe_map(obj, encoder3);
+    if (encodeValuesOnly && encoder4) {
+      obj = maybe_map(obj, encoder4);
     }
     obj_keys = [{ value: obj.length > 0 ? obj.join(",") || null : void 0 }];
   } else if (isArray(filter2)) {
@@ -2684,7 +2684,7 @@ function inner_stringify(object3, prefix, generateArrayPrefix, commaRoundTrip, a
       skipNulls,
       encodeDotInKeys,
       // @ts-ignore
-      generateArrayPrefix === "comma" && encodeValuesOnly && isArray(obj) ? null : encoder3,
+      generateArrayPrefix === "comma" && encodeValuesOnly && isArray(obj) ? null : encoder4,
       filter2,
       sort,
       allowDots,
@@ -3209,8 +3209,8 @@ function concatBytes(buffers) {
   return output2;
 }
 function encodeUTF8(str3) {
-  let encoder3;
-  return (encodeUTF8_ ?? (encoder3 = new globalThis.TextEncoder(), encodeUTF8_ = encoder3.encode.bind(encoder3)))(str3);
+  let encoder4;
+  return (encodeUTF8_ ?? (encoder4 = new globalThis.TextEncoder(), encodeUTF8_ = encoder4.encode.bind(encoder4)))(str3);
 }
 function decodeUTF8(bytes) {
   let decoder;
@@ -6402,13 +6402,13 @@ var require_dist2 = __commonJS({
         const computedSignature = this.sign(msgId, timestamp2, payload);
         const expectedSignature = computedSignature.split(",")[1];
         const passedSignatures = msgSignature.split(" ");
-        const encoder3 = new globalThis.TextEncoder();
+        const encoder4 = new globalThis.TextEncoder();
         for (const versionedSignature of passedSignatures) {
           const [version2, signature] = versionedSignature.split(",");
           if (version2 !== "v1") {
             continue;
           }
-          if ((0, timing_safe_equal_1.timingSafeEqual)(encoder3.encode(signature), encoder3.encode(expectedSignature))) {
+          if ((0, timing_safe_equal_1.timingSafeEqual)(encoder4.encode(signature), encoder4.encode(expectedSignature))) {
             const payloadString = payload.toString();
             if (payloadString === "") {
               return void 0;
@@ -6429,9 +6429,9 @@ var require_dist2 = __commonJS({
         } else {
           throw new Error("Expected payload to be of type string or Buffer.");
         }
-        const encoder3 = new TextEncoder();
+        const encoder4 = new TextEncoder();
         const timestampNumber = Math.floor(timestamp2.getTime() / 1e3);
-        const toSign = encoder3.encode(`${msgId}.${timestampNumber}.${payload}`);
+        const toSign = encoder4.encode(`${msgId}.${timestampNumber}.${payload}`);
         const expectedSignature = base643.encode(sha256.hmac(this.key, toSign));
         return `v1,${expectedSignature}`;
       }
@@ -20484,7 +20484,7 @@ var init_utils3 = __esm({
 function is_non_nullish_primitive2(v2) {
   return typeof v2 === "string" || typeof v2 === "number" || typeof v2 === "boolean" || typeof v2 === "symbol" || typeof v2 === "bigint";
 }
-function inner_stringify2(object3, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder3, filter2, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
+function inner_stringify2(object3, prefix, generateArrayPrefix, commaRoundTrip, allowEmptyArrays, strictNullHandling, skipNulls, encodeDotInKeys, encoder4, filter2, sort, allowDots, serializeDate, format, formatter, encodeValuesOnly, charset, sideChannel) {
   let obj = object3;
   let tmp_sc = sideChannel;
   let step = 0;
@@ -20517,19 +20517,19 @@ function inner_stringify2(object3, prefix, generateArrayPrefix, commaRoundTrip, 
   }
   if (obj === null) {
     if (strictNullHandling) {
-      return encoder3 && !encodeValuesOnly ? (
+      return encoder4 && !encodeValuesOnly ? (
         // @ts-expect-error
-        encoder3(prefix, defaults2.encoder, charset, "key", format)
+        encoder4(prefix, defaults2.encoder, charset, "key", format)
       ) : prefix;
     }
     obj = "";
   }
   if (is_non_nullish_primitive2(obj) || is_buffer2(obj)) {
-    if (encoder3) {
-      const key_value = encodeValuesOnly ? prefix : encoder3(prefix, defaults2.encoder, charset, "key", format);
+    if (encoder4) {
+      const key_value = encodeValuesOnly ? prefix : encoder4(prefix, defaults2.encoder, charset, "key", format);
       return [
         formatter?.(key_value) + "=" + // @ts-expect-error
-        formatter?.(encoder3(obj, defaults2.encoder, charset, "value", format))
+        formatter?.(encoder4(obj, defaults2.encoder, charset, "value", format))
       ];
     }
     return [formatter?.(prefix) + "=" + formatter?.(String(obj))];
@@ -20540,8 +20540,8 @@ function inner_stringify2(object3, prefix, generateArrayPrefix, commaRoundTrip, 
   }
   let obj_keys;
   if (generateArrayPrefix === "comma" && isArray2(obj)) {
-    if (encodeValuesOnly && encoder3) {
-      obj = maybe_map2(obj, encoder3);
+    if (encodeValuesOnly && encoder4) {
+      obj = maybe_map2(obj, encoder4);
     }
     obj_keys = [{ value: obj.length > 0 ? obj.join(",") || null : void 0 }];
   } else if (isArray2(filter2)) {
@@ -20579,7 +20579,7 @@ function inner_stringify2(object3, prefix, generateArrayPrefix, commaRoundTrip, 
       skipNulls,
       encodeDotInKeys,
       // @ts-ignore
-      generateArrayPrefix === "comma" && encodeValuesOnly && isArray2(obj) ? null : encoder3,
+      generateArrayPrefix === "comma" && encodeValuesOnly && isArray2(obj) ? null : encoder4,
       filter2,
       sort,
       allowDots,
@@ -20790,8 +20790,8 @@ function concatBytes2(buffers) {
   return output2;
 }
 function encodeUTF82(str3) {
-  let encoder3;
-  return (encodeUTF8_2 ?? (encoder3 = new globalThis.TextEncoder(), encodeUTF8_2 = encoder3.encode.bind(encoder3)))(str3);
+  let encoder4;
+  return (encodeUTF8_2 ?? (encoder4 = new globalThis.TextEncoder(), encodeUTF8_2 = encoder4.encode.bind(encoder4)))(str3);
 }
 function decodeUTF82(bytes) {
   let decoder;
@@ -38283,7 +38283,7 @@ var init_fetch_blob = __esm({
           throw new TypeError("Failed to construct 'Blob': parameter 2 cannot convert to dictionary.");
         }
         if (options === null) options = {};
-        const encoder3 = new TextEncoder();
+        const encoder4 = new TextEncoder();
         for (const element of blobParts) {
           let part;
           if (ArrayBuffer.isView(element)) {
@@ -38293,7 +38293,7 @@ var init_fetch_blob = __esm({
           } else if (element instanceof Blob2) {
             part = element;
           } else {
-            part = encoder3.encode(`${element}`);
+            part = encoder4.encode(`${element}`);
           }
           this.#size += ArrayBuffer.isView(part) ? part.byteLength : part.size;
           this.#parts.push(part);
@@ -63453,8 +63453,8 @@ function concatBytes3(buffers) {
   return output2;
 }
 function encodeUTF83(str3) {
-  let encoder3;
-  return (encodeUTF8_3 !== null && encodeUTF8_3 !== void 0 ? encodeUTF8_3 : (encoder3 = new globalThis.TextEncoder(), encodeUTF8_3 = encoder3.encode.bind(encoder3)))(str3);
+  let encoder4;
+  return (encodeUTF8_3 !== null && encodeUTF8_3 !== void 0 ? encodeUTF8_3 : (encoder4 = new globalThis.TextEncoder(), encodeUTF8_3 = encoder4.encode.bind(encoder4)))(str3);
 }
 function decodeUTF83(bytes) {
   let decoder;
@@ -64672,15 +64672,15 @@ var init_node3 = __esm({
       FunctionResponseScheduling2["WHEN_IDLE"] = "WHEN_IDLE";
       FunctionResponseScheduling2["INTERRUPT"] = "INTERRUPT";
     })(FunctionResponseScheduling || (FunctionResponseScheduling = {}));
-    (function(Type3) {
-      Type3["TYPE_UNSPECIFIED"] = "TYPE_UNSPECIFIED";
-      Type3["STRING"] = "STRING";
-      Type3["NUMBER"] = "NUMBER";
-      Type3["INTEGER"] = "INTEGER";
-      Type3["BOOLEAN"] = "BOOLEAN";
-      Type3["ARRAY"] = "ARRAY";
-      Type3["OBJECT"] = "OBJECT";
-      Type3["NULL"] = "NULL";
+    (function(Type4) {
+      Type4["TYPE_UNSPECIFIED"] = "TYPE_UNSPECIFIED";
+      Type4["STRING"] = "STRING";
+      Type4["NUMBER"] = "NUMBER";
+      Type4["INTEGER"] = "INTEGER";
+      Type4["BOOLEAN"] = "BOOLEAN";
+      Type4["ARRAY"] = "ARRAY";
+      Type4["OBJECT"] = "OBJECT";
+      Type4["NULL"] = "NULL";
     })(Type2 || (Type2 = {}));
     (function(Environment2) {
       Environment2["ENVIRONMENT_UNSPECIFIED"] = "ENVIRONMENT_UNSPECIFIED";
@@ -113981,8 +113981,8 @@ var require_YAMLMap = __commonJS({
        * @param {Class} Type - If set, forces the returned collection type
        * @returns Instance of Type, Map, or Object
        */
-      toJSON(_2, ctx, Type3) {
-        const map2 = Type3 ? new Type3() : ctx?.mapAsMap ? /* @__PURE__ */ new Map() : {};
+      toJSON(_2, ctx, Type4) {
+        const map2 = Type4 ? new Type4() : ctx?.mapAsMap ? /* @__PURE__ */ new Map() : {};
         if (ctx?.onCreate)
           ctx.onCreate(map2);
         for (const item of this.items)
@@ -126729,10 +126729,10 @@ Did you specify these with the most recent transformation maps first?`);
           });
         }, t3.gt = gt2, t3.lt = lt, t3.eq = eq, t3.neq = neq, t3.gte = gte2, t3.lte = lte2, t3.cmp = cmp, t3.Comparator = Comparator;
         var m3 = {};
-        function Range2(e4, t4) {
-          if (t4 && "object" == typeof t4 || (t4 = { loose: !!t4, includePrerelease: false }), e4 instanceof Range2) return e4.loose === !!t4.loose && e4.includePrerelease === !!t4.includePrerelease ? e4 : new Range2(e4.raw, t4);
-          if (e4 instanceof Comparator) return new Range2(e4.value, t4);
-          if (!(this instanceof Range2)) return new Range2(e4, t4);
+        function Range3(e4, t4) {
+          if (t4 && "object" == typeof t4 || (t4 = { loose: !!t4, includePrerelease: false }), e4 instanceof Range3) return e4.loose === !!t4.loose && e4.includePrerelease === !!t4.includePrerelease ? e4 : new Range3(e4.raw, t4);
+          if (e4 instanceof Comparator) return new Range3(e4.value, t4);
+          if (!(this instanceof Range3)) return new Range3(e4, t4);
           if (this.options = t4, this.loose = !!t4.loose, this.includePrerelease = !!t4.includePrerelease, this.raw = e4.trim().split(/\s+/).join(" "), this.set = this.raw.split("||").map(function(e5) {
             return this.parseRange(e5.trim());
           }, this).filter(function(e5) {
@@ -126765,7 +126765,7 @@ Did you specify these with the most recent transformation maps first?`);
         }
         function satisfies2(e4, t4, r4) {
           try {
-            t4 = new Range2(t4, r4);
+            t4 = new Range3(t4, r4);
           } catch (e5) {
             return false;
           }
@@ -126773,7 +126773,7 @@ Did you specify these with the most recent transformation maps first?`);
         }
         function outside(e4, t4, r4, n2) {
           var s3, i3, o2, a2, l4;
-          switch (e4 = new SemVer(e4, n2), t4 = new Range2(t4, n2), r4) {
+          switch (e4 = new SemVer(e4, n2), t4 = new Range3(t4, n2), r4) {
             case ">":
               s3 = gt2, i3 = lte2, o2 = lt, a2 = ">", l4 = ">=";
               break;
@@ -126811,17 +126811,17 @@ Did you specify these with the most recent transformation maps first?`);
         }, Comparator.prototype.intersects = function(e4, t4) {
           if (!(e4 instanceof Comparator)) throw new TypeError("a Comparator is required");
           var r4;
-          if (t4 && "object" == typeof t4 || (t4 = { loose: !!t4, includePrerelease: false }), "" === this.operator) return "" === this.value || (r4 = new Range2(e4.value, t4), satisfies2(this.value, r4, t4));
-          if ("" === e4.operator) return "" === e4.value || (r4 = new Range2(this.value, t4), satisfies2(e4.semver, r4, t4));
+          if (t4 && "object" == typeof t4 || (t4 = { loose: !!t4, includePrerelease: false }), "" === this.operator) return "" === this.value || (r4 = new Range3(e4.value, t4), satisfies2(this.value, r4, t4));
+          if ("" === e4.operator) return "" === e4.value || (r4 = new Range3(this.value, t4), satisfies2(e4.semver, r4, t4));
           var n2 = !(">=" !== this.operator && ">" !== this.operator || ">=" !== e4.operator && ">" !== e4.operator), s3 = !("<=" !== this.operator && "<" !== this.operator || "<=" !== e4.operator && "<" !== e4.operator), i3 = this.semver.version === e4.semver.version, o2 = !(">=" !== this.operator && "<=" !== this.operator || ">=" !== e4.operator && "<=" !== e4.operator), a2 = cmp(this.semver, "<", e4.semver, t4) && (">=" === this.operator || ">" === this.operator) && ("<=" === e4.operator || "<" === e4.operator), l4 = cmp(this.semver, ">", e4.semver, t4) && ("<=" === this.operator || "<" === this.operator) && (">=" === e4.operator || ">" === e4.operator);
           return n2 || s3 || i3 && o2 || a2 || l4;
-        }, t3.Range = Range2, Range2.prototype.format = function() {
+        }, t3.Range = Range3, Range3.prototype.format = function() {
           return this.range = this.set.map(function(e4) {
             return e4.join(" ").trim();
           }).join("||").trim(), this.range;
-        }, Range2.prototype.toString = function() {
+        }, Range3.prototype.toString = function() {
           return this.range;
-        }, Range2.prototype.parseRange = function(e4) {
+        }, Range3.prototype.parseRange = function(e4) {
           var t4 = this.options.loose, n2 = t4 ? o[l3.HYPHENRANGELOOSE] : o[l3.HYPHENRANGE];
           e4 = e4.replace(n2, hyphenReplace), r3("hyphen replace", e4), e4 = e4.replace(o[l3.COMPARATORTRIM], "$1$2$3"), r3("comparator trim", e4, o[l3.COMPARATORTRIM]), e4 = (e4 = (e4 = e4.replace(o[l3.TILDETRIM], "$1~")).replace(o[l3.CARETTRIM], "$1^")).split(/\s+/).join(" ");
           var s3 = t4 ? o[l3.COMPARATORLOOSE] : o[l3.COMPARATOR], i3 = e4.split(" ").map(function(e5) {
@@ -126869,8 +126869,8 @@ Did you specify these with the most recent transformation maps first?`);
           })), i3 = i3.map(function(e5) {
             return new Comparator(e5, this.options);
           }, this);
-        }, Range2.prototype.intersects = function(e4, t4) {
-          if (!(e4 instanceof Range2)) throw new TypeError("a Range is required");
+        }, Range3.prototype.intersects = function(e4, t4) {
+          if (!(e4 instanceof Range3)) throw new TypeError("a Range is required");
           return this.set.some(function(r4) {
             return isSatisfiable(r4, t4) && e4.set.some(function(e5) {
               return isSatisfiable(e5, t4) && r4.every(function(r5) {
@@ -126881,12 +126881,12 @@ Did you specify these with the most recent transformation maps first?`);
             });
           });
         }, t3.toComparators = function(e4, t4) {
-          return new Range2(e4, t4).set.map(function(e5) {
+          return new Range3(e4, t4).set.map(function(e5) {
             return e5.map(function(e6) {
               return e6.value;
             }).join(" ").trim().split(" ");
           });
-        }, Range2.prototype.test = function(e4) {
+        }, Range3.prototype.test = function(e4) {
           if (!e4) return false;
           if ("string" == typeof e4) try {
             e4 = new SemVer(e4, this.options);
@@ -126898,7 +126898,7 @@ Did you specify these with the most recent transformation maps first?`);
         }, t3.satisfies = satisfies2, t3.maxSatisfying = function(e4, t4, r4) {
           var n2 = null, s3 = null;
           try {
-            var i3 = new Range2(t4, r4);
+            var i3 = new Range3(t4, r4);
           } catch (e5) {
             return null;
           }
@@ -126908,7 +126908,7 @@ Did you specify these with the most recent transformation maps first?`);
         }, t3.minSatisfying = function(e4, t4, r4) {
           var n2 = null, s3 = null;
           try {
-            var i3 = new Range2(t4, r4);
+            var i3 = new Range3(t4, r4);
           } catch (e5) {
             return null;
           }
@@ -126916,7 +126916,7 @@ Did you specify these with the most recent transformation maps first?`);
             i3.test(e5) && (n2 && 1 !== s3.compare(e5) || (s3 = new SemVer(n2 = e5, r4)));
           }), n2;
         }, t3.minVersion = function(e4, t4) {
-          e4 = new Range2(e4, t4);
+          e4 = new Range3(e4, t4);
           var r4 = new SemVer("0.0.0");
           if (e4.test(r4)) return r4;
           if (r4 = new SemVer("0.0.0-0"), e4.test(r4)) return r4;
@@ -126943,7 +126943,7 @@ Did you specify these with the most recent transformation maps first?`);
           return null;
         }, t3.validRange = function(e4, t4) {
           try {
-            return new Range2(e4, t4).range || "*";
+            return new Range3(e4, t4).range || "*";
           } catch (e5) {
             return null;
           }
@@ -126955,7 +126955,7 @@ Did you specify these with the most recent transformation maps first?`);
           var r4 = parse7(e4, t4);
           return r4 && r4.prerelease.length ? r4.prerelease : null;
         }, t3.intersects = function(e4, t4, r4) {
-          return e4 = new Range2(e4, r4), t4 = new Range2(t4, r4), e4.intersects(t4);
+          return e4 = new Range3(e4, r4), t4 = new Range3(t4, r4), e4.intersects(t4);
         }, t3.coerce = function(e4, t4) {
           if (e4 instanceof SemVer) return e4;
           "number" == typeof e4 && (e4 = String(e4));
@@ -130543,7 +130543,7 @@ Default "index" lookups for the main are deprecated for ES modules.`, "Deprecati
           this.word("function"), this.space(), this.print(e4.id), this.print(e4.id.typeAnnotation.typeAnnotation), e4.predicate && (this.space(), this.print(e4.predicate));
           this.semicolon();
         }, t3.DeclareInterface = function(e4) {
-          this.word("declare"), this.space(), InterfaceDeclaration2.call(this, e4);
+          this.word("declare"), this.space(), InterfaceDeclaration3.call(this, e4);
         }, t3.DeclareModule = function(e4) {
           this.word("declare"), this.space(), this.word("module"), this.space(), this.print(e4.id), this.space(), this.print(e4.body);
         }, t3.DeclareModuleExports = function(e4) {
@@ -130600,7 +130600,7 @@ Default "index" lookups for the main are deprecated for ES modules.`, "Deprecati
           this.print(e4.objectType, true), this.tokenChar(91), this.print(e4.indexType), this.tokenChar(93);
         }, t3.InferredPredicate = function() {
           this.tokenChar(37), this.word("checks");
-        }, t3.InterfaceDeclaration = InterfaceDeclaration2, t3.GenericTypeAnnotation = t3.ClassImplements = t3.InterfaceExtends = function(e4) {
+        }, t3.InterfaceDeclaration = InterfaceDeclaration3, t3.GenericTypeAnnotation = t3.ClassImplements = t3.InterfaceExtends = function(e4) {
           this.print(e4.id), this.print(e4.typeParameters, true);
         }, t3.InterfaceTypeAnnotation = function(e4) {
           var t4;
@@ -130711,7 +130711,7 @@ Default "index" lookups for the main are deprecated for ES modules.`, "Deprecati
           const r4 = null == (t4 = e4.variance) ? void 0 : t4.kind;
           null != r4 && ("plus" === r4 ? this.tokenChar(43) : "minus" === r4 && this.tokenChar(45));
         }
-        function InterfaceDeclaration2(e4) {
+        function InterfaceDeclaration3(e4) {
           this.word("interface"), this.space(), _interfaceish.call(this, e4);
         }
         function andSeparator(e4) {
@@ -135563,7 +135563,7 @@ var e,t,r="function"==typeof Symbol?Symbol:{},n=r.iterator||"@@iterator",o=r.toS
             }
           }
         }
-        class State2 {
+        class State3 {
           constructor() {
             this.flags = 1024, this.startIndex = void 0, this.curLine = void 0, this.lineStart = void 0, this.startLoc = void 0, this.endLoc = void 0, this.errors = [], this.potentialArrowAt = -1, this.noArrowAt = [], this.noArrowParamsConversionAt = [], this.topicContext = { maxNumOfResolvableTopics: 0, maxTopicIndex: null }, this.labels = [], this.commentsLen = 0, this.commentStack = [], this.pos = 0, this.type = 140, this.value = null, this.start = 0, this.end = 0, this.lastTokEndLoc = null, this.lastTokStartLoc = null, this.context = [d2.brace], this.firstInvalidTemplateEscapePos = null, this.strictErrors = /* @__PURE__ */ new Map(), this.tokensLength = 0;
           }
@@ -135652,7 +135652,7 @@ var e,t,r="function"==typeof Symbol?Symbol:{},n=r.iterator||"@@iterator",o=r.toS
             return new Position(this.curLine, this.pos - this.lineStart, this.pos + this.startIndex);
           }
           clone() {
-            const e4 = new State2();
+            const e4 = new State3();
             return e4.flags = this.flags, e4.startIndex = this.startIndex, e4.curLine = this.curLine, e4.lineStart = this.lineStart, e4.startLoc = this.startLoc, e4.endLoc = this.endLoc, e4.errors = this.errors.slice(), e4.potentialArrowAt = this.potentialArrowAt, e4.noArrowAt = this.noArrowAt.slice(), e4.noArrowParamsConversionAt = this.noArrowParamsConversionAt.slice(), e4.topicContext = this.topicContext, e4.labels = this.labels.slice(), e4.commentsLen = this.commentsLen, e4.commentStack = this.commentStack.slice(), e4.pos = this.pos, e4.type = this.type, e4.value = this.value, e4.start = this.start, e4.end = this.end, e4.lastTokEndLoc = this.lastTokEndLoc, e4.lastTokStartLoc = this.lastTokStartLoc, e4.context = this.context.slice(), e4.firstInvalidTemplateEscapePos = this.firstInvalidTemplateEscapePos, e4.strictErrors = this.strictErrors, e4.tokensLength = this.tokensLength, e4;
           }
         }
@@ -135801,7 +135801,7 @@ var e,t,r="function"==typeof Symbol?Symbol:{},n=r.iterator||"@@iterator",o=r.toS
               throw this.raise(c2.UnterminatedString, buildPosition(e5 - 1, t5, r4));
             } }), this.errorHandlers_readStringContents_template = Object.assign({}, this.errorHandlers_readCodePoint, { strictNumericEscape: this.errorBuilder(c2.StrictNumericEscape), unterminated: (e5, t5, r4) => {
               throw this.raise(c2.UnterminatedTemplate, buildPosition(e5, t5, r4));
-            } }), this.state = new State2(), this.state.init(e4), this.input = t4, this.length = t4.length, this.comments = [], this.isLookahead = false;
+            } }), this.state = new State3(), this.state.init(e4), this.input = t4, this.length = t4.length, this.comments = [], this.isLookahead = false;
           }
           pushToken(e4) {
             this.tokens.length = this.state.tokensLength, this.tokens.push(e4), ++this.state.tokensLength;
@@ -156261,7 +156261,7 @@ var require_range = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/classes/range.js"(exports, module) {
     "use strict";
     var SPACE_CHARACTERS = /\s+/g;
-    var Range2 = class _Range {
+    var Range3 = class _Range {
       constructor(range2, options) {
         options = parseOptions(options);
         if (range2 instanceof _Range) {
@@ -156399,7 +156399,7 @@ var require_range = __commonJS({
         return false;
       }
     };
-    module.exports = Range2;
+    module.exports = Range3;
     var LRU = require_lrucache();
     var cache = new LRU();
     var parseOptions = require_parse_options();
@@ -156704,12 +156704,12 @@ var require_comparator = __commonJS({
           if (this.value === "") {
             return true;
           }
-          return new Range2(comp.value, options).test(this.value);
+          return new Range3(comp.value, options).test(this.value);
         } else if (comp.operator === "") {
           if (comp.value === "") {
             return true;
           }
-          return new Range2(this.value, options).test(comp.semver);
+          return new Range3(this.value, options).test(comp.semver);
         }
         options = parseOptions(options);
         if (options.includePrerelease && (this.value === "<0.0.0-0" || comp.value === "<0.0.0-0")) {
@@ -156742,7 +156742,7 @@ var require_comparator = __commonJS({
     var cmp = require_cmp();
     var debug = require_debug();
     var SemVer = require_semver();
-    var Range2 = require_range();
+    var Range3 = require_range();
   }
 });
 
@@ -156750,10 +156750,10 @@ var require_comparator = __commonJS({
 var require_satisfies = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/functions/satisfies.js"(exports, module) {
     "use strict";
-    var Range2 = require_range();
+    var Range3 = require_range();
     var satisfies2 = (version2, range2, options) => {
       try {
-        range2 = new Range2(range2, options);
+        range2 = new Range3(range2, options);
       } catch (er) {
         return false;
       }
@@ -156767,8 +156767,8 @@ var require_satisfies = __commonJS({
 var require_to_comparators = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/to-comparators.js"(exports, module) {
     "use strict";
-    var Range2 = require_range();
-    var toComparators = (range2, options) => new Range2(range2, options).set.map((comp) => comp.map((c2) => c2.value).join(" ").trim().split(" "));
+    var Range3 = require_range();
+    var toComparators = (range2, options) => new Range3(range2, options).set.map((comp) => comp.map((c2) => c2.value).join(" ").trim().split(" "));
     module.exports = toComparators;
   }
 });
@@ -156778,13 +156778,13 @@ var require_max_satisfying = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/max-satisfying.js"(exports, module) {
     "use strict";
     var SemVer = require_semver();
-    var Range2 = require_range();
+    var Range3 = require_range();
     var maxSatisfying2 = (versions, range2, options) => {
       let max = null;
       let maxSV = null;
       let rangeObj = null;
       try {
-        rangeObj = new Range2(range2, options);
+        rangeObj = new Range3(range2, options);
       } catch (er) {
         return null;
       }
@@ -156807,13 +156807,13 @@ var require_min_satisfying = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/min-satisfying.js"(exports, module) {
     "use strict";
     var SemVer = require_semver();
-    var Range2 = require_range();
+    var Range3 = require_range();
     var minSatisfying = (versions, range2, options) => {
       let min = null;
       let minSV = null;
       let rangeObj = null;
       try {
-        rangeObj = new Range2(range2, options);
+        rangeObj = new Range3(range2, options);
       } catch (er) {
         return null;
       }
@@ -156836,10 +156836,10 @@ var require_min_version = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/min-version.js"(exports, module) {
     "use strict";
     var SemVer = require_semver();
-    var Range2 = require_range();
+    var Range3 = require_range();
     var gt2 = require_gt();
     var minVersion = (range2, loose) => {
-      range2 = new Range2(range2, loose);
+      range2 = new Range3(range2, loose);
       let minver = new SemVer("0.0.0");
       if (range2.test(minver)) {
         return minver;
@@ -156894,10 +156894,10 @@ var require_min_version = __commonJS({
 var require_valid2 = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/valid.js"(exports, module) {
     "use strict";
-    var Range2 = require_range();
+    var Range3 = require_range();
     var validRange2 = (range2, options) => {
       try {
-        return new Range2(range2, options).range || "*";
+        return new Range3(range2, options).range || "*";
       } catch (er) {
         return null;
       }
@@ -156913,7 +156913,7 @@ var require_outside = __commonJS({
     var SemVer = require_semver();
     var Comparator = require_comparator();
     var { ANY } = Comparator;
-    var Range2 = require_range();
+    var Range3 = require_range();
     var satisfies2 = require_satisfies();
     var gt2 = require_gt();
     var lt = require_lt();
@@ -156921,7 +156921,7 @@ var require_outside = __commonJS({
     var gte2 = require_gte();
     var outside = (version2, range2, hilo, options) => {
       version2 = new SemVer(version2, options);
-      range2 = new Range2(range2, options);
+      range2 = new Range3(range2, options);
       let gtfn, ltefn, ltfn, comp, ecomp;
       switch (hilo) {
         case ">":
@@ -156999,10 +156999,10 @@ var require_ltr = __commonJS({
 var require_intersects = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/intersects.js"(exports, module) {
     "use strict";
-    var Range2 = require_range();
+    var Range3 = require_range();
     var intersects = (r1, r2, options) => {
-      r1 = new Range2(r1, options);
-      r2 = new Range2(r2, options);
+      r1 = new Range3(r1, options);
+      r2 = new Range3(r2, options);
       return r1.intersects(r2, options);
     };
     module.exports = intersects;
@@ -157063,7 +157063,7 @@ var require_simplify = __commonJS({
 var require_subset = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/semver/ranges/subset.js"(exports, module) {
     "use strict";
-    var Range2 = require_range();
+    var Range3 = require_range();
     var Comparator = require_comparator();
     var { ANY } = Comparator;
     var satisfies2 = require_satisfies();
@@ -157072,8 +157072,8 @@ var require_subset = __commonJS({
       if (sub === dom) {
         return true;
       }
-      sub = new Range2(sub, options);
-      dom = new Range2(dom, options);
+      sub = new Range3(sub, options);
+      dom = new Range3(dom, options);
       let sawNonNull = false;
       OUTER: for (const simpleSub of sub.set) {
         for (const simpleDom of dom.set) {
@@ -157254,7 +157254,7 @@ var require_semver2 = __commonJS({
     var coerce = require_coerce();
     var truncate = require_truncate();
     var Comparator = require_comparator();
-    var Range2 = require_range();
+    var Range3 = require_range();
     var satisfies2 = require_satisfies();
     var toComparators = require_to_comparators();
     var maxSatisfying2 = require_max_satisfying();
@@ -157293,7 +157293,7 @@ var require_semver2 = __commonJS({
       coerce,
       truncate,
       Comparator,
-      Range: Range2,
+      Range: Range3,
       satisfies: satisfies2,
       toComparators,
       maxSatisfying: maxSatisfying2,
@@ -162357,7 +162357,7 @@ var require_data_url = __commonJS({
     "use strict";
     var assert2 = __require("node:assert");
     var { forgivingBase64, collectASequenceOfCodePoints, collectASequenceOfCodePointsFast, isomorphicDecode, removeASCIIWhitespace, removeChars } = require_infra();
-    var encoder3 = new TextEncoder();
+    var encoder4 = new TextEncoder();
     var HTTP_TOKEN_CODEPOINTS = /^[-!#$%&'*+.^_|~A-Za-z0-9]+$/u;
     var HTTP_WHITESPACE_REGEX = /[\u000A\u000D\u0009\u0020]/u;
     var HTTP_QUOTED_STRING_TOKENS = /^[\u0009\u0020-\u007E\u0080-\u00FF]+$/u;
@@ -162411,7 +162411,7 @@ var require_data_url = __commonJS({
       return serialized;
     }
     function stringPercentDecode(input2) {
-      const bytes = encoder3.encode(input2);
+      const bytes = encoder4.encode(input2);
       return percentDecode(bytes);
     }
     function isHexCharByte(byte) {
@@ -166529,15 +166529,15 @@ var require_client_h2 = __commonJS({
       } catch {
       }
     }
-    function onHttp2RemoteSettings(settings2) {
-      this[kClient][kMaxConcurrentStreams] = settings2.maxConcurrentStreams ?? this[kClient][kMaxConcurrentStreams];
-      if (this[kRemoteSettings] === true && this[kEnableConnectProtocol] === true && settings2.enableConnectProtocol === false) {
+    function onHttp2RemoteSettings(settings3) {
+      this[kClient][kMaxConcurrentStreams] = settings3.maxConcurrentStreams ?? this[kClient][kMaxConcurrentStreams];
+      if (this[kRemoteSettings] === true && this[kEnableConnectProtocol] === true && settings3.enableConnectProtocol === false) {
         const err2 = new InformationalError("HTTP/2: Server disabled extended CONNECT protocol against RFC-8441");
         this[kSocket][kError] = err2;
         this[kClient][kOnError](err2);
         return;
       }
-      this[kEnableConnectProtocol] = settings2.enableConnectProtocol ?? this[kEnableConnectProtocol];
+      this[kEnableConnectProtocol] = settings3.enableConnectProtocol ?? this[kEnableConnectProtocol];
       this[kRemoteSettings] = true;
       this[kClient][kResume]();
     }
@@ -172291,7 +172291,7 @@ var require_mock_client = __commonJS({
       kIgnoreTrailingSlash
     } = require_mock_symbols();
     var { MockInterceptor } = require_mock_interceptor();
-    var Symbols2 = require_symbols();
+    var Symbols3 = require_symbols();
     var { InvalidArgumentError } = require_errors2();
     var MockClient = class extends Client2 {
       constructor(origin, opts) {
@@ -172309,7 +172309,7 @@ var require_mock_client = __commonJS({
         this.dispatch = buildMockDispatch.call(this);
         this.close = this[kClose];
       }
-      get [Symbols2.kConnected]() {
+      get [Symbols3.kConnected]() {
         return this[kConnected];
       }
       /**
@@ -172327,7 +172327,7 @@ var require_mock_client = __commonJS({
       async [kClose]() {
         await promisify4(this[kOriginalClose])();
         this[kConnected] = 0;
-        this[kMockAgent][Symbols2.kClients].delete(this[kOrigin]);
+        this[kMockAgent][Symbols3.kClients].delete(this[kOrigin]);
       }
     };
     module.exports = MockClient;
@@ -172552,7 +172552,7 @@ var require_mock_pool = __commonJS({
       kIgnoreTrailingSlash
     } = require_mock_symbols();
     var { MockInterceptor } = require_mock_interceptor();
-    var Symbols2 = require_symbols();
+    var Symbols3 = require_symbols();
     var { InvalidArgumentError } = require_errors2();
     var MockPool = class extends Pool2 {
       constructor(origin, opts) {
@@ -172570,7 +172570,7 @@ var require_mock_pool = __commonJS({
         this.dispatch = buildMockDispatch.call(this);
         this.close = this[kClose];
       }
-      get [Symbols2.kConnected]() {
+      get [Symbols3.kConnected]() {
         return this[kConnected];
       }
       /**
@@ -172588,7 +172588,7 @@ var require_mock_pool = __commonJS({
       async [kClose]() {
         await promisify4(this[kOriginalClose])();
         this[kConnected] = 0;
-        this[kMockAgent][Symbols2.kClients].delete(this[kOrigin]);
+        this[kMockAgent][Symbols3.kClients].delete(this[kOrigin]);
       }
     };
     module.exports = MockPool;
@@ -184596,10 +184596,10 @@ var require_eventsource = __commonJS({
           lastEventId: "",
           reconnectionTime: eventSourceInitDict.node.reconnectionTime
         };
-        const settings2 = environmentSettingsObject;
+        const settings3 = environmentSettingsObject;
         let urlRecord;
         try {
-          urlRecord = new URL(url2, settings2.settingsObject.baseUrl);
+          urlRecord = new URL(url2, settings3.settingsObject.baseUrl);
           this.#state.origin = urlRecord.origin;
         } catch (e2) {
           throw new DOMException(e2, "SyntaxError");
@@ -185426,7 +185426,7 @@ var require_codegen = __commonJS({
         return this.rhs instanceof code_1._CodeOrName ? this.rhs.names : {};
       }
     };
-    var Assign2 = class extends Node {
+    var Assign3 = class extends Node {
       constructor(lhs, rhs, sideEffects) {
         super();
         this.lhs = lhs;
@@ -185447,7 +185447,7 @@ var require_codegen = __commonJS({
         return addExprNames(names2, this.rhs);
       }
     };
-    var AssignOp = class extends Assign2 {
+    var AssignOp = class extends Assign3 {
       constructor(lhs, op, rhs, sideEffects) {
         super(lhs, rhs, sideEffects);
         this.op = op;
@@ -185556,7 +185556,7 @@ var require_codegen = __commonJS({
     var Else = class extends BlockNode {
     };
     Else.kind = "else";
-    var If3 = class _If extends BlockNode {
+    var If4 = class _If extends BlockNode {
       constructor(condition, nodes) {
         super(nodes);
         this.condition = condition;
@@ -185604,7 +185604,7 @@ var require_codegen = __commonJS({
         return names2;
       }
     };
-    If3.kind = "if";
+    If4.kind = "if";
     var For = class extends BlockNode {
     };
     For.kind = "for";
@@ -185792,7 +185792,7 @@ var require_codegen = __commonJS({
       }
       // assignment code
       assign(lhs, rhs, sideEffects) {
-        return this._leafNode(new Assign2(lhs, rhs, sideEffects));
+        return this._leafNode(new Assign3(lhs, rhs, sideEffects));
       }
       // `+=` code
       add(lhs, rhs) {
@@ -185823,7 +185823,7 @@ var require_codegen = __commonJS({
       }
       // `if` clause (or statement if `thenBody` and, optionally, `elseBody` are passed)
       if(condition, thenBody, elseBody) {
-        this._blockNode(new If3(condition));
+        this._blockNode(new If4(condition));
         if (thenBody && elseBody) {
           this.code(thenBody).else().code(elseBody).endIf();
         } else if (thenBody) {
@@ -185835,7 +185835,7 @@ var require_codegen = __commonJS({
       }
       // `else if` clause - invalid without `if` or after `else` clauses
       elseIf(condition) {
-        return this._elseNode(new If3(condition));
+        return this._elseNode(new If4(condition));
       }
       // `else` clause - only valid after `if` or `else if` clauses
       else() {
@@ -185843,7 +185843,7 @@ var require_codegen = __commonJS({
       }
       // end `if` statement (needed if gen.if was used only with condition)
       endIf() {
-        return this._endBlockNode(If3, Else);
+        return this._endBlockNode(If4, Else);
       }
       _for(node2, forBody) {
         this._blockNode(node2);
@@ -185978,7 +185978,7 @@ var require_codegen = __commonJS({
       }
       _elseNode(node2) {
         const n = this._currNode;
-        if (!(n instanceof If3)) {
+        if (!(n instanceof If4)) {
           throw new Error('CodeGen: "else" without "if"');
         }
         this._currNode = n.else = node2;
@@ -186199,14 +186199,14 @@ var require_util9 = __commonJS({
       });
     }
     exports.useFunc = useFunc;
-    var Type3;
-    (function(Type4) {
-      Type4[Type4["Num"] = 0] = "Num";
-      Type4[Type4["Str"] = 1] = "Str";
-    })(Type3 || (exports.Type = Type3 = {}));
+    var Type4;
+    (function(Type5) {
+      Type5[Type5["Num"] = 0] = "Num";
+      Type5[Type5["Str"] = 1] = "Str";
+    })(Type4 || (exports.Type = Type4 = {}));
     function getErrorPath(dataProp, dataPropType, jsPropertySyntax) {
       if (dataProp instanceof codegen_1.Name) {
-        const isNumber = dataPropType === Type3.Num;
+        const isNumber = dataPropType === Type4.Num;
         return jsPropertySyntax ? isNumber ? (0, codegen_1._)`"[" + ${dataProp} + "]"` : (0, codegen_1._)`"['" + ${dataProp} + "']"` : isNumber ? (0, codegen_1._)`"/" + ${dataProp}` : (0, codegen_1._)`"/" + ${dataProp}.replace(/~/g, "~0").replace(/\\//g, "~1")`;
       }
       return jsPropertySyntax ? (0, codegen_1.getProperty)(dataProp).toString() : "/" + escapeJsonPointer(dataProp);
@@ -194772,10 +194772,10 @@ function Merge(left, right) {
 }
 function Create(hidden, enumerable, options = {}) {
   Metrics.create += 1;
-  const settings2 = settings_exports.Get();
+  const settings3 = settings_exports.Get();
   const withOptions = Merge(enumerable, options);
-  const withHidden = settings2.enumerableKind ? Merge(withOptions, hidden) : MergeHidden(withOptions, hidden);
-  return settings2.immutableTypes ? Object.freeze(withHidden) : withHidden;
+  const withHidden = settings3.enumerableKind ? Merge(withOptions, hidden) : MergeHidden(withOptions, hidden);
+  return settings3.immutableTypes ? Object.freeze(withHidden) : withHidden;
 }
 
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/system/memory/discard.mjs
@@ -194795,13 +194795,13 @@ function Discard(value3, propertyKeys) {
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/system/memory/update.mjs
 function Update(current, hidden, enumerable) {
   Metrics.update += 1;
-  const settings2 = settings_exports.Get();
+  const settings3 = settings_exports.Get();
   const result = Clone(current);
   for (const key of Object.keys(hidden)) {
     Object.defineProperty(result, key, {
       configurable: true,
       writable: true,
-      enumerable: settings2.enumerableKind,
+      enumerable: settings3.enumerableKind,
       value: hidden[key]
     });
   }
@@ -195115,21 +195115,21 @@ function IsIEEE754(value3) {
   return typeof value3 === "number";
 }
 var ByteMarker;
-(function(ByteMarker2) {
-  ByteMarker2[ByteMarker2["Array"] = 0] = "Array";
-  ByteMarker2[ByteMarker2["BigInt"] = 1] = "BigInt";
-  ByteMarker2[ByteMarker2["Boolean"] = 2] = "Boolean";
-  ByteMarker2[ByteMarker2["Date"] = 3] = "Date";
-  ByteMarker2[ByteMarker2["Constructor"] = 4] = "Constructor";
-  ByteMarker2[ByteMarker2["Function"] = 5] = "Function";
-  ByteMarker2[ByteMarker2["Null"] = 6] = "Null";
-  ByteMarker2[ByteMarker2["Number"] = 7] = "Number";
-  ByteMarker2[ByteMarker2["Object"] = 8] = "Object";
-  ByteMarker2[ByteMarker2["RegExp"] = 9] = "RegExp";
-  ByteMarker2[ByteMarker2["String"] = 10] = "String";
-  ByteMarker2[ByteMarker2["Symbol"] = 11] = "Symbol";
-  ByteMarker2[ByteMarker2["TypeArray"] = 12] = "TypeArray";
-  ByteMarker2[ByteMarker2["Undefined"] = 13] = "Undefined";
+(function(ByteMarker3) {
+  ByteMarker3[ByteMarker3["Array"] = 0] = "Array";
+  ByteMarker3[ByteMarker3["BigInt"] = 1] = "BigInt";
+  ByteMarker3[ByteMarker3["Boolean"] = 2] = "Boolean";
+  ByteMarker3[ByteMarker3["Date"] = 3] = "Date";
+  ByteMarker3[ByteMarker3["Constructor"] = 4] = "Constructor";
+  ByteMarker3[ByteMarker3["Function"] = 5] = "Function";
+  ByteMarker3[ByteMarker3["Null"] = 6] = "Null";
+  ByteMarker3[ByteMarker3["Number"] = 7] = "Number";
+  ByteMarker3[ByteMarker3["Object"] = 8] = "Object";
+  ByteMarker3[ByteMarker3["RegExp"] = 9] = "RegExp";
+  ByteMarker3[ByteMarker3["String"] = 10] = "String";
+  ByteMarker3[ByteMarker3["Symbol"] = 11] = "Symbol";
+  ByteMarker3[ByteMarker3["TypeArray"] = 12] = "TypeArray";
+  ByteMarker3[ByteMarker3["Undefined"] = 13] = "Undefined";
 })(ByteMarker || (ByteMarker = {}));
 var Accumulator = BigInt("14695981039346656037");
 var [Prime, Size] = [BigInt("1099511628211"), BigInt(
@@ -196103,11 +196103,11 @@ function BaseMapping(input2) {
 function WithMapping(input2) {
   return guard_exports.IsEqual(input2.length, 2) ? input2[1] : [];
 }
-function FactorIndexArray(Type3, indexArray) {
+function FactorIndexArray(Type4, indexArray) {
   return indexArray.reduce((result, left) => {
     const _left = left;
     return guard_exports.IsEqual(_left.length, 1) ? IndexDeferred(result, _left[0]) : guard_exports.IsEqual(_left.length, 0) ? _Array_(result) : Unreachable2();
-  }, Type3);
+  }, Type4);
 }
 function FactorExtends(type, extend2) {
   return guard_exports.IsEqual(extend2.length, 3) ? ConditionalDeferred(type, extend2[0], extend2[1], extend2[2]) : type;
@@ -196472,7 +196472,7 @@ function Trim(input2) {
 
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/type/script/token/internal/optional.mjs
 function Optional2(value3, input2) {
-  return Match2(Take([value3], input2), (Optional4, Rest2) => [Optional4, Rest2], () => ["", input2]);
+  return Match2(Take([value3], input2), (Optional7, Rest3) => [Optional7, Rest3], () => ["", input2]);
 }
 
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/type/script/token/internal/many.mjs
@@ -196480,7 +196480,7 @@ function IsDiscard(discard, input2) {
   return discard.includes(input2);
 }
 function Many(allowed, discard, input2, result = "") {
-  return Match2(Take(allowed, input2), (Char, Rest2) => IsDiscard(discard, Char) ? Many(allowed, discard, Rest2, result) : Many(allowed, discard, Rest2, `${result}${Char}`), () => [result, input2]);
+  return Match2(Take(allowed, input2), (Char, Rest3) => IsDiscard(discard, Char) ? Many(allowed, discard, Rest3, result) : Many(allowed, discard, Rest3, `${result}${Char}`), () => [result, input2]);
 }
 
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/type/script/token/unsigned_integer.mjs
@@ -196492,9 +196492,9 @@ function TakeDigits(input2) {
   return Many(AllowedDigits, [UnderScore], input2);
 }
 function TakeUnsignedInteger(input2) {
-  return Match2(Take([Zero], input2), (Zero2, ZeroRest) => [Zero2, ZeroRest], () => Match2(
+  return Match2(Take([Zero], input2), (Zero3, ZeroRest) => [Zero3, ZeroRest], () => Match2(
     TakeNonZero(input2),
-    (NonZero2, NonZeroRest) => Match2(TakeDigits(NonZeroRest), (Digits, DigitsRest) => [`${NonZero2}${Digits}`, DigitsRest], () => []),
+    (NonZero3, NonZeroRest) => Match2(TakeDigits(NonZeroRest), (Digits, DigitsRest) => [`${NonZero3}${Digits}`, DigitsRest], () => []),
     // fail: did not match Digits
     () => []
   ));
@@ -196510,7 +196510,7 @@ function TakeSign(input2) {
 function TakeSignedInteger(input2) {
   return Match2(
     TakeSign(input2),
-    (Sign, SignRest) => Match2(UnsignedInteger(SignRest), (UnsignedInteger2, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger2}`, UnsignedIntegerRest], () => []),
+    (Sign, SignRest) => Match2(UnsignedInteger(SignRest), (UnsignedInteger3, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger3}`, UnsignedIntegerRest], () => []),
     // fail: did not match unsigned integer
     () => []
   );
@@ -196523,7 +196523,7 @@ function Integer2(input2) {
 function TakeBigInt(input2) {
   return Match2(
     Integer2(input2),
-    (Integer3, IntegerRest) => Match2(Take(["n"], IntegerRest), (_N, NRest) => [`${Integer3}`, NRest], () => []),
+    (Integer5, IntegerRest) => Match2(Take(["n"], IntegerRest), (_N, NRest) => [`${Integer5}`, NRest], () => []),
     // fail: did not match 'n'
     () => []
   );
@@ -196547,12 +196547,12 @@ function TakeInitial(input2) {
 }
 var Remaining = [...Initial, ...Digit];
 function TakeRemaining(input2, result = "") {
-  return Match2(Take(Remaining, input2), (Remaining2, RemainingRest) => TakeRemaining(RemainingRest, `${result}${Remaining2}`), () => [result, input2]);
+  return Match2(Take(Remaining, input2), (Remaining3, RemainingRest) => TakeRemaining(RemainingRest, `${result}${Remaining3}`), () => [result, input2]);
 }
 function TakeIdent(input2) {
   return Match2(
     TakeInitial(input2),
-    (Initial2, InitialRest) => Match2(TakeRemaining(InitialRest), (Remaining2, RemainingRest) => [`${Initial2}${Remaining2}`, RemainingRest], () => []),
+    (Initial3, InitialRest) => Match2(TakeRemaining(InitialRest), (Remaining3, RemainingRest) => [`${Initial3}${Remaining3}`, RemainingRest], () => []),
     // fail: did not match Remaining
     () => []
   );
@@ -196572,7 +196572,7 @@ function TakeFractional(input2) {
 function LeadingDot(input2) {
   return Match2(
     Take([Dot], input2),
-    (Dot2, DotRest) => Match2(TakeFractional(DotRest), (Fractional, FractionalRest) => [`0${Dot2}${Fractional}`, FractionalRest], () => []),
+    (Dot3, DotRest) => Match2(TakeFractional(DotRest), (Fractional, FractionalRest) => [`0${Dot3}${Fractional}`, FractionalRest], () => []),
     // fail: did not match Fractional
     () => []
   );
@@ -196580,11 +196580,11 @@ function LeadingDot(input2) {
 function LeadingInteger(input2) {
   return Match2(
     UnsignedInteger(input2),
-    (Integer3, IntegerRest) => Match2(
+    (Integer5, IntegerRest) => Match2(
       Take([Dot], IntegerRest),
-      (Dot2, DotRest) => Match2(TakeFractional(DotRest), (Fractional, FractionalRest) => [`${Integer3}${Dot2}${Fractional}`, FractionalRest], () => [`${Integer3}`, DotRest]),
+      (Dot3, DotRest) => Match2(TakeFractional(DotRest), (Fractional, FractionalRest) => [`${Integer5}${Dot3}${Fractional}`, FractionalRest], () => [`${Integer5}`, DotRest]),
       // fail: did not match Fractional, use Integer
-      () => [`${Integer3}`, IntegerRest]
+      () => [`${Integer5}`, IntegerRest]
     ),
     // fail: did not match Dot, use Integer
     () => []
@@ -196604,7 +196604,7 @@ function TakeSign2(input2) {
 function TakeSignedNumber(input2) {
   return Match2(
     TakeSign2(input2),
-    (Sign, SignRest) => Match2(UnsignedNumber(SignRest), (UnsignedInteger2, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger2}`, UnsignedIntegerRest], () => []),
+    (Sign, SignRest) => Match2(UnsignedNumber(SignRest), (UnsignedInteger3, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger3}`, UnsignedIntegerRest], () => []),
     // fail: did not match unsigned integer
     () => []
   );
@@ -196624,7 +196624,7 @@ function IsInputMatchSentinal(end, input2) {
 function Until(end, input2, result = "") {
   return Match2(
     TakeOne(input2),
-    (One, Rest2) => IsInputMatchSentinal(end, input2) ? [result, input2] : Until(end, Rest2, `${result}${One}`),
+    (One, Rest3) => IsInputMatchSentinal(end, input2) ? [result, input2] : Until(end, Rest3, `${result}${One}`),
     () => []
   );
 }
@@ -196633,9 +196633,9 @@ function Until(end, input2, result = "") {
 function MultiLine(start, end, input2) {
   return Match2(
     Take([start], input2),
-    (_2, Rest2) => Match2(
-      Until([end], Rest2),
-      (Until2, UntilRest) => Match2(Take([end], UntilRest), (_3, Rest3) => [`${Until2}`, Rest3], () => []),
+    (_2, Rest3) => Match2(
+      Until([end], Rest3),
+      (Until3, UntilRest) => Match2(Take([end], UntilRest), (_3, Rest4) => [`${Until3}`, Rest4], () => []),
       // fail: did not match End
       () => []
     ),
@@ -196646,9 +196646,9 @@ function MultiLine(start, end, input2) {
 function SingleLine(start, end, input2) {
   return Match2(
     Take([start], input2),
-    (_2, Rest2) => Match2(
-      Until([NewLine, end], Rest2),
-      (Until2, UntilRest) => Match2(Take([end], UntilRest), (_3, EndRest) => [`${Until2}`, EndRest], () => []),
+    (_2, Rest3) => Match2(
+      Until([NewLine, end], Rest3),
+      (Until3, UntilRest) => Match2(Take([end], UntilRest), (_3, EndRest) => [`${Until3}`, EndRest], () => []),
       // fail: did not match End
       () => []
     ),
@@ -196668,7 +196668,7 @@ function TakeSpan(quote, input2) {
   return Span(quote, quote, false, input2);
 }
 function TakeString(quotes, input2) {
-  return Match2(TakeInitial2(quotes, input2), (Initial2, InitialRest) => TakeSpan(Initial2, `${Initial2}${InitialRest}`), () => []);
+  return Match2(TakeInitial2(quotes, input2), (Initial3, InitialRest) => TakeSpan(Initial3, `${Initial3}${InitialRest}`), () => []);
 }
 function String3(quotes, input2) {
   return TakeString(quotes, Trim(input2));
@@ -196676,7 +196676,7 @@ function String3(quotes, input2) {
 
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/type/script/token/until_1.mjs
 function Until_1(end, input2) {
-  return Match2(Until(end, input2), (Until2, UntilRest) => IsEqual(Until2, "") ? [] : [Until2, UntilRest], () => []);
+  return Match2(Until(end, input2), (Until3, UntilRest) => IsEqual(Until3, "") ? [] : [Until3, UntilRest], () => []);
 }
 
 // node_modules/@earendil-works/pi-coding-agent/node_modules/typebox/build/type/script/parser.mjs
@@ -203092,12 +203092,12 @@ function Errors(...args) {
     3: (context2, schema2, value4) => [context2, schema2, value4],
     2: (schema2, value4) => [{}, schema2, value4]
   });
-  const settings2 = settings_exports.Get();
+  const settings3 = settings_exports.Get();
   const locale2 = Get2();
   const errors = [];
   const stack = new Stack(context, schema);
   const errorContext = new ErrorContext((error61) => {
-    if (guard_exports.IsGreaterEqualThan(errors.length, settings2.maxErrors))
+    if (guard_exports.IsGreaterEqualThan(errors.length, settings3.maxErrors))
       return;
     return errors.push({ ...error61, message: locale2(error61) });
   });
@@ -226064,10 +226064,10 @@ function estimateContextTokens2(messages) {
     lastUsageIndex: usageInfo.index
   };
 }
-function shouldCompact(contextTokens, contextWindow, settings2) {
-  if (!settings2.enabled)
+function shouldCompact(contextTokens, contextWindow, settings3) {
+  if (!settings3.enabled)
     return false;
-  return contextTokens > contextWindow - settings2.reserveTokens;
+  return contextTokens > contextWindow - settings3.reserveTokens;
 }
 var ESTIMATED_IMAGE_CHARS2 = 4800;
 function estimateTextAndImageContentChars2(content) {
@@ -226361,7 +226361,7 @@ ${previousSummary}
   const textContent = contentText(response2.content);
   return { text: textContent, usage: response2.usage };
 }
-function prepareCompaction(pathEntries, settings2) {
+function prepareCompaction(pathEntries, settings3) {
   if (pathEntries.length > 0 && pathEntries[pathEntries.length - 1].type === "compaction") {
     return void 0;
   }
@@ -226382,7 +226382,7 @@ function prepareCompaction(pathEntries, settings2) {
   }
   const boundaryEnd = pathEntries.length;
   const tokensBefore = estimateContextTokens2(buildSessionContext(pathEntries).messages).tokens;
-  const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings2.keepRecentTokens);
+  const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings3.keepRecentTokens);
   const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
   if (!firstKeptEntry?.id) {
     return void 0;
@@ -226420,7 +226420,7 @@ function prepareCompaction(pathEntries, settings2) {
     tokensBefore,
     previousSummary,
     fileOps,
-    settings: settings2
+    settings: settings3
   };
 }
 var TURN_PREFIX_SUMMARIZATION_PROMPT = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
@@ -226438,18 +226438,18 @@ Summarize the prefix to provide context for the retained suffix:
 
 Be concise. Focus on what's needed to understand the kept suffix.`;
 async function compact(preparation, model, apiKey, headers, customInstructions, signal, thinkingLevel, streamFn, env2, retry, callbacks, sessionId) {
-  const { firstKeptEntryId, messagesToSummarize, turnPrefixMessages, isSplitTurn, tokensBefore, previousSummary, fileOps, settings: settings2 } = preparation;
+  const { firstKeptEntryId, messagesToSummarize, turnPrefixMessages, isSplitTurn, tokensBefore, previousSummary, fileOps, settings: settings3 } = preparation;
   let summary;
   let summaryUsage;
   if (isSplitTurn && turnPrefixMessages.length > 0) {
     let historyText = "No prior history.";
     let historyUsage;
     if (messagesToSummarize.length > 0) {
-      const historyResult = await generateSummaryWithUsage(messagesToSummarize, model, settings2.reserveTokens, apiKey, headers, signal, customInstructions, previousSummary, thinkingLevel, streamFn, env2, retry, callbacks, sessionId);
+      const historyResult = await generateSummaryWithUsage(messagesToSummarize, model, settings3.reserveTokens, apiKey, headers, signal, customInstructions, previousSummary, thinkingLevel, streamFn, env2, retry, callbacks, sessionId);
       historyText = historyResult.text;
       historyUsage = historyResult.usage;
     }
-    const turnPrefixResult = await generateTurnPrefixSummary(turnPrefixMessages, model, settings2.reserveTokens, apiKey, headers, env2, signal, thinkingLevel, streamFn, retry, callbacks, sessionId);
+    const turnPrefixResult = await generateTurnPrefixSummary(turnPrefixMessages, model, settings3.reserveTokens, apiKey, headers, env2, signal, thinkingLevel, streamFn, retry, callbacks, sessionId);
     summary = `${historyText}
 
 ---
@@ -226459,7 +226459,7 @@ async function compact(preparation, model, apiKey, headers, customInstructions, 
 ${turnPrefixResult.text}`;
     summaryUsage = historyUsage ? combineUsage(historyUsage, turnPrefixResult.usage) : turnPrefixResult.usage;
   } else {
-    const result = await generateSummaryWithUsage(messagesToSummarize, model, settings2.reserveTokens, apiKey, headers, signal, customInstructions, previousSummary, thinkingLevel, streamFn, env2, retry, callbacks, sessionId);
+    const result = await generateSummaryWithUsage(messagesToSummarize, model, settings3.reserveTokens, apiKey, headers, signal, customInstructions, previousSummary, thinkingLevel, streamFn, env2, retry, callbacks, sessionId);
     summary = result.text;
     summaryUsage = result.usage;
   }
@@ -229171,10 +229171,10 @@ function estimateContextTokens3(messages) {
     lastUsageIndex: usageInfo.index
   };
 }
-function shouldCompact2(contextTokens, contextWindow, settings2) {
-  if (!settings2.enabled)
+function shouldCompact2(contextTokens, contextWindow, settings3) {
+  if (!settings3.enabled)
     return false;
-  return contextTokens > contextWindow - settings2.reserveTokens;
+  return contextTokens > contextWindow - settings3.reserveTokens;
 }
 var ESTIMATED_IMAGE_CHARS3 = 4800;
 function estimateTextAndImageContentChars3(content) {
@@ -229438,7 +229438,7 @@ ${previousSummary}
   const textContent = contentText(response2.content);
   return ok({ text: textContent, usage: response2.usage });
 }
-function prepareCompaction2(pathEntries, settings2) {
+function prepareCompaction2(pathEntries, settings3) {
   if (pathEntries.length === 0 || pathEntries[pathEntries.length - 1].type === "compaction") {
     return ok(void 0);
   }
@@ -229466,7 +229466,7 @@ function prepareCompaction2(pathEntries, settings2) {
   }
   const boundaryEnd = compactableEntries.length;
   const tokensBefore = estimateContextTokens3(buildContextEntries2(pathEntries).flatMap(sessionEntryToContextMessages2)).tokens;
-  const cutPoint = findCutPoint2(compactableEntries, 0, boundaryEnd, settings2.keepRecentTokens);
+  const cutPoint = findCutPoint2(compactableEntries, 0, boundaryEnd, settings3.keepRecentTokens);
   const historyEnd = cutPoint.isSplitTurn ? cutPoint.turnStartIndex : cutPoint.firstKeptEntryIndex;
   const messagesToSummarize = [];
   for (let i2 = 0; i2 < historyEnd; i2++) {
@@ -229502,7 +229502,7 @@ function prepareCompaction2(pathEntries, settings2) {
     tokensBefore,
     previousSummary,
     fileOps,
-    settings: settings2
+    settings: settings3
   });
 }
 var TURN_PREFIX_SUMMARIZATION_PROMPT2 = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
@@ -229524,20 +229524,20 @@ function compact2(preparation, models, model, customInstructions, thinkingLevel,
 }
 async function compactWithRequest(preparation, options, request, context) {
   const { model, customInstructions, thinkingLevel } = options;
-  const { messagesToSummarize, turnPrefixMessages, retainedTail, isSplitTurn, tokensBefore, previousSummary, fileOps, settings: settings2 } = preparation;
+  const { messagesToSummarize, turnPrefixMessages, retainedTail, isSplitTurn, tokensBefore, previousSummary, fileOps, settings: settings3 } = preparation;
   let summary;
   let summaryUsage;
   if (isSplitTurn && turnPrefixMessages.length > 0) {
     let historyText = "No prior history.";
     let historyUsage;
     if (messagesToSummarize.length > 0) {
-      const historyResult = await generateSummaryWithRequest(messagesToSummarize, { model, reserveTokens: settings2.reserveTokens, customInstructions, previousSummary, thinkingLevel }, request, context);
+      const historyResult = await generateSummaryWithRequest(messagesToSummarize, { model, reserveTokens: settings3.reserveTokens, customInstructions, previousSummary, thinkingLevel }, request, context);
       if (!historyResult.ok)
         return err(historyResult.error);
       historyText = historyResult.value.text;
       historyUsage = historyResult.value.usage;
     }
-    const turnPrefixResult = await generateTurnPrefixSummary2(turnPrefixMessages, model, settings2.reserveTokens, thinkingLevel, request, context);
+    const turnPrefixResult = await generateTurnPrefixSummary2(turnPrefixMessages, model, settings3.reserveTokens, thinkingLevel, request, context);
     if (!turnPrefixResult.ok)
       return err(turnPrefixResult.error);
     summary = `${historyText}
@@ -229549,7 +229549,7 @@ async function compactWithRequest(preparation, options, request, context) {
 ${turnPrefixResult.value.text}`;
     summaryUsage = historyUsage ? addUsage(historyUsage, turnPrefixResult.value.usage) : turnPrefixResult.value.usage;
   } else {
-    const summaryResult = await generateSummaryWithRequest(messagesToSummarize, { model, reserveTokens: settings2.reserveTokens, customInstructions, previousSummary, thinkingLevel }, request, context);
+    const summaryResult = await generateSummaryWithRequest(messagesToSummarize, { model, reserveTokens: settings3.reserveTokens, customInstructions, previousSummary, thinkingLevel }, request, context);
     if (!summaryResult.ok)
       return err(summaryResult.error);
     summary = summaryResult.value.text;
@@ -229605,8 +229605,8 @@ function validateRetryPolicy(policy) {
     throw new RangeError("Retry policy values must be finite non-negative safe integers");
   }
 }
-function validateCompactionSettings(settings2) {
-  if (!Number.isSafeInteger(settings2.reserveTokens) || settings2.reserveTokens < 0 || !Number.isSafeInteger(settings2.keepRecentTokens) || settings2.keepRecentTokens < 0) {
+function validateCompactionSettings(settings3) {
+  if (!Number.isSafeInteger(settings3.reserveTokens) || settings3.reserveTokens < 0 || !Number.isSafeInteger(settings3.keepRecentTokens) || settings3.keepRecentTokens < 0) {
     throw new RangeError("Compaction token counts must be finite non-negative safe integers");
   }
 }
@@ -233133,10 +233133,10 @@ async function recoverStructuralGeneration(lane, drive, effect) {
   return published.kind === "cancel_requested" ? { kind: "continue" } : published.value;
 }
 async function prepareCompactionThreshold(lane, drive, checkpoint) {
-  const settings2 = checkpoint.settings.compaction;
+  const settings3 = checkpoint.settings.compaction;
   const identity = lane.state.configuration.model;
   const model = lane.models.getModel(identity.provider, identity.modelId);
-  if (!settings2.enabled || model === void 0)
+  if (!settings3.enabled || model === void 0)
     return { kind: "result", value: void 0 };
   const path29 = await readBoundedEntries(lane, drive, checkpoint);
   if (path29.kind === "cancel_requested")
@@ -233155,10 +233155,10 @@ async function prepareCompactionThreshold(lane, drive, checkpoint) {
   if (triggerIndex === -1) {
     throw new SessionInvariantError(`Checkpoint trigger ${checkpoint.triggerEntryId} is missing from its Branch`);
   }
-  const prepared = prepareCompaction2(path29.value, settings2);
+  const prepared = prepareCompaction2(path29.value, settings3);
   if (!prepared.ok)
     throw prepared.error;
-  if (prepared.value === void 0 || !shouldCompact2(prepared.value.tokensBefore, model.contextWindow, settings2)) {
+  if (prepared.value === void 0 || !shouldCompact2(prepared.value.tokensBefore, model.contextWindow, settings3)) {
     return { kind: "result", value: void 0 };
   }
   return {
@@ -247621,8 +247621,8 @@ var AgentSession = class {
   }
   async _compactBeforeNextAssistantResponse(context) {
     const model = this.model;
-    const settings2 = this.settingsManager.getCompactionSettings();
-    if (!model || model.contextWindow <= 0 || !shouldCompact(estimateContextTokens2(context.messages).tokens, model.contextWindow, settings2)) {
+    const settings3 = this.settingsManager.getCompactionSettings();
+    if (!model || model.contextWindow <= 0 || !shouldCompact(estimateContextTokens2(context.messages).tokens, model.contextWindow, settings3)) {
       return context;
     }
     await this._runAutoCompaction("threshold", false);
@@ -247746,8 +247746,8 @@ var AgentSession = class {
     }
   };
   _willRetryAfterAgentEnd(event) {
-    const settings2 = this.settingsManager.getRetrySettings();
-    if (!settings2.enabled || this._retryAttempt >= settings2.maxRetries) {
+    const settings3 = this.settingsManager.getRetrySettings();
+    if (!settings3.enabled || this._retryAttempt >= settings3.maxRetries) {
       return false;
     }
     for (let i2 = event.messages.length - 1; i2 >= 0; i2--) {
@@ -248716,8 +248716,8 @@ ${args}` : skillBlock;
       }
       const { model: requestModel, apiKey, headers, env: env2 } = await this._getSummarizationRequestAuth(this.model);
       const pathEntries = this.sessionManager.getBranch();
-      const settings2 = this.settingsManager.getCompactionSettings();
-      const preparation = prepareCompaction(pathEntries, settings2);
+      const settings3 = this.settingsManager.getCompactionSettings();
+      const preparation = prepareCompaction(pathEntries, settings3);
       if (!preparation) {
         const lastEntry = pathEntries[pathEntries.length - 1];
         if (lastEntry?.type === "compaction") {
@@ -248858,8 +248858,8 @@ ${args}` : skillBlock;
    * @returns Whether the post-run loop should call `agent.continue()` for overflow recovery or queued messages
    */
   async _checkCompaction(assistantMessage, skipAbortedCheck = true) {
-    const settings2 = this.settingsManager.getCompactionSettings();
-    if (!settings2.enabled)
+    const settings3 = this.settingsManager.getCompactionSettings();
+    if (!settings3.enabled)
       return false;
     if (skipAbortedCheck && assistantMessage.stopReason === "aborted")
       return false;
@@ -248918,7 +248918,7 @@ ${args}` : skillBlock;
     } else {
       contextTokens = directContextTokens;
     }
-    if (shouldCompact(contextTokens, contextWindow, settings2)) {
+    if (shouldCompact(contextTokens, contextWindow, settings3)) {
       return await this._runAutoCompaction("threshold", false);
     }
     return false;
@@ -248934,7 +248934,7 @@ ${args}` : skillBlock;
    * @returns Whether the post-run loop should call `agent.continue()`
    */
   async _runAutoCompaction(reason, willRetry) {
-    const settings2 = this.settingsManager.getCompactionSettings();
+    const settings3 = this.settingsManager.getCompactionSettings();
     let started = false;
     let fromExtension = false;
     try {
@@ -248943,7 +248943,7 @@ ${args}` : skillBlock;
       }
       const { model: requestModel, apiKey, headers, env: env2 } = await this._getSummarizationRequestAuth(this.model);
       const pathEntries = this.sessionManager.getBranch();
-      const preparation = prepareCompaction(pathEntries, settings2);
+      const preparation = prepareCompaction(pathEntries, settings3);
       if (!preparation) {
         return false;
       }
@@ -249446,20 +249446,20 @@ ${args}` : skillBlock;
    * @returns true if the caller should continue the agent, false otherwise
    */
   async _prepareRetry(message) {
-    const settings2 = this.settingsManager.getRetrySettings();
-    if (!settings2.enabled) {
+    const settings3 = this.settingsManager.getRetrySettings();
+    if (!settings3.enabled) {
       return false;
     }
     this._retryAttempt++;
-    if (this._retryAttempt > settings2.maxRetries) {
+    if (this._retryAttempt > settings3.maxRetries) {
       this._retryAttempt--;
       return false;
     }
-    const delayMs = settings2.baseDelayMs * 2 ** (this._retryAttempt - 1);
+    const delayMs = settings3.baseDelayMs * 2 ** (this._retryAttempt - 1);
     this._emit({
       type: "auto_retry_start",
       attempt: this._retryAttempt,
-      maxAttempts: settings2.maxRetries,
+      maxAttempts: settings3.maxRetries,
       delayMs,
       errorMessage: message.errorMessage || "Unknown error"
     });
@@ -256590,9 +256590,9 @@ var SettingsManager = class _SettingsManager {
     return new _SettingsManager(storage, globalLoad.settings, projectLoad.settings, globalLoad.error, projectLoad.error, initialErrors, projectTrusted, settingsPaths);
   }
   /** Create an in-memory SettingsManager (no file I/O) */
-  static inMemory(settings2 = {}, options = {}) {
+  static inMemory(settings3 = {}, options = {}) {
     const storage = new InMemorySettingsStorage();
-    const initialSettings = _SettingsManager.migrateSettings(structuredClone(settings2));
+    const initialSettings = _SettingsManager.migrateSettings(structuredClone(settings3));
     storage.withLock("global", () => JSON.stringify(initialSettings, null, 2));
     return _SettingsManager.fromStorage(storage, options);
   }
@@ -256608,8 +256608,8 @@ var SettingsManager = class _SettingsManager {
     if (!content) {
       return {};
     }
-    const settings2 = JSON.parse(stripBom(content));
-    return _SettingsManager.migrateSettings(settings2);
+    const settings3 = JSON.parse(stripBom(content));
+    return _SettingsManager.migrateSettings(settings3);
   }
   static tryLoadFromStorage(storage, scope, projectTrusted = true) {
     try {
@@ -256619,28 +256619,28 @@ var SettingsManager = class _SettingsManager {
     }
   }
   /** Migrate old settings format to new format */
-  static migrateSettings(settings2) {
-    if ("queueMode" in settings2 && !("steeringMode" in settings2)) {
-      settings2.steeringMode = settings2.queueMode;
-      delete settings2.queueMode;
+  static migrateSettings(settings3) {
+    if ("queueMode" in settings3 && !("steeringMode" in settings3)) {
+      settings3.steeringMode = settings3.queueMode;
+      delete settings3.queueMode;
     }
-    if (!("transport" in settings2) && typeof settings2.websockets === "boolean") {
-      settings2.transport = settings2.websockets ? "websocket" : "sse";
-      delete settings2.websockets;
+    if (!("transport" in settings3) && typeof settings3.websockets === "boolean") {
+      settings3.transport = settings3.websockets ? "websocket" : "sse";
+      delete settings3.websockets;
     }
-    if ("skills" in settings2 && typeof settings2.skills === "object" && settings2.skills !== null && !Array.isArray(settings2.skills)) {
-      const skillsSettings = settings2.skills;
-      if (skillsSettings.enableSkillCommands !== void 0 && settings2.enableSkillCommands === void 0) {
-        settings2.enableSkillCommands = skillsSettings.enableSkillCommands;
+    if ("skills" in settings3 && typeof settings3.skills === "object" && settings3.skills !== null && !Array.isArray(settings3.skills)) {
+      const skillsSettings = settings3.skills;
+      if (skillsSettings.enableSkillCommands !== void 0 && settings3.enableSkillCommands === void 0) {
+        settings3.enableSkillCommands = skillsSettings.enableSkillCommands;
       }
       if (Array.isArray(skillsSettings.customDirectories) && skillsSettings.customDirectories.length > 0) {
-        settings2.skills = skillsSettings.customDirectories;
+        settings3.skills = skillsSettings.customDirectories;
       } else {
-        delete settings2.skills;
+        delete settings3.skills;
       }
     }
-    if ("retry" in settings2 && typeof settings2.retry === "object" && settings2.retry !== null && !Array.isArray(settings2.retry)) {
-      const retrySettings = settings2.retry;
+    if ("retry" in settings3 && typeof settings3.retry === "object" && settings3.retry !== null && !Array.isArray(settings3.retry)) {
+      const retrySettings = settings3.retry;
       const providerSettings = typeof retrySettings.provider === "object" && retrySettings.provider !== null ? retrySettings.provider : void 0;
       if (typeof retrySettings.maxDelayMs === "number" && (providerSettings?.maxRetryDelayMs === void 0 || providerSettings?.maxRetryDelayMs === null)) {
         retrySettings.provider = {
@@ -256650,7 +256650,7 @@ var SettingsManager = class _SettingsManager {
       }
       delete retrySettings.maxDelayMs;
     }
-    return settings2;
+    return settings3;
   }
   getGlobalSettings() {
     return structuredClone(this.globalSettings);
@@ -256799,9 +256799,9 @@ var SettingsManager = class _SettingsManager {
       this.persistScopedSettings("global", snapshotGlobalSettings, modifiedFields, modifiedNestedFields);
     });
   }
-  saveProjectSettings(settings2) {
+  saveProjectSettings(settings3) {
     this.assertProjectTrustedForWrite();
-    this.projectSettings = structuredClone(settings2);
+    this.projectSettings = structuredClone(settings3);
     this.settings = deepMergeSettings(this.globalSettings, this.projectSettings);
     if (this.projectSettingsLoadError) {
       return;
@@ -257116,8 +257116,8 @@ var SettingsManager = class _SettingsManager {
     this.save();
   }
   setProjectPackages(packages) {
-    this.updateProjectSettings("packages", (settings2) => {
-      settings2.packages = packages;
+    this.updateProjectSettings("packages", (settings3) => {
+      settings3.packages = packages;
     });
   }
   getExtensionPaths() {
@@ -257129,8 +257129,8 @@ var SettingsManager = class _SettingsManager {
     this.save();
   }
   setProjectExtensionPaths(paths) {
-    this.updateProjectSettings("extensions", (settings2) => {
-      settings2.extensions = paths;
+    this.updateProjectSettings("extensions", (settings3) => {
+      settings3.extensions = paths;
     });
   }
   getSkillPaths() {
@@ -257142,8 +257142,8 @@ var SettingsManager = class _SettingsManager {
     this.save();
   }
   setProjectSkillPaths(paths) {
-    this.updateProjectSettings("skills", (settings2) => {
-      settings2.skills = paths;
+    this.updateProjectSettings("skills", (settings3) => {
+      settings3.skills = paths;
     });
   }
   getPromptTemplatePaths() {
@@ -257155,8 +257155,8 @@ var SettingsManager = class _SettingsManager {
     this.save();
   }
   setProjectPromptTemplatePaths(paths) {
-    this.updateProjectSettings("prompts", (settings2) => {
-      settings2.prompts = paths;
+    this.updateProjectSettings("prompts", (settings3) => {
+      settings3.prompts = paths;
     });
   }
   getThemePaths() {
@@ -257168,8 +257168,8 @@ var SettingsManager = class _SettingsManager {
     this.save();
   }
   setProjectThemePaths(paths) {
-    this.updateProjectSettings("themes", (settings2) => {
-      settings2.themes = paths;
+    this.updateProjectSettings("themes", (settings3) => {
+      settings3.themes = paths;
     });
   }
   getEnableSkillCommands() {
@@ -262470,16 +262470,16 @@ function migrateAuthToAuthJson() {
   if (existsSync22(settingsPath)) {
     try {
       const content = readFileSync15(settingsPath, "utf-8");
-      const settings2 = JSON.parse(stripBom(content));
-      if (settings2.apiKeys && typeof settings2.apiKeys === "object") {
-        for (const [provider, key] of Object.entries(settings2.apiKeys)) {
+      const settings3 = JSON.parse(stripBom(content));
+      if (settings3.apiKeys && typeof settings3.apiKeys === "object") {
+        for (const [provider, key] of Object.entries(settings3.apiKeys)) {
           if (!migrated[provider] && typeof key === "string") {
             migrated[provider] = { type: "api_key", key };
             providers.push(provider);
           }
         }
-        delete settings2.apiKeys;
-        writeFileSync9(settingsPath, JSON.stringify(settings2, null, 2));
+        delete settings3.apiKeys;
+        writeFileSync9(settingsPath, JSON.stringify(settings3, null, 2));
       }
     } catch {
     }
@@ -279387,9 +279387,9 @@ var ResourceList = class {
   }
   toggleTopLevelResource(item, enabled) {
     const scope = item.metadata.scope;
-    const settings2 = scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+    const settings3 = scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
     const arrayKey = item.resourceType;
-    const current = settings2[arrayKey] ?? [];
+    const current = settings3[arrayKey] ?? [];
     const pattern = this.getResourcePattern(item);
     const disablePattern = `-${pattern}`;
     const enablePattern = `+${pattern}`;
@@ -279426,8 +279426,8 @@ var ResourceList = class {
   }
   togglePackageResource(item, enabled) {
     const scope = item.metadata.scope;
-    const settings2 = scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-    const packages = [...settings2.packages ?? []];
+    const settings3 = scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+    const packages = [...settings3.packages ?? []];
     const pkgIndex = packages.findIndex((pkg3) => {
       const source = typeof pkg3 === "string" ? pkg3 : pkg3.source;
       return source === item.metadata.source;
@@ -279627,8 +279627,8 @@ var ResourceList = class {
     return left === right;
   }
   findMatchingPackageSource(item, targetScope) {
-    const settings2 = targetScope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
-    return (settings2.packages ?? []).find((pkg2) => this.packageSourceStringMatches(item.metadata.source, this.getItemScope(item), typeof pkg2 === "string" ? pkg2 : pkg2.source, targetScope));
+    const settings3 = targetScope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
+    return (settings3.packages ?? []).find((pkg2) => this.packageSourceStringMatches(item.metadata.source, this.getItemScope(item), typeof pkg2 === "string" ? pkg2 : pkg2.source, targetScope));
   }
   getPatternEntryTarget(entry) {
     return entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
@@ -302761,8 +302761,8 @@ var ZodType2 = class {
     });
   }
   describe(description) {
-    const This2 = this.constructor;
-    return new This2({
+    const This3 = this.constructor;
+    return new This3({
       ...this._def,
       description
     });
@@ -310111,6 +310111,7 @@ var councilConfigSchema = external_exports.object({
     allowedWorkspaceRoots: external_exports.array(external_exports.string().min(1)).default([]),
     trustedSkills: external_exports.array(external_exports.string().min(1)).default([]),
     worktreeRetentionMs: external_exports.number().int().min(6e4).max(30 * 24 * 60 * 6e4).default(24 * 60 * 6e4),
+    expertLifetime: external_exports.enum(["host-bound", "detached"]).default("host-bound"),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
       timeoutMs: external_exports.number().int().min(3e4).max(18e5).default(6e5),
@@ -310132,6 +310133,7 @@ var councilConfigSchema = external_exports.object({
     allowedWorkspaceRoots: [],
     trustedSkills: [],
     worktreeRetentionMs: 24 * 60 * 6e4,
+    expertLifetime: "host-bound",
     workspaceProvisioning: {
       mode: "none",
       timeoutMs: 6e5,
@@ -313280,6 +313282,4412 @@ var SplitCouncilStateStore = class {
 
 // packages/pi-runtime/dist/pi-runtime.js
 import { readFile as readFile15 } from "node:fs/promises";
+
+// node_modules/typebox/build/system/memory/memory.mjs
+var memory_exports2 = {};
+__export(memory_exports2, {
+  Assign: () => Assign2,
+  Clone: () => Clone3,
+  Create: () => Create3,
+  Discard: () => Discard2,
+  Metrics: () => Metrics2,
+  Update: () => Update3
+});
+
+// node_modules/typebox/build/system/memory/metrics.mjs
+var Metrics2 = {
+  assign: 0,
+  create: 0,
+  clone: 0,
+  discard: 0,
+  update: 0
+};
+
+// node_modules/typebox/build/system/settings/settings.mjs
+var settings_exports2 = {};
+__export(settings_exports2, {
+  Get: () => Get5,
+  Reset: () => Reset3,
+  Set: () => Set5
+});
+
+// node_modules/typebox/build/guard/guard.mjs
+var guard_exports2 = {};
+__export(guard_exports2, {
+  Counted: () => Counted,
+  Entries: () => Entries4,
+  EntriesRegExp: () => EntriesRegExp2,
+  Every: () => Every3,
+  EveryAll: () => EveryAll2,
+  GraphemeCount: () => GraphemeCount4,
+  HasPropertyKey: () => HasPropertyKey3,
+  IsArray: () => IsArray4,
+  IsBigInt: () => IsBigInt4,
+  IsBoolean: () => IsBoolean5,
+  IsClassInstance: () => IsClassInstance2,
+  IsConstructor: () => IsConstructor4,
+  IsDeepEqual: () => IsDeepEqual3,
+  IsEqual: () => IsEqual3,
+  IsFunction: () => IsFunction4,
+  IsGreaterEqualThan: () => IsGreaterEqualThan3,
+  IsGreaterThan: () => IsGreaterThan3,
+  IsInteger: () => IsInteger4,
+  IsLessEqualThan: () => IsLessEqualThan3,
+  IsLessThan: () => IsLessThan3,
+  IsMaxLength: () => IsMaxLength6,
+  IsMinLength: () => IsMinLength6,
+  IsMultipleOf: () => IsMultipleOf3,
+  IsNull: () => IsNull4,
+  IsNumber: () => IsNumber5,
+  IsObject: () => IsObject4,
+  IsObjectNotArray: () => IsObjectNotArray3,
+  IsString: () => IsString5,
+  IsSymbol: () => IsSymbol4,
+  IsUndefined: () => IsUndefined4,
+  IsUnsafePropertyKey: () => IsUnsafePropertyKey2,
+  IsValueLike: () => IsValueLike2,
+  Keys: () => Keys3,
+  ShiftLeft: () => ShiftLeft2,
+  Some: () => Some,
+  SomeAll: () => SomeAll,
+  Symbols: () => Symbols2,
+  Values: () => Values2
+});
+
+// node_modules/typebox/build/guard/string.mjs
+function IsBetween2(value3, min, max) {
+  return value3 >= min && value3 <= max;
+}
+function IsZeroWidthJoiner2(value3) {
+  return value3 === 8205;
+}
+function IsHighSurrogate2(value3) {
+  return IsBetween2(value3, 55296, 56319);
+}
+function IsRegionalIndicator2(value3) {
+  return IsBetween2(value3, 127462, 127487);
+}
+function IsVariationSelector2(value3) {
+  return IsBetween2(value3, 65024, 65039);
+}
+function IsCombiningMark3(value3) {
+  return IsBetween2(value3, 768, 879) || IsBetween2(value3, 6832, 6911) || IsBetween2(value3, 7616, 7679) || IsBetween2(value3, 65056, 65071);
+}
+function CodePointLength2(value3) {
+  return value3 > 65535 ? 2 : 1;
+}
+function ConsumeModifiers2(value3, index3) {
+  while (index3 < value3.length) {
+    const point = value3.codePointAt(index3);
+    if (IsCombiningMark3(point) || IsVariationSelector2(point)) {
+      index3 += CodePointLength2(point);
+    } else {
+      break;
+    }
+  }
+  return index3;
+}
+function NextGraphemeClusterIndex2(value3, clusterStart) {
+  const startCP = value3.codePointAt(clusterStart);
+  let clusterEnd = clusterStart + CodePointLength2(startCP);
+  clusterEnd = ConsumeModifiers2(value3, clusterEnd);
+  while (clusterEnd < value3.length - 1 && IsZeroWidthJoiner2(value3.codePointAt(clusterEnd))) {
+    const nextCP = value3.codePointAt(clusterEnd + 1);
+    clusterEnd += 1 + CodePointLength2(nextCP);
+    clusterEnd = ConsumeModifiers2(value3, clusterEnd);
+  }
+  if (IsRegionalIndicator2(startCP) && clusterEnd < value3.length && IsRegionalIndicator2(value3.codePointAt(clusterEnd))) {
+    clusterEnd += CodePointLength2(value3.codePointAt(clusterEnd));
+  }
+  return clusterEnd;
+}
+function IsGraphemeCodePoint2(value3) {
+  return value3 >= 768 && // above special range
+  (IsHighSurrogate2(value3) || IsCombiningMark3(value3) || IsVariationSelector2(value3) || IsZeroWidthJoiner2(value3));
+}
+function GraphemeCount3(value3) {
+  let count = 0;
+  let index3 = 0;
+  while (index3 < value3.length) {
+    index3 = NextGraphemeClusterIndex2(value3, index3);
+    count++;
+  }
+  return count;
+}
+function IsMinLengthSegmented(value3, minLength) {
+  let count = 0;
+  let index3 = 0;
+  while (index3 < value3.length) {
+    index3 = NextGraphemeClusterIndex2(value3, index3);
+    if (++count >= minLength)
+      return true;
+  }
+  return false;
+}
+function IsMaxLengthSegmented(value3, maxLength) {
+  let count = 0;
+  let index3 = 0;
+  while (index3 < value3.length) {
+    index3 = NextGraphemeClusterIndex2(value3, index3);
+    if (++count > maxLength)
+      return false;
+  }
+  return true;
+}
+function IsMinLength5(value3, minLength) {
+  if (minLength === 0)
+    return true;
+  if (value3.length < minLength)
+    return false;
+  let index3 = 0;
+  while (true) {
+    if (IsGraphemeCodePoint2(value3.charCodeAt(index3))) {
+      return IsMinLengthSegmented(value3, minLength);
+    }
+    if (++index3 >= minLength)
+      return true;
+  }
+}
+function IsMaxLength5(value3, maxLength) {
+  if (value3.length <= maxLength)
+    return true;
+  let index3 = 0;
+  while (true) {
+    if (IsGraphemeCodePoint2(value3.charCodeAt(index3))) {
+      return IsMaxLengthSegmented(value3, maxLength);
+    }
+    if (++index3 > maxLength)
+      return false;
+  }
+}
+
+// node_modules/typebox/build/guard/guard.mjs
+function IsArray4(value3) {
+  return Array.isArray(value3);
+}
+function IsBigInt4(value3) {
+  return IsEqual3(typeof value3, "bigint");
+}
+function IsBoolean5(value3) {
+  return IsEqual3(typeof value3, "boolean");
+}
+function IsConstructor4(value3) {
+  if (IsUndefined4(value3) || !IsFunction4(value3))
+    return false;
+  const result = Function.prototype.toString.call(value3);
+  if (/^class\s/.test(result))
+    return true;
+  if (/\[native code\]/.test(result))
+    return true;
+  return false;
+}
+function IsFunction4(value3) {
+  return IsEqual3(typeof value3, "function");
+}
+function IsInteger4(value3) {
+  return Number.isInteger(value3);
+}
+function IsNull4(value3) {
+  return IsEqual3(value3, null);
+}
+function IsNumber5(value3) {
+  return Number.isFinite(value3);
+}
+function IsObjectNotArray3(value3) {
+  return IsObject4(value3) && !IsArray4(value3);
+}
+function IsObject4(value3) {
+  return IsEqual3(typeof value3, "object") && !IsNull4(value3);
+}
+function IsString5(value3) {
+  return IsEqual3(typeof value3, "string");
+}
+function IsSymbol4(value3) {
+  return IsEqual3(typeof value3, "symbol");
+}
+function IsUndefined4(value3) {
+  return IsEqual3(value3, void 0);
+}
+function IsEqual3(left, right) {
+  return left === right;
+}
+function IsGreaterThan3(left, right) {
+  return left > right;
+}
+function IsLessThan3(left, right) {
+  return left < right;
+}
+function IsLessEqualThan3(left, right) {
+  return left <= right;
+}
+function IsGreaterEqualThan3(left, right) {
+  return left >= right;
+}
+function IsMultipleOf3(dividend, divisor) {
+  if (IsBigInt4(dividend) || IsBigInt4(divisor)) {
+    return BigInt(dividend) % BigInt(divisor) === 0n;
+  }
+  const tolerance = 1e-10;
+  if (!IsNumber5(dividend))
+    return true;
+  if (IsInteger4(dividend) && 1 / divisor % 1 === 0)
+    return true;
+  const mod = dividend % divisor;
+  return Math.min(Math.abs(mod), Math.abs(mod - divisor), Math.abs(mod + divisor)) < tolerance;
+}
+function IsClassInstance2(value3) {
+  if (!IsObject4(value3))
+    return false;
+  const proto2 = globalThis.Object.getPrototypeOf(value3);
+  if (IsNull4(proto2))
+    return false;
+  return IsEqual3(typeof proto2.constructor, "function") && !(IsEqual3(proto2.constructor, globalThis.Object) || IsEqual3(proto2.constructor.name, "Object"));
+}
+function IsValueLike2(value3) {
+  return IsBigInt4(value3) || IsBoolean5(value3) || IsNull4(value3) || IsNumber5(value3) || IsString5(value3) || IsUndefined4(value3);
+}
+function GraphemeCount4(value3) {
+  return GraphemeCount3(value3);
+}
+function IsMaxLength6(value3, length) {
+  return IsMaxLength5(value3, length);
+}
+function IsMinLength6(value3, length) {
+  return IsMinLength5(value3, length);
+}
+function Every3(value3, offset, callback) {
+  return value3.every((item, index3) => index3 < offset || callback(item, index3));
+}
+function EveryAll2(value3, offset, callback) {
+  let result = true;
+  value3.forEach((item, index3) => {
+    if (index3 >= offset && !callback(item, index3))
+      result = false;
+  });
+  return result;
+}
+function Some(value3, callback) {
+  return value3.some((value4, index3) => callback(value4, index3));
+}
+function SomeAll(value3, callback) {
+  let result = false;
+  value3.forEach((item, index3) => {
+    if (callback(item, index3))
+      result = true;
+  });
+  return result;
+}
+function Counted(value3, callback) {
+  return value3.reduce((result, value4, index3) => callback(value4, index3) ? ++result : result, 0);
+}
+function ShiftLeft2(array2, true_, false_) {
+  return IsEqual3(array2.length, 0) ? false_() : true_(array2[0], array2.slice(1));
+}
+function IsUnsafePropertyKey2(key) {
+  return IsEqual3(key, "__proto__") || IsEqual3(key, "constructor") || IsEqual3(key, "prototype");
+}
+function HasPropertyKey3(value3, key) {
+  return IsUnsafePropertyKey2(key) ? Object.prototype.hasOwnProperty.call(value3, key) : key in value3;
+}
+function EntriesRegExp2(value3) {
+  return Keys3(value3).map((key) => [new RegExp(`^${key}$`), value3[key]]);
+}
+function Entries4(value3) {
+  return Object.entries(value3);
+}
+function Keys3(value3) {
+  return Object.getOwnPropertyNames(value3);
+}
+function Symbols2(value3) {
+  return Object.getOwnPropertySymbols(value3);
+}
+function Values2(value3) {
+  return Object.values(value3);
+}
+function DeepEqualObject2(left, right) {
+  if (!IsObject4(right))
+    return false;
+  const keys = Keys3(left);
+  return IsEqual3(keys.length, Keys3(right).length) && keys.every((key) => IsDeepEqual3(left[key], right[key]));
+}
+function DeepEqualArray2(left, right) {
+  return IsArray4(right) && IsEqual3(left.length, right.length) && left.every((_2, index3) => IsDeepEqual3(left[index3], right[index3]));
+}
+function IsDeepEqual3(left, right) {
+  return IsArray4(left) ? DeepEqualArray2(left, right) : IsObject4(left) ? DeepEqualObject2(left, right) : IsEqual3(left, right);
+}
+
+// node_modules/typebox/build/guard/globals.mjs
+var globals_exports2 = {};
+__export(globals_exports2, {
+  IsBigInt64Array: () => IsBigInt64Array2,
+  IsBigUint64Array: () => IsBigUint64Array2,
+  IsBoolean: () => IsBoolean6,
+  IsDate: () => IsDate3,
+  IsFloat32Array: () => IsFloat32Array2,
+  IsFloat64Array: () => IsFloat64Array2,
+  IsInt16Array: () => IsInt16Array2,
+  IsInt32Array: () => IsInt32Array2,
+  IsInt8Array: () => IsInt8Array2,
+  IsMap: () => IsMap2,
+  IsNumber: () => IsNumber6,
+  IsRegExp: () => IsRegExp2,
+  IsSet: () => IsSet2,
+  IsString: () => IsString6,
+  IsTypeArray: () => IsTypeArray2,
+  IsUint16Array: () => IsUint16Array2,
+  IsUint32Array: () => IsUint32Array2,
+  IsUint8Array: () => IsUint8Array2,
+  IsUint8ClampedArray: () => IsUint8ClampedArray2
+});
+function IsBoolean6(value3) {
+  return value3 instanceof Boolean;
+}
+function IsNumber6(value3) {
+  return value3 instanceof Number;
+}
+function IsString6(value3) {
+  return value3 instanceof String;
+}
+function IsTypeArray2(value3) {
+  return globalThis.ArrayBuffer.isView(value3);
+}
+function IsInt8Array2(value3) {
+  return value3 instanceof globalThis.Int8Array;
+}
+function IsUint8Array2(value3) {
+  return value3 instanceof globalThis.Uint8Array;
+}
+function IsUint8ClampedArray2(value3) {
+  return value3 instanceof globalThis.Uint8ClampedArray;
+}
+function IsInt16Array2(value3) {
+  return value3 instanceof globalThis.Int16Array;
+}
+function IsUint16Array2(value3) {
+  return value3 instanceof globalThis.Uint16Array;
+}
+function IsInt32Array2(value3) {
+  return value3 instanceof globalThis.Int32Array;
+}
+function IsUint32Array2(value3) {
+  return value3 instanceof globalThis.Uint32Array;
+}
+function IsFloat32Array2(value3) {
+  return value3 instanceof globalThis.Float32Array;
+}
+function IsFloat64Array2(value3) {
+  return value3 instanceof globalThis.Float64Array;
+}
+function IsBigInt64Array2(value3) {
+  return value3 instanceof globalThis.BigInt64Array;
+}
+function IsBigUint64Array2(value3) {
+  return value3 instanceof globalThis.BigUint64Array;
+}
+function IsRegExp2(value3) {
+  return value3 instanceof globalThis.RegExp;
+}
+function IsDate3(value3) {
+  return value3 instanceof globalThis.Date;
+}
+function IsSet2(value3) {
+  return value3 instanceof globalThis.Set;
+}
+function IsMap2(value3) {
+  return value3 instanceof globalThis.Map;
+}
+
+// node_modules/typebox/build/system/settings/settings.mjs
+var settings2 = {
+  immutableTypes: false,
+  maxErrors: 8,
+  maxInstantiationCount: 128,
+  useAcceleration: true,
+  exactOptionalPropertyTypes: false,
+  enumerableKind: false,
+  correctiveParse: false,
+  unionPrioritySort: true
+};
+function Reset3() {
+  settings2.immutableTypes = false;
+  settings2.maxErrors = 8;
+  settings2.maxInstantiationCount = 128;
+  settings2.useAcceleration = true;
+  settings2.exactOptionalPropertyTypes = false;
+  settings2.enumerableKind = false;
+  settings2.correctiveParse = false;
+  settings2.unionPrioritySort = true;
+}
+function Set5(options) {
+  for (const key of guard_exports2.Keys(options)) {
+    const value3 = options[key];
+    if (value3 !== void 0) {
+      Object.defineProperty(settings2, key, { value: value3 });
+    }
+  }
+}
+function Get5() {
+  return settings2;
+}
+
+// node_modules/typebox/build/system/memory/freeze.mjs
+function Freeze(value3) {
+  return settings_exports2.Get().immutableTypes ? Object.freeze(value3) : value3;
+}
+
+// node_modules/typebox/build/system/memory/assign.mjs
+function Assign2(left, right) {
+  Metrics2.assign += 1;
+  return Freeze({ ...left, ...right });
+}
+
+// node_modules/typebox/build/system/memory/clone.mjs
+function FromClassInstance2(value3) {
+  return value3;
+}
+function IsSchemaObject2(value3) {
+  return guard_exports2.HasPropertyKey(value3, "~kind") || guard_exports2.HasPropertyKey(value3, "~unsafe");
+}
+function FromSchemaObject(value3) {
+  const result = {};
+  for (const key of guard_exports2.Keys(value3)) {
+    if (guard_exports2.IsUnsafePropertyKey(key))
+      continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value3, key);
+    descriptor.value = FromValue5(descriptor.value);
+    if (guard_exports2.IsEqual(descriptor.enumerable, true)) {
+      result[key] = descriptor.value;
+    } else {
+      Object.defineProperty(result, key, descriptor);
+    }
+  }
+  return result;
+}
+function FromPlainObject2(value3) {
+  const result = {};
+  for (const key of guard_exports2.Keys(value3)) {
+    if (guard_exports2.IsUnsafePropertyKey(key))
+      continue;
+    result[key] = FromValue5(value3[key]);
+  }
+  for (const key of guard_exports2.Symbols(value3)) {
+    result[key] = FromValue5(value3[key]);
+  }
+  return result;
+}
+function FromObject19(value3) {
+  return guard_exports2.IsClassInstance(value3) ? FromClassInstance2(value3) : IsSchemaObject2(value3) ? FromSchemaObject(value3) : FromPlainObject2(value3);
+}
+function FromArray15(value3) {
+  return value3.map((element) => FromValue5(element));
+}
+function FromTypedArray3(value3) {
+  return value3.slice();
+}
+function FromRegExp3(value3) {
+  return new RegExp(value3.source, value3.flags);
+}
+function FromMap2(value3) {
+  return new Map(FromValue5([...value3.entries()]));
+}
+function FromSet2(value3) {
+  return new Set(FromValue5([...value3.values()]));
+}
+function FromValue5(value3) {
+  return globals_exports2.IsTypeArray(value3) ? FromTypedArray3(value3) : globals_exports2.IsRegExp(value3) ? FromRegExp3(value3) : globals_exports2.IsMap(value3) ? FromMap2(value3) : globals_exports2.IsSet(value3) ? FromSet2(value3) : guard_exports2.IsArray(value3) ? FromArray15(value3) : guard_exports2.IsObject(value3) ? FromObject19(value3) : value3;
+}
+function Clone3(value3) {
+  Metrics2.clone += 1;
+  return FromValue5(value3);
+}
+
+// node_modules/typebox/build/system/memory/create.mjs
+function MergeHidden2(left, right) {
+  for (const key of Object.keys(right)) {
+    Object.defineProperty(left, key, {
+      configurable: true,
+      writable: true,
+      enumerable: false,
+      value: right[key]
+    });
+  }
+  return left;
+}
+function Merge2(left, right) {
+  return { ...left, ...right };
+}
+function Create3(hidden, enumerable, options = {}) {
+  Metrics2.create += 1;
+  const withOptions = Merge2(enumerable, options);
+  const withHidden = settings_exports2.Get().enumerableKind ? Merge2(withOptions, hidden) : MergeHidden2(withOptions, hidden);
+  return Freeze(withHidden);
+}
+
+// node_modules/typebox/build/system/memory/discard.mjs
+function Discard2(value3, propertyKeys) {
+  Metrics2.discard += 1;
+  const result = {};
+  for (const key of guard_exports2.Keys(value3)) {
+    if (propertyKeys.includes(key))
+      continue;
+    const descriptor = Object.getOwnPropertyDescriptor(value3, key);
+    descriptor.value = Clone3(descriptor.value);
+    Object.defineProperty(result, key, descriptor);
+  }
+  return Freeze(result);
+}
+
+// node_modules/typebox/build/system/memory/update.mjs
+function Update3(current, hidden, enumerable) {
+  Metrics2.update += 1;
+  const settings3 = settings_exports2.Get();
+  const result = Clone3(current);
+  for (const key of Object.keys(hidden)) {
+    Object.defineProperty(result, key, {
+      configurable: true,
+      writable: true,
+      enumerable: settings3.enumerableKind,
+      value: hidden[key]
+    });
+  }
+  for (const key of Object.keys(enumerable)) {
+    Object.defineProperty(result, key, {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: enumerable[key]
+    });
+  }
+  return Freeze(result);
+}
+
+// node_modules/typebox/build/type/types/schema.mjs
+function IsKind2(value3, kind) {
+  return guard_exports2.IsObject(value3) && guard_exports2.HasPropertyKey(value3, "~kind") && guard_exports2.IsEqual(value3["~kind"], kind);
+}
+function IsSchema3(value3) {
+  return guard_exports2.IsObject(value3);
+}
+
+// node_modules/typebox/build/type/types/deferred.mjs
+function Deferred2(action, parameters, options) {
+  return memory_exports2.Create({ "~kind": "Deferred" }, { type: "deferred", action, parameters, options }, {});
+}
+function IsDeferred2(value3) {
+  return IsKind2(value3, "Deferred");
+}
+
+// node_modules/typebox/build/type/engine/readonly/instantiate_add.mjs
+function AddReadonlyOperation2(type) {
+  return memory_exports2.Update(type, { "~readonly": true }, {});
+}
+function AddReadonlyAction2(type, options) {
+  const result = memory_exports2.Update(AddReadonlyOperation2(type), {}, options);
+  return result;
+}
+function AddReadonlyInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return AddReadonlyAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/engine/optional/instantiate_add.mjs
+function AddOptionalOperation2(type) {
+  return memory_exports2.Update(type, { "~optional": true }, {});
+}
+function AddOptionalAction2(type, options) {
+  const result = memory_exports2.Update(AddOptionalOperation2(type), {}, options);
+  return result;
+}
+function AddOptionalInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return AddOptionalAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/types/array.mjs
+function _Array_2(items, options) {
+  return memory_exports2.Create({ "~kind": "Array" }, { type: "array", items }, options);
+}
+function IsArray5(value3) {
+  return IsKind2(value3, "Array");
+}
+function ArrayOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "type", "items"]);
+}
+
+// node_modules/typebox/build/type/types/constructor.mjs
+function Constructor2(parameters, instanceType, options = {}) {
+  return memory_exports2.Create({ "~kind": "Constructor" }, { type: "constructor", parameters, instanceType }, options);
+}
+function IsConstructor5(value3) {
+  return IsKind2(value3, "Constructor");
+}
+function ConstructorOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "type", "parameters", "instanceType"]);
+}
+
+// node_modules/typebox/build/type/types/function.mjs
+function _Function_3(parameters, returnType, options = {}) {
+  return memory_exports2.Create({ ["~kind"]: "Function" }, { type: "function", parameters, returnType }, options);
+}
+function IsFunction5(value3) {
+  return IsKind2(value3, "Function");
+}
+function FunctionOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "type", "parameters", "returnType"]);
+}
+
+// node_modules/typebox/build/type/types/ref.mjs
+function Ref3(ref, options) {
+  return memory_exports2.Create({ ["~kind"]: "Ref" }, { $ref: ref }, options);
+}
+function IsRef3(value3) {
+  return IsKind2(value3, "Ref");
+}
+
+// node_modules/typebox/build/type/types/generic.mjs
+function Generic2(parameters, expression) {
+  return memory_exports2.Create({ "~kind": "Generic" }, { type: "generic", parameters, expression });
+}
+function IsGeneric2(value3) {
+  return IsKind2(value3, "Generic");
+}
+
+// node_modules/typebox/build/type/types/any.mjs
+function Any2(options) {
+  return memory_exports2.Create({ ["~kind"]: "Any" }, {}, options);
+}
+function IsAny2(value3) {
+  return IsKind2(value3, "Any");
+}
+
+// node_modules/typebox/build/type/types/never.mjs
+var NeverPattern2 = "(?!)";
+function Never2(options) {
+  return memory_exports2.Create({ "~kind": "Never" }, { not: {} }, options);
+}
+function IsNever2(value3) {
+  return IsKind2(value3, "Never");
+}
+
+// node_modules/typebox/build/type/action/_add_optional.mjs
+function AddOptionalDeferred2(type, options = {}) {
+  return Deferred2("AddOptional", [type], options);
+}
+function AddOptional2(type, options = {}) {
+  return AddOptionalAction2(type, options);
+}
+
+// node_modules/typebox/build/type/types/_optional.mjs
+function Optional4(type) {
+  return AddOptional2(type);
+}
+function IsOptional2(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "~optional");
+}
+
+// node_modules/typebox/build/type/types/properties.mjs
+function RequiredArray2(properties) {
+  return guard_exports2.Keys(properties).filter((key) => !IsOptional2(properties[key]));
+}
+function PropertyKeys2(properties) {
+  return guard_exports2.Keys(properties);
+}
+function PropertyValues2(properties) {
+  return guard_exports2.Values(properties);
+}
+
+// node_modules/typebox/build/type/types/object.mjs
+function _Object_3(properties, options = {}) {
+  const requiredKeys = RequiredArray2(properties);
+  const required2 = requiredKeys.length > 0 ? { required: requiredKeys } : {};
+  return memory_exports2.Create({ "~kind": "Object" }, { type: "object", ...required2, properties }, options);
+}
+function IsObject5(value3) {
+  return IsKind2(value3, "Object");
+}
+function ObjectOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "type", "properties", "required"]);
+}
+
+// node_modules/typebox/build/type/types/unknown.mjs
+function Unknown2(options) {
+  return memory_exports2.Create({ ["~kind"]: "Unknown" }, {}, options);
+}
+function IsUnknown2(value3) {
+  return IsKind2(value3, "Unknown");
+}
+
+// node_modules/typebox/build/type/types/cyclic.mjs
+function Cyclic2($defs, $ref, options) {
+  const defs = guard_exports2.Keys($defs).reduce((result, key) => {
+    return { ...result, [key]: memory_exports2.Update($defs[key], {}, { $id: key }) };
+  }, {});
+  return memory_exports2.Create({ ["~kind"]: "Cyclic" }, { $defs: defs, $ref }, options);
+}
+function IsCyclic2(value3) {
+  return IsKind2(value3, "Cyclic");
+}
+
+// node_modules/typebox/build/type/types/unsafe.mjs
+function Unsafe2(schema) {
+  return memory_exports2.Update(schema, { ["~unsafe"]: null }, {});
+}
+function IsUnsafe2(value3) {
+  return guard_exports2.IsObjectNotArray(value3) && guard_exports2.HasPropertyKey(value3, "~unsafe") && guard_exports2.IsNull(value3["~unsafe"]);
+}
+
+// node_modules/typebox/build/system/arguments/arguments.mjs
+var arguments_exports2 = {};
+__export(arguments_exports2, {
+  Match: () => Match5
+});
+function Match5(args, match2) {
+  return match2[args.length]?.(...args) ?? (() => {
+    throw Error("Invalid Arguments");
+  })();
+}
+
+// node_modules/typebox/build/type/types/infer.mjs
+function Infer2(...args) {
+  const [name, extends_] = arguments_exports2.Match(args, {
+    2: (name2, extends_2) => [name2, extends_2, extends_2],
+    1: (name2) => [name2, Unknown2(), Unknown2()]
+  });
+  return memory_exports2.Create({ ["~kind"]: "Infer" }, { type: "infer", name, extends: extends_ }, {});
+}
+function IsInfer2(value3) {
+  return IsKind2(value3, "Infer");
+}
+
+// node_modules/typebox/build/type/types/dependent.mjs
+function Dependent3(if_, then_, else_, options = {}) {
+  return memory_exports2.Create({ "~kind": "Dependent" }, { if: if_, then: then_, else: else_ }, options);
+}
+function IsDependent2(value3) {
+  return IsKind2(value3, "Dependent");
+}
+function DependentOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "if", "then", "else"]);
+}
+
+// node_modules/typebox/build/type/engine/enum/typescript_enum_to_enum_values.mjs
+function IsTypeScriptEnumLike2(value3) {
+  return guard_exports2.IsObjectNotArray(value3);
+}
+function TypeScriptEnumToEnumValues2(type) {
+  const keys = guard_exports2.Keys(type).filter((key) => isNaN(key));
+  return keys.reduce((result, key) => [...result, type[key]], []);
+}
+
+// node_modules/typebox/build/type/types/enum.mjs
+function IsEnumValue2(value3) {
+  return guard_exports2.IsString(value3) || guard_exports2.IsNumber(value3);
+}
+function Enum2(value3, options) {
+  const values = IsTypeScriptEnumLike2(value3) ? TypeScriptEnumToEnumValues2(value3) : value3;
+  return memory_exports2.Create({ "~kind": "Enum" }, { enum: values }, options);
+}
+function IsEnum3(value3) {
+  return IsKind2(value3, "Enum");
+}
+
+// node_modules/typebox/build/type/types/intersect.mjs
+function Intersect2(types4, options = {}) {
+  return memory_exports2.Create({ "~kind": "Intersect" }, { allOf: types4 }, options);
+}
+function IsIntersect2(value3) {
+  return IsKind2(value3, "Intersect");
+}
+function IntersectOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "allOf"]);
+}
+
+// node_modules/typebox/build/system/unreachable/unreachable.mjs
+function Unreachable3() {
+  throw new Error("Unreachable");
+}
+
+// node_modules/typebox/build/system/hashing/hash.mjs
+var ByteMarker2;
+(function(ByteMarker3) {
+  ByteMarker3[ByteMarker3["Array"] = 0] = "Array";
+  ByteMarker3[ByteMarker3["BigInt"] = 1] = "BigInt";
+  ByteMarker3[ByteMarker3["Boolean"] = 2] = "Boolean";
+  ByteMarker3[ByteMarker3["Date"] = 3] = "Date";
+  ByteMarker3[ByteMarker3["Constructor"] = 4] = "Constructor";
+  ByteMarker3[ByteMarker3["Function"] = 5] = "Function";
+  ByteMarker3[ByteMarker3["Null"] = 6] = "Null";
+  ByteMarker3[ByteMarker3["Number"] = 7] = "Number";
+  ByteMarker3[ByteMarker3["Object"] = 8] = "Object";
+  ByteMarker3[ByteMarker3["RegExp"] = 9] = "RegExp";
+  ByteMarker3[ByteMarker3["String"] = 10] = "String";
+  ByteMarker3[ByteMarker3["Symbol"] = 11] = "Symbol";
+  ByteMarker3[ByteMarker3["TypeArray"] = 12] = "TypeArray";
+  ByteMarker3[ByteMarker3["Undefined"] = 13] = "Undefined";
+})(ByteMarker2 || (ByteMarker2 = {}));
+var Accumulator2 = BigInt("14695981039346656037");
+var [Prime2, Size2] = [BigInt("1099511628211"), BigInt(
+  "18446744073709551616"
+  /* 2 ^ 64 */
+)];
+var Bytes2 = Array.from({ length: 256 }).map((_2, i2) => BigInt(i2));
+var F642 = new Float64Array(1);
+var F64In2 = new DataView(F642.buffer);
+var F64Out2 = new Uint8Array(F642.buffer);
+var encoder3 = new TextEncoder();
+
+// node_modules/typebox/build/type/types/_codec.mjs
+var EncodeBuilder2 = class {
+  constructor(type, decode3) {
+    this.type = type;
+    this.decode = decode3;
+  }
+  Encode(callback) {
+    const type = this.type;
+    const decode3 = IsCodec2(type) ? (value3) => this.decode(type["~codec"].decode(value3)) : this.decode;
+    const encode5 = IsCodec2(type) ? (value3) => type["~codec"].encode(callback(value3)) : callback;
+    const codec2 = { decode: decode3, encode: encode5 };
+    return memory_exports2.Update(this.type, { "~codec": codec2 }, {});
+  }
+};
+var DecodeBuilder2 = class {
+  constructor(type) {
+    this.type = type;
+  }
+  Decode(callback) {
+    return new EncodeBuilder2(this.type, callback);
+  }
+};
+function Codec2(type) {
+  return new DecodeBuilder2(type);
+}
+function Decode11(type, callback) {
+  return Codec2(type).Decode(callback).Encode(() => {
+    throw Error("Encode not implemented");
+  });
+}
+function Encode10(type, callback) {
+  return Codec2(type).Decode(() => {
+    throw Error("Decode not implemented");
+  }).Encode(callback);
+}
+function IsCodec2(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "~codec") && guard_exports2.IsObject(value3["~codec"]) && guard_exports2.HasPropertyKey(value3["~codec"], "encode") && guard_exports2.HasPropertyKey(value3["~codec"], "decode");
+}
+
+// node_modules/typebox/build/type/types/_immutable.mjs
+function Immutable2(type) {
+  return AddImmutable2(type);
+}
+function IsImmutable2(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "~immutable");
+}
+
+// node_modules/typebox/build/type/action/_add_readonly.mjs
+function AddReadonlyDeferred2(type, options = {}) {
+  return Deferred2("AddReadonly", [type], options);
+}
+function AddReadonly2(type, options = {}) {
+  return AddReadonlyAction2(type, options);
+}
+
+// node_modules/typebox/build/type/types/_readonly.mjs
+function Readonly3(type) {
+  return AddReadonly2(type);
+}
+function IsReadonly2(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "~readonly");
+}
+
+// node_modules/typebox/build/type/types/_refine.mjs
+function RefineAdd2(type, refinement) {
+  const refinements = IsRefine3(type) ? [...type["~refine"], refinement] : [refinement];
+  return memory_exports2.Update(type, { "~refine": refinements }, {});
+}
+function Refine2(...args) {
+  const [type, check2, error61] = arguments_exports2.Match(args, {
+    3: (type2, check3, error62) => [type2, check3, error62],
+    2: (type2, check3) => [type2, check3, () => "Refine Error"]
+  });
+  return RefineAdd2(type, { check: check2, error: error61 });
+}
+function IsRefinement2(value3) {
+  return guard_exports2.IsObjectNotArray(value3) && guard_exports2.HasPropertyKey(value3, "check") && guard_exports2.HasPropertyKey(value3, "error") && guard_exports2.IsFunction(value3.check) && guard_exports2.IsFunction(value3.error);
+}
+function IsRefine3(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "~refine") && guard_exports2.IsArray(value3["~refine"]) && guard_exports2.Every(value3["~refine"], 0, (value4) => IsRefinement2(value4));
+}
+
+// node_modules/typebox/build/type/types/bigint.mjs
+var BigIntPattern2 = "-?(?:0|[1-9][0-9]*)n";
+function BigInt4(options) {
+  return memory_exports2.Create({ "~kind": "BigInt" }, { type: "bigint" }, options);
+}
+function IsBigInt5(value3) {
+  return IsKind2(value3, "BigInt");
+}
+
+// node_modules/typebox/build/type/types/boolean.mjs
+function Boolean3(options) {
+  return memory_exports2.Create({ "~kind": "Boolean" }, { type: "boolean" }, options);
+}
+function IsBoolean7(value3) {
+  return IsKind2(value3, "Boolean");
+}
+
+// node_modules/typebox/build/type/types/identifier.mjs
+function Identifier2(name) {
+  return memory_exports2.Create({ "~kind": "Identifier" }, { name });
+}
+function IsIdentifier3(value3) {
+  return IsKind2(value3, "Identifier");
+}
+
+// node_modules/typebox/build/type/types/integer.mjs
+var IntegerPattern2 = "-?(?:0|[1-9][0-9]*)";
+function Integer3(options) {
+  return memory_exports2.Create({ "~kind": "Integer" }, { type: "integer" }, options);
+}
+function IsInteger5(value3) {
+  return IsKind2(value3, "Integer");
+}
+
+// node_modules/typebox/build/type/types/literal.mjs
+var InvalidLiteralValue2 = class extends Error {
+  constructor(value3) {
+    super(`Invalid Literal value`);
+    Object.defineProperty(this, "cause", {
+      value: { value: value3 },
+      writable: false,
+      configurable: false,
+      enumerable: false
+    });
+  }
+};
+function LiteralTypeName2(value3) {
+  return guard_exports2.IsBigInt(value3) ? "bigint" : guard_exports2.IsBoolean(value3) ? "boolean" : guard_exports2.IsNumber(value3) ? "number" : guard_exports2.IsString(value3) ? "string" : (() => {
+    throw new InvalidLiteralValue2(value3);
+  })();
+}
+function Literal2(value3, options) {
+  return memory_exports2.Create({ "~kind": "Literal" }, { type: LiteralTypeName2(value3), const: value3 }, options);
+}
+function IsLiteralValue2(value3) {
+  return guard_exports2.IsBigInt(value3) || guard_exports2.IsBoolean(value3) || guard_exports2.IsNumber(value3) || guard_exports2.IsString(value3);
+}
+function IsLiteralNumber2(value3) {
+  return IsLiteral2(value3) && guard_exports2.IsNumber(value3.const);
+}
+function IsLiteralString2(value3) {
+  return IsLiteral2(value3) && guard_exports2.IsString(value3.const);
+}
+function IsLiteral2(value3) {
+  return IsKind2(value3, "Literal");
+}
+
+// node_modules/typebox/build/type/types/null.mjs
+function Null2(options) {
+  return memory_exports2.Create({ "~kind": "Null" }, { type: "null" }, options);
+}
+function IsNull5(value3) {
+  return IsKind2(value3, "Null");
+}
+
+// node_modules/typebox/build/type/types/number.mjs
+var NumberPattern2 = "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?";
+function Number4(options) {
+  return memory_exports2.Create({ "~kind": "Number" }, { type: "number" }, options);
+}
+function IsNumber7(value3) {
+  return IsKind2(value3, "Number");
+}
+
+// node_modules/typebox/build/type/types/symbol.mjs
+function Symbol3(options) {
+  return memory_exports2.Create({ "~kind": "Symbol" }, { type: "symbol" }, options);
+}
+function IsSymbol5(value3) {
+  return IsKind2(value3, "Symbol");
+}
+
+// node_modules/typebox/build/type/types/parameter.mjs
+function Parameter3(...args) {
+  const [name, extends_, equals] = arguments_exports2.Match(args, {
+    3: (name2, extends_2, equals2) => [name2, extends_2, equals2],
+    2: (name2, extends_2) => [name2, extends_2, extends_2],
+    1: (name2) => [name2, Unknown2(), Unknown2()]
+  });
+  return memory_exports2.Create({ "~kind": "Parameter" }, { name, extends: extends_, equals }, {});
+}
+function IsParameter2(value3) {
+  return IsKind2(value3, "Parameter");
+}
+
+// node_modules/typebox/build/type/types/string.mjs
+var StringPattern2 = ".*";
+function String4(options) {
+  return memory_exports2.Create({ "~kind": "String" }, { type: "string" }, options);
+}
+function IsString7(value3) {
+  return IsKind2(value3, "String");
+}
+
+// node_modules/typebox/build/type/types/union.mjs
+function Union2(anyOf, options = {}) {
+  return memory_exports2.Create({ "~kind": "Union" }, { anyOf }, options);
+}
+function IsUnion2(value3) {
+  return IsKind2(value3, "Union");
+}
+function UnionOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "anyOf"]);
+}
+
+// node_modules/typebox/build/type/engine/patterns/pattern.mjs
+function ParsePatternIntoTypes2(pattern) {
+  const parsed = Pattern2(pattern);
+  const result = guard_exports2.IsEqual(parsed.length, 2) ? parsed[0] : [];
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/template_literal/is_finite.mjs
+function FromLiteral8(_value) {
+  return true;
+}
+function FromTypesReduce2(types4) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => FromType27(left) ? FromTypesReduce2(right) : false, () => true);
+}
+function FromTypes7(types4) {
+  const result = guard_exports2.IsEqual(types4.length, 0) ? false : FromTypesReduce2(types4);
+  return result;
+}
+function FromType27(type) {
+  return IsUnion2(type) ? FromTypes7(type.anyOf) : IsLiteral2(type) ? FromLiteral8(type.const) : false;
+}
+function IsTemplateLiteralFinite2(types4) {
+  const result = FromTypes7(types4);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/template_literal/create.mjs
+function TemplateLiteralCreate2(pattern) {
+  return memory_exports2.Create({ ["~kind"]: "TemplateLiteral" }, { type: "string", pattern }, {});
+}
+
+// node_modules/typebox/build/type/engine/template_literal/decode.mjs
+function FromLiteralPush2(variants, value3, result = []) {
+  return guard_exports2.ShiftLeft(variants, (left, right) => FromLiteralPush2(right, value3, [...result, `${left}${value3}`]), () => result);
+}
+function FromLiteral9(variants, value3) {
+  return guard_exports2.IsEqual(variants.length, 0) ? [`${value3}`] : FromLiteralPush2(variants, value3);
+}
+function FromUnion16(variants, types4, result = []) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => FromUnion16(variants, right, [...result, ...FromType28(variants, left)]), () => result);
+}
+function FromType28(variants, type) {
+  const result = IsUnion2(type) ? FromUnion16(variants, type.anyOf) : IsLiteral2(type) ? FromLiteral9(variants, type.const) : Unreachable3();
+  return result;
+}
+function DecodeFromSpan2(variants, types4) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => DecodeFromSpan2(FromType28(variants, left), right), () => variants);
+}
+function VariantsToLiterals2(variants) {
+  return variants.map((variant) => Literal2(variant));
+}
+function DecodeTypesAsUnion2(types4) {
+  const variants = DecodeFromSpan2([], types4);
+  const literals = VariantsToLiterals2(variants);
+  const result = Union2(literals);
+  return result;
+}
+function DecodeTypes2(types4) {
+  return guard_exports2.IsEqual(types4.length, 0) ? Unreachable3() : (
+    // Literal('') :
+    guard_exports2.IsEqual(types4.length, 1) && IsLiteral2(types4[0]) ? types4[0] : DecodeTypesAsUnion2(types4)
+  );
+}
+function TemplateLiteralDecodeUnsafe2(pattern) {
+  const types4 = ParsePatternIntoTypes2(pattern);
+  const result = guard_exports2.IsEqual(types4.length, 0) ? String4() : IsTemplateLiteralFinite2(types4) ? DecodeTypes2(types4) : TemplateLiteralCreate2(pattern);
+  return result;
+}
+function TemplateLiteralDecode2(pattern) {
+  const decoded = TemplateLiteralDecodeUnsafe2(pattern);
+  const result = IsTemplateLiteral2(decoded) ? String4() : decoded;
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/record_create.mjs
+function CreateRecord2(key, value3) {
+  const type = "object";
+  const patternProperties = { [key]: value3 };
+  return memory_exports2.Create({ ["~kind"]: "Record" }, { type, patternProperties });
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_any.mjs
+function FromAnyKey2(value3) {
+  return CreateRecord2(StringKey2, value3);
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_boolean.mjs
+function FromBooleanKey2(value3) {
+  return _Object_3({ true: value3, false: value3 });
+}
+
+// node_modules/typebox/build/type/types/tuple.mjs
+function Tuple2(types4, options = {}) {
+  const [items, minItems, additionalItems] = [types4, types4.length, false];
+  return memory_exports2.Create({ ["~kind"]: "Tuple" }, { type: "array", additionalItems, items, minItems }, options);
+}
+function IsTuple2(value3) {
+  return IsKind2(value3, "Tuple");
+}
+function TupleOptions2(type) {
+  return memory_exports2.Discard(type, ["~kind", "type", "items", "minItems", "additionalItems"]);
+}
+
+// node_modules/typebox/build/type/engine/readonly/instantiate_remove.mjs
+function RemoveReadonlyOperation2(type) {
+  return memory_exports2.Discard(type, ["~readonly"]);
+}
+function RemoveReadonlyAction2(type, options) {
+  const result = memory_exports2.Update(RemoveReadonlyOperation2(type), {}, options);
+  return result;
+}
+function RemoveReadonlyInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return RemoveReadonlyAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/_remove_readonly.mjs
+function RemoveReadonlyDeferred2(type, options = {}) {
+  return Deferred2("RemoveReadonly", [type], options);
+}
+function RemoveReadonly2(type, options = {}) {
+  return RemoveReadonlyAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/optional/instantiate_remove.mjs
+function RemoveOptionalOperation2(type) {
+  return memory_exports2.Discard(type, ["~optional"]);
+}
+function RemoveOptionalAction2(type, options) {
+  const result = memory_exports2.Update(RemoveOptionalOperation2(type), {}, options);
+  return result;
+}
+function RemoveOptionalInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return RemoveOptionalAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/_remove_optional.mjs
+function RemoveOptionalDeferred2(type, options = {}) {
+  return Deferred2("RemoveOptional", [type], options);
+}
+function RemoveOptional2(type, options = {}) {
+  return RemoveOptionalAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/tuple/to_object.mjs
+function TupleElementsToProperties2(types4) {
+  const result = types4.reduceRight((result2, right, index3) => {
+    return { [index3]: right, ...result2 };
+  }, {});
+  return result;
+}
+function TupleToObject2(type) {
+  const properties = TupleElementsToProperties2(type.items);
+  const result = _Object_3(properties);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/evaluate/composite.mjs
+function CanComposite(type) {
+  return IsObject5(type) || IsTuple2(type);
+}
+function IsReadonlyProperty2(left, right) {
+  return IsReadonly2(left) ? IsReadonly2(right) ? true : false : false;
+}
+function IsOptionalProperty2(left, right) {
+  return IsOptional2(left) ? IsOptional2(right) ? true : false : false;
+}
+function CompositeProperty2(left, right) {
+  const isReadonly = IsReadonlyProperty2(left, right);
+  const isOptional = IsOptionalProperty2(left, right);
+  const evaluated = EvaluateIntersect2([left, right]);
+  const property = RemoveReadonly2(RemoveOptional2(evaluated));
+  return isReadonly && isOptional ? AddReadonly2(AddOptional2(property)) : isReadonly && !isOptional ? AddReadonly2(property) : !isReadonly && isOptional ? AddOptional2(property) : property;
+}
+function CompositePropertyKey2(left, right, key) {
+  return key in left ? key in right ? CompositeProperty2(left[key], right[key]) : left[key] : key in right ? right[key] : Never2();
+}
+function CompositeProperties2(left, right) {
+  const keys = /* @__PURE__ */ new Set([...guard_exports2.Keys(left), ...guard_exports2.Keys(right)]);
+  const result = [...keys].reduce((result2, key) => {
+    return { ...result2, [key]: CompositePropertyKey2(left, right, key) };
+  }, {});
+  return result;
+}
+function GetProperties2(type) {
+  const result = IsObject5(type) ? type.properties : IsTuple2(type) ? TupleElementsToProperties2(type.items) : {};
+  return result;
+}
+function Composite2(left, right) {
+  const leftProperties = GetProperties2(left);
+  const rightProperties = GetProperties2(right);
+  const properties = CompositeProperties2(leftProperties, rightProperties);
+  const result = _Object_3(properties);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/evaluate/narrow.mjs
+function NarrowCompareRule(left, right) {
+  const result = Compare2(left, right);
+  return guard_exports2.IsEqual(result, CompareResultLeftInside) ? left : guard_exports2.IsEqual(result, CompareResultRightInside) ? right : guard_exports2.IsEqual(result, CompareResultEqual) ? right : Never2();
+}
+function NarrowCompositeRule(left, right) {
+  const canCompositeLeft = CanComposite(left);
+  const canCompositeRight = CanComposite(right);
+  return canCompositeLeft && canCompositeRight ? Composite2(left, right) : canCompositeLeft && !canCompositeRight ? left : !canCompositeLeft && canCompositeRight ? right : NarrowCompareRule(left, right);
+}
+function Narrow2(left, right) {
+  return IsNever2(left) ? left : IsAny2(left) ? left : IsUnknown2(left) ? right : IsNever2(right) ? right : IsAny2(right) ? right : IsUnknown2(right) ? left : NarrowCompositeRule(left, right);
+}
+
+// node_modules/typebox/build/type/engine/evaluate/distribute.mjs
+function ShouldEvaluate(left, right) {
+  const result = IsUnion2(left) || IsUnion2(right);
+  return result;
+}
+function DistributeOperation2(left, right) {
+  const evaluatedLeft = EvaluateType2(left);
+  const evaluatedRight = EvaluateType2(right);
+  const shouldEvaluate = ShouldEvaluate(evaluatedLeft, evaluatedRight);
+  const result = shouldEvaluate ? EvaluateIntersect2([evaluatedLeft, evaluatedRight]) : Narrow2(evaluatedLeft, evaluatedRight);
+  return result;
+}
+function DistributeType2(type, types4, result = []) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => DistributeType2(type, right, [...result, DistributeOperation2(left, type)]), () => guard_exports2.IsEqual(result.length, 0) ? [type] : result);
+}
+function DistributeUnion2(types4, distribution, result = []) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => DistributeUnion2(right, distribution, [...result, ...Distribute3([left], distribution)]), () => result);
+}
+function Distribute3(types4, result = []) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => IsUnion2(left) ? Distribute3(right, DistributeUnion2(left.anyOf, result)) : Distribute3(right, DistributeType2(left, result)), () => result);
+}
+
+// node_modules/typebox/build/type/engine/exclude/operation.mjs
+function ExcludeType2(left, right) {
+  const check2 = Extends3({}, left, right);
+  const result = result_exports2.IsExtendsTrueLike(check2) ? [] : [left];
+  return result;
+}
+function ExcludeUnion2(left, right, result = []) {
+  return guard_exports2.ShiftLeft(left, (head, tail) => ExcludeUnion2(tail, right, [...result, ...ExcludeType2(head, right)]), () => result);
+}
+function ExcludeOperation2(left, right) {
+  const evaluated = EvaluateType2(left);
+  const canonical2 = IsUnion2(evaluated) ? evaluated.anyOf : [evaluated];
+  const remaining = ExcludeUnion2(canonical2, right);
+  const result = EvaluateUnion2(remaining);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/evaluate/evaluate.mjs
+function EvaluateDependent2(if_, then_, else_) {
+  const intersected = EvaluateIntersect2([if_, then_]);
+  const excluded = ExcludeOperation2(else_, if_);
+  const result = EvaluateUnion2([intersected, excluded]);
+  return result;
+}
+function EvaluateEnum2(values, result = []) {
+  return guard_exports2.ShiftLeft(values, (left, right) => EvaluateEnum2(right, [...result, Literal2(left)]), () => EvaluateUnion2(result));
+}
+function EvaluateIntersect2(types4) {
+  const distribution = Distribute3(types4);
+  const broadend = Broaden2(distribution);
+  const result = EvaluateUnion2(broadend);
+  return result;
+}
+function EvaluateTemplateLiteral2(pattern) {
+  const evaluated = TemplateLiteralDecode2(pattern);
+  const result = EvaluateType2(evaluated);
+  return result;
+}
+function EvaluateUnion2(types4) {
+  const broadend = Broaden2(types4);
+  const result = EvaluateUnionFast2(broadend);
+  return result;
+}
+function EvaluateType2(type) {
+  const result = IsDependent2(type) ? EvaluateDependent2(type.if, type.then, type.else) : IsEnum3(type) ? EvaluateEnum2(type.enum) : IsIntersect2(type) ? EvaluateIntersect2(type.allOf) : IsTemplateLiteral2(type) ? EvaluateTemplateLiteral2(type.pattern) : IsUnion2(type) ? EvaluateUnion2(type.anyOf) : type;
+  return result;
+}
+function EvaluateUnionFast2(types4) {
+  const result = guard_exports2.IsEqual(types4.length, 1) ? types4[0] : guard_exports2.IsEqual(types4.length, 0) ? Never2() : Union2(types4);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_enum.mjs
+function FromEnumKey2(values, value3) {
+  const unionKey = EvaluateEnum2(values);
+  const result = FromKey2(unionKey, value3);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_integer.mjs
+function FromIntegerKey2(_key, value3) {
+  const result = CreateRecord2(IntegerKey2, value3);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_intersect.mjs
+function FromIntersectKey2(types4, value3) {
+  const evaluatedKey = EvaluateIntersect2(types4);
+  const result = FromKey2(evaluatedKey, value3);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_literal.mjs
+function FromLiteralKey2(key, value3) {
+  return guard_exports2.IsString(key) || guard_exports2.IsNumber(key) ? _Object_3({ [key]: value3 }) : guard_exports2.IsEqual(key, false) ? _Object_3({ false: value3 }) : guard_exports2.IsEqual(key, true) ? _Object_3({ true: value3 }) : _Object_3({});
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_number.mjs
+function FromNumberKey2(_key, value3) {
+  const result = CreateRecord2(NumberKey2, value3);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_string.mjs
+function FromStringKey2(key, value3) {
+  return guard_exports2.HasPropertyKey(key, "pattern") && (guard_exports2.IsString(key.pattern) || key.pattern instanceof RegExp) ? CreateRecord2(key.pattern.toString(), value3) : CreateRecord2(StringKey2, value3);
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_template_literal.mjs
+function FromTemplateKey2(pattern, value3) {
+  const types4 = ParsePatternIntoTypes2(pattern);
+  const finite = IsTemplateLiteralFinite2(types4);
+  const result = finite ? FromKey2(EvaluateTemplateLiteral2(pattern), value3) : CreateRecord2(pattern, value3);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/evaluate/flatten.mjs
+function FlattenType2(type) {
+  const result = IsUnion2(type) ? Flatten2(type.anyOf) : [type];
+  return result;
+}
+function Flatten2(types4, result = []) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => Flatten2(right, [...result, ...FlattenType2(left)]), () => result);
+}
+
+// node_modules/typebox/build/type/engine/record/from_key_union.mjs
+function StringOrNumberCheck2(types4) {
+  return types4.some((type) => IsString7(type) || IsNumber7(type) || IsInteger5(type));
+}
+function TryBuildRecord2(types4, value3) {
+  return guard_exports2.IsEqual(StringOrNumberCheck2(types4), true) ? CreateRecord2(StringKey2, value3) : void 0;
+}
+function CreateProperties2(types4, value3) {
+  return types4.reduce((result, left) => {
+    return IsLiteral2(left) && (guard_exports2.IsString(left.const) || guard_exports2.IsNumber(left.const)) ? { ...result, [left.const]: value3 } : result;
+  }, {});
+}
+function CreateObject2(types4, value3) {
+  const properties = CreateProperties2(types4, value3);
+  const result = _Object_3(properties);
+  return result;
+}
+function FromUnionKey2(types4, value3) {
+  const flattened = Flatten2(types4);
+  const record4 = TryBuildRecord2(flattened, value3);
+  return IsSchema3(record4) ? record4 : CreateObject2(flattened, value3);
+}
+
+// node_modules/typebox/build/type/engine/record/from_key.mjs
+function FromKey2(key, value3) {
+  const result = IsAny2(key) ? FromAnyKey2(value3) : IsBoolean7(key) ? FromBooleanKey2(value3) : IsEnum3(key) ? FromEnumKey2(key.enum, value3) : IsInteger5(key) ? FromIntegerKey2(key, value3) : IsIntersect2(key) ? FromIntersectKey2(key.allOf, value3) : IsLiteral2(key) ? FromLiteralKey2(key.const, value3) : IsNumber7(key) ? FromNumberKey2(key, value3) : IsUnion2(key) ? FromUnionKey2(key.anyOf, value3) : IsString7(key) ? FromStringKey2(key, value3) : IsTemplateLiteral2(key) ? FromTemplateKey2(key.pattern, value3) : _Object_3({});
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/record/instantiate.mjs
+function RecordAction2(key, value3, options) {
+  const result = CanInstantiate2([key]) ? memory_exports2.Update(FromKey2(key, value3), {}, options) : RecordDeferred2(key, value3, options);
+  return result;
+}
+function RecordInstantiate2(context, state2, key, value3, options) {
+  const instantiatedKey = InstantiateType2(context, state2, key);
+  const instantiatedValue = InstantiateType2(context, state2, value3);
+  return RecordAction2(instantiatedKey, instantiatedValue, options);
+}
+
+// node_modules/typebox/build/type/types/record.mjs
+var IntegerKey2 = `^${IntegerPattern2}$`;
+var NumberKey2 = `^${NumberPattern2}$`;
+var StringKey2 = `^${StringPattern2}$`;
+function RecordDeferred2(key, value3, options = {}) {
+  return Deferred2("Record", [key, value3], options);
+}
+function Record2(key, value3, options = {}) {
+  return RecordAction2(key, value3, options);
+}
+function RecordFromPattern2(pattern, value3) {
+  return CreateRecord2(pattern, value3);
+}
+function RecordPatternToType2(pattern) {
+  const result = guard_exports2.IsEqual(pattern, StringKey2) ? String4() : guard_exports2.IsEqual(pattern, IntegerKey2) ? Integer3() : guard_exports2.IsEqual(pattern, NumberKey2) ? Number4() : TemplateLiteralDecodeUnsafe2(pattern);
+  return result;
+}
+function RecordPattern2(type) {
+  return guard_exports2.Keys(type.patternProperties)[0];
+}
+function RecordKey2(type) {
+  const pattern = RecordPattern2(type);
+  const result = RecordPatternToType2(pattern);
+  return result;
+}
+function RecordValue2(type) {
+  return type.patternProperties[RecordPattern2(type)];
+}
+function IsRecord2(value3) {
+  return IsKind2(value3, "Record");
+}
+
+// node_modules/typebox/build/type/types/rest.mjs
+function Rest2(type) {
+  return memory_exports2.Create({ "~kind": "Rest" }, { type: "rest", items: type }, {});
+}
+function IsRest2(value3) {
+  return IsKind2(value3, "Rest");
+}
+
+// node_modules/typebox/build/type/types/this.mjs
+function This2(options) {
+  return memory_exports2.Create({ ["~kind"]: "This" }, { $ref: "#" }, options);
+}
+function IsThis2(value3) {
+  return IsKind2(value3, "This");
+}
+
+// node_modules/typebox/build/type/types/undefined.mjs
+function Undefined2(options) {
+  return memory_exports2.Create({ "~kind": "Undefined" }, { type: "undefined" }, options);
+}
+function IsUndefined5(value3) {
+  return IsKind2(value3, "Undefined");
+}
+
+// node_modules/typebox/build/type/types/void.mjs
+function Void2(options) {
+  return memory_exports2.Create({ "~kind": "Void" }, { type: "void" }, options);
+}
+function IsVoid2(value3) {
+  return IsKind2(value3, "Void");
+}
+
+// node_modules/typebox/build/type/script/mapping.mjs
+function IntrinsicOrCall2(ref, parameters) {
+  return guard_exports2.IsEqual(ref, "Array") ? _Array_2(parameters[0]) : guard_exports2.IsEqual(ref, "Capitalize") ? CapitalizeDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "ConstructorParameters") ? ConstructorParametersDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Evaluate") ? EvaluateDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Exclude") ? ExcludeDeferred2(parameters[0], parameters[1]) : guard_exports2.IsEqual(ref, "Extract") ? ExtractDeferred2(parameters[0], parameters[1]) : guard_exports2.IsEqual(ref, "Index") ? IndexDeferred2(parameters[0], parameters[1]) : guard_exports2.IsEqual(ref, "InstanceType") ? InstanceTypeDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Lowercase") ? LowercaseDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "NonNullable") ? NonNullableDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Omit") ? OmitDeferred2(parameters[0], parameters[1]) : guard_exports2.IsEqual(ref, "Parameters") ? ParametersDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Partial") ? PartialDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Pick") ? PickDeferred2(parameters[0], parameters[1]) : guard_exports2.IsEqual(ref, "Readonly") ? ReadonlyObjectDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "KeyOf") ? KeyOfDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Record") ? RecordDeferred2(parameters[0], parameters[1]) : guard_exports2.IsEqual(ref, "Required") ? RequiredDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "ReturnType") ? ReturnTypeDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Uncapitalize") ? UncapitalizeDeferred2(parameters[0]) : guard_exports2.IsEqual(ref, "Uppercase") ? UppercaseDeferred2(parameters[0]) : CallConstruct2(Ref3(ref), parameters);
+}
+function Unreachable4() {
+  throw Error("Unreachable");
+}
+function DelimitedDecode2(input2, result = []) {
+  return guard_exports2.ShiftLeft(input2, (left, right) => DelimitedDecode2(right, [...result, left[1]]), () => result);
+}
+function Delimited2(input2) {
+  return guard_exports2.IsEqual(input2.length, 3) ? [input2[0], ...DelimitedDecode2(input2[1])] : [];
+}
+function GenericParameterExtendsEqualsMapping2(input2) {
+  return Parameter3(input2[0], input2[2], input2[4]);
+}
+function GenericParameterExtendsMapping2(input2) {
+  return Parameter3(input2[0], input2[2], input2[2]);
+}
+function GenericParameterEqualsMapping2(input2) {
+  return Parameter3(input2[0], Unknown2(), input2[2]);
+}
+function GenericParameterIdentifierMapping2(input2) {
+  return Parameter3(input2, Unknown2(), Unknown2());
+}
+function GenericParameterMapping2(input2) {
+  return input2;
+}
+function GenericParameterListMapping2(input2) {
+  return Delimited2(input2);
+}
+function GenericParametersMapping2(input2) {
+  return input2[1];
+}
+function GenericCallArgumentListMapping2(input2) {
+  return Delimited2(input2);
+}
+function GenericCallArgumentsMapping2(input2) {
+  return input2[1];
+}
+function GenericCallMapping2(input2) {
+  return IntrinsicOrCall2(input2[0], input2[1]);
+}
+function OptionalSemiColonMapping2(input2) {
+  return null;
+}
+function KeywordStringMapping2(input2) {
+  return String4();
+}
+function KeywordNumberMapping2(input2) {
+  return Number4();
+}
+function KeywordBooleanMapping2(input2) {
+  return Boolean3();
+}
+function KeywordUndefinedMapping2(input2) {
+  return Undefined2();
+}
+function KeywordNullMapping2(input2) {
+  return Null2();
+}
+function KeywordIntegerMapping2(input2) {
+  return Integer3();
+}
+function KeywordBigIntMapping2(input2) {
+  return BigInt4();
+}
+function KeywordUnknownMapping2(input2) {
+  return Unknown2();
+}
+function KeywordAnyMapping2(input2) {
+  return Any2();
+}
+function KeywordObjectMapping2(input2) {
+  return _Object_3({});
+}
+function KeywordNeverMapping2(input2) {
+  return Never2();
+}
+function KeywordSymbolMapping2(input2) {
+  return Symbol3();
+}
+function KeywordVoidMapping2(input2) {
+  return Void2();
+}
+function KeywordThisMapping2(input2) {
+  return This2();
+}
+function LiteralBigIntMapping2(input2) {
+  return Literal2(BigInt(input2));
+}
+function LiteralBooleanMapping2(input2) {
+  return Literal2(guard_exports2.IsEqual(input2, "true"));
+}
+function LiteralNumberMapping2(input2) {
+  return Literal2(parseFloat(input2));
+}
+function LiteralStringMapping2(input2) {
+  return Literal2(input2);
+}
+function TemplateInterpolateMapping2(input2) {
+  return input2[1];
+}
+function TemplateSpanMapping2(input2) {
+  return Literal2(input2);
+}
+function TemplateBodyMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 3) ? [input2[0], input2[1], ...input2[2]] : [input2[0]];
+}
+function TemplateLiteralTypesMapping2(input2) {
+  return input2[1];
+}
+function TemplateLiteralMapping2(input2) {
+  return TemplateLiteralDeferred2(input2);
+}
+function DependentMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 6) ? Dependent3(input2[1], input2[3], input2[5]) : Dependent3(input2[1], input2[3], Unknown2());
+}
+function KeyOfMapping2(input2) {
+  return input2.length > 0;
+}
+function IndexArrayMapping2(input2) {
+  return input2.reduce((result, current) => {
+    return guard_exports2.IsEqual(current.length, 3) ? [...result, [current[1]]] : [...result, []];
+  }, []);
+}
+function ExtendsMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 6) ? [input2[1], input2[3], input2[5]] : [];
+}
+function BaseMapping2(input2) {
+  return guard_exports2.IsArray(input2) && guard_exports2.IsEqual(input2.length, 3) ? input2[1] : input2;
+}
+function WithMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) ? input2[1] : [];
+}
+function FactorIndexArray2(Type4, indexArray) {
+  return indexArray.reduce((result, left) => {
+    const _left = left;
+    return guard_exports2.IsEqual(_left.length, 1) ? IndexDeferred2(result, _left[0]) : guard_exports2.IsEqual(_left.length, 0) ? _Array_2(result) : Unreachable4();
+  }, Type4);
+}
+function FactorExtends2(type, extend2) {
+  return guard_exports2.IsEqual(extend2.length, 3) ? ConditionalDeferred2(type, extend2[0], extend2[1], extend2[2]) : type;
+}
+function FactorWith2(type, withClause) {
+  return guard_exports2.IsArray(withClause) && guard_exports2.IsEqual(withClause.length, 0) ? type : WithDeferred2(type, withClause);
+}
+function FactorMapping2(input2) {
+  const [keyOf, type, indexArray, extend2, withClause] = input2;
+  return FactorWith2(keyOf ? FactorExtends2(KeyOfDeferred2(FactorIndexArray2(type, indexArray)), extend2) : FactorExtends2(FactorIndexArray2(type, indexArray), extend2), withClause);
+}
+function ExprBinaryMapping2(left, rest) {
+  return guard_exports2.IsEqual(rest.length, 3) ? (() => {
+    const [operator, right, next] = rest;
+    const Schema = ExprBinaryMapping2(right, next);
+    if (guard_exports2.IsEqual(operator, "&")) {
+      return IsIntersect2(Schema) ? Intersect2([left, ...Schema.allOf]) : Intersect2([left, Schema]);
+    }
+    if (guard_exports2.IsEqual(operator, "|")) {
+      return IsUnion2(Schema) ? Union2([left, ...Schema.anyOf]) : Union2([left, Schema]);
+    }
+    Unreachable4();
+  })() : left;
+}
+function ExprTermTailMapping2(input2) {
+  return input2;
+}
+function ExprTermMapping2(input2) {
+  const [left, rest] = input2;
+  return ExprBinaryMapping2(left, rest);
+}
+function ExprTailMapping2(input2) {
+  return input2;
+}
+function ExprMapping2(input2) {
+  const [left, rest] = input2;
+  return ExprBinaryMapping2(left, rest);
+}
+function ExprReadonlyMapping2(input2) {
+  return AddImmutableDeferred2(input2[1]);
+}
+function ExprPipeMapping2(input2) {
+  return input2[1];
+}
+function GenericTypeMapping2(input2) {
+  return Generic2(input2[0], input2[2]);
+}
+function InferTypeMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 4) ? Infer2(input2[1], input2[3]) : guard_exports2.IsEqual(input2.length, 2) ? Infer2(input2[1], Unknown2()) : Unreachable4();
+}
+function TypeMapping2(input2) {
+  return input2;
+}
+function PropertyKeyNumberMapping2(input2) {
+  return `${input2}`;
+}
+function PropertyKeyIdentMapping2(input2) {
+  return input2;
+}
+function PropertyKeyQuotedMapping2(input2) {
+  return input2;
+}
+function PropertyKeyIndexMapping2(input2) {
+  return IsInteger5(input2[3]) ? IntegerKey2 : IsNumber7(input2[3]) ? NumberKey2 : IsSymbol5(input2[3]) ? StringKey2 : IsString7(input2[3]) ? StringKey2 : Unreachable4();
+}
+function PropertyKeyMapping2(input2) {
+  return input2;
+}
+function ReadonlyMapping2(input2) {
+  return input2.length > 0;
+}
+function OptionalMapping2(input2) {
+  return input2.length > 0;
+}
+function PropertyMapping2(input2) {
+  const [isReadonly, key, isOptional, _colon, type] = input2;
+  return {
+    [key]: isReadonly && isOptional ? AddReadonlyDeferred2(AddOptionalDeferred2(type)) : isReadonly && !isOptional ? AddReadonlyDeferred2(type) : !isReadonly && isOptional ? AddOptionalDeferred2(type) : type
+  };
+}
+function PropertyDelimiterMapping2(input2) {
+  return input2;
+}
+function PropertyListMapping2(input2) {
+  return Delimited2(input2);
+}
+function PropertiesReduce2(propertyList) {
+  return propertyList.reduce((result, left) => {
+    const isPatternProperties = guard_exports2.HasPropertyKey(left, IntegerKey2) || guard_exports2.HasPropertyKey(left, NumberKey2) || guard_exports2.HasPropertyKey(left, StringKey2);
+    return isPatternProperties ? [result[0], memory_exports2.Assign(result[1], left)] : [memory_exports2.Assign(result[0], left), result[1]];
+  }, [{}, {}]);
+}
+function PropertiesMapping2(input2) {
+  return PropertiesReduce2(input2[1]);
+}
+function _Object_Mapping2(input2) {
+  const [properties, patternProperties] = input2;
+  const options = guard_exports2.IsEqual(guard_exports2.Keys(patternProperties).length, 0) ? {} : { patternProperties };
+  return _Object_3(properties, options);
+}
+function ElementNamedMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 5) ? AddReadonlyDeferred2(AddOptionalDeferred2(input2[4])) : guard_exports2.IsEqual(input2.length, 3) ? input2[2] : guard_exports2.IsEqual(input2.length, 4) ? guard_exports2.IsEqual(input2[2], "readonly") ? AddReadonlyDeferred2(input2[3]) : AddOptionalDeferred2(input2[3]) : Unreachable4();
+}
+function ElementBaseMapping2(input2) {
+  if (!guard_exports2.IsArray(input2) || !guard_exports2.IsEqual(input2.length, 3))
+    return input2;
+  const [isReadonly, type, isOptional] = input2;
+  return isReadonly && isOptional ? AddReadonlyDeferred2(AddOptionalDeferred2(type)) : isReadonly && !isOptional ? AddReadonlyDeferred2(type) : !isReadonly && isOptional ? AddOptionalDeferred2(type) : type;
+}
+function ElementMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) ? Rest2(input2[1]) : guard_exports2.IsEqual(input2.length, 1) ? input2[0] : Unreachable4();
+}
+function ElementListMapping2(input2) {
+  return Delimited2(input2);
+}
+function _Tuple_Mapping2(input2) {
+  return Tuple2(input2[1]);
+}
+function ParameterReadonlyOptionalMapping2(input2) {
+  return AddReadonlyDeferred2(AddOptionalDeferred2(input2[4]));
+}
+function ParameterReadonlyMapping2(input2) {
+  return AddReadonlyDeferred2(input2[3]);
+}
+function ParameterOptionalMapping2(input2) {
+  return AddOptionalDeferred2(input2[3]);
+}
+function ParameterTypeMapping2(input2) {
+  return input2[2];
+}
+function ParameterBaseMapping2(input2) {
+  return input2;
+}
+function ParameterMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) ? Rest2(input2[1]) : guard_exports2.IsEqual(input2.length, 1) ? input2[0] : Unreachable4();
+}
+function ParameterListMapping2(input2) {
+  return Delimited2(input2);
+}
+function _Function_Mapping2(input2) {
+  return _Function_3(input2[1], input2[4]);
+}
+function _Constructor_Mapping2(input2) {
+  return Constructor2(input2[2], input2[5]);
+}
+function ApplyReadonly2(state2, type) {
+  return guard_exports2.IsEqual(state2, "remove") ? RemoveReadonlyDeferred2(type) : guard_exports2.IsEqual(state2, "add") ? AddReadonlyDeferred2(type) : type;
+}
+function MappedReadonlyMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) && guard_exports2.IsEqual(input2[0], "-") ? "remove" : guard_exports2.IsEqual(input2.length, 2) && guard_exports2.IsEqual(input2[0], "+") ? "add" : guard_exports2.IsEqual(input2.length, 1) ? "add" : "none";
+}
+function ApplyOptional2(state2, type) {
+  return guard_exports2.IsEqual(state2, "remove") ? RemoveOptionalDeferred2(type) : guard_exports2.IsEqual(state2, "add") ? AddOptionalDeferred2(type) : type;
+}
+function MappedOptionalMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) && guard_exports2.IsEqual(input2[0], "-") ? "remove" : guard_exports2.IsEqual(input2.length, 2) && guard_exports2.IsEqual(input2[0], "+") ? "add" : guard_exports2.IsEqual(input2.length, 1) ? "add" : "none";
+}
+function MappedAsMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) ? [input2[1]] : [];
+}
+function _Mapped_Mapping2(input2) {
+  return guard_exports2.IsArray(input2[6]) && guard_exports2.IsEqual(input2[6].length, 1) ? MappedDeferred2(Identifier2(input2[3]), input2[5], input2[6][0], ApplyReadonly2(input2[1], ApplyOptional2(input2[8], input2[10]))) : MappedDeferred2(Identifier2(input2[3]), input2[5], Ref3(input2[3]), ApplyReadonly2(input2[1], ApplyOptional2(input2[8], input2[10])));
+}
+function ReferenceMapping2(input2) {
+  return Ref3(input2);
+}
+function WithBigIntMapping2(input2) {
+  return BigInt(input2);
+}
+function WithNumberMapping2(input2) {
+  return parseFloat(input2);
+}
+function WithBooleanMapping2(input2) {
+  return guard_exports2.IsEqual(input2, "true");
+}
+function WithStringMapping2(input2) {
+  return input2;
+}
+function WithNullMapping2(input2) {
+  return null;
+}
+function WithUndefinedMapping2(input2) {
+  return void 0;
+}
+function WithPropertyMapping2(input2) {
+  return { [input2[0]]: input2[2] };
+}
+function WithPropertyListMapping2(input2) {
+  return Delimited2(input2);
+}
+function WithObjectMappingReduce2(propertyList) {
+  return propertyList.reduce((result, left) => {
+    return memory_exports2.Assign(result, left);
+  }, {});
+}
+function WithObjectMapping2(input2) {
+  return WithObjectMappingReduce2(input2[1]);
+}
+function WithElementListMapping2(input2) {
+  return Delimited2(input2);
+}
+function WithArrayMapping2(input2) {
+  return input2[1];
+}
+function WithValueMapping2(input2) {
+  return input2;
+}
+function PatternBigIntMapping2(input2) {
+  return BigInt4();
+}
+function PatternStringMapping2(input2) {
+  return String4();
+}
+function PatternNumberMapping2(input2) {
+  return Number4();
+}
+function PatternIntegerMapping2(input2) {
+  return Integer3();
+}
+function PatternNeverMapping2(input2) {
+  return Never2();
+}
+function PatternTextMapping2(input2) {
+  return Literal2(input2);
+}
+function PatternBaseMapping2(input2) {
+  return input2;
+}
+function PatternGroupMapping2(input2) {
+  return Union2(input2[1]);
+}
+function PatternUnionMapping2(input2) {
+  return input2.length === 3 ? [...input2[0], ...input2[2]] : input2.length === 1 ? [...input2[0]] : [];
+}
+function PatternTermMapping2(input2) {
+  return [input2[0], ...input2[1]];
+}
+function PatternBodyMapping2(input2) {
+  return input2;
+}
+function PatternMapping2(input2) {
+  return input2[1];
+}
+function InterfaceDeclarationHeritageListMapping2(input2) {
+  return Delimited2(input2);
+}
+function InterfaceDeclarationHeritageMapping2(input2) {
+  return guard_exports2.IsEqual(input2.length, 2) ? input2[1] : [];
+}
+function InterfaceDeclarationGenericMapping2(input2) {
+  const parameters = input2[2];
+  const heritage = input2[3];
+  const [properties, patternProperties] = input2[4];
+  const options = guard_exports2.IsEqual(guard_exports2.Keys(patternProperties).length, 0) ? {} : { patternProperties };
+  return { [input2[1]]: Generic2(parameters, InterfaceDeferred2(heritage, properties, options)) };
+}
+function InterfaceDeclarationMapping2(input2) {
+  const heritage = input2[2];
+  const [properties, patternProperties] = input2[3];
+  const options = guard_exports2.IsEqual(guard_exports2.Keys(patternProperties).length, 0) ? {} : { patternProperties };
+  return { [input2[1]]: InterfaceDeferred2(heritage, properties, options) };
+}
+function TypeAliasDeclarationGenericMapping2(input2) {
+  return { [input2[1]]: Generic2(input2[2], input2[4]) };
+}
+function TypeAliasDeclarationMapping2(input2) {
+  return { [input2[1]]: input2[3] };
+}
+function ExportKeywordMapping2(input2) {
+  return null;
+}
+function ModuleDeclarationDelimiterMapping2(input2) {
+  return input2;
+}
+function ModuleDeclarationListMapping2(input2) {
+  return Delimited2(input2);
+}
+function ModuleDeclarationMapping2(input2) {
+  return input2[1];
+}
+function ModuleMapping2(input2) {
+  const [moduleDeclaration, moduleDeclarationList] = [input2[0], input2[1]];
+  return ModuleDeferred2(memory_exports2.Assign(moduleDeclaration, PropertiesReduce2(moduleDeclarationList)[0]));
+}
+function ScriptMapping2(input2) {
+  return input2;
+}
+
+// node_modules/typebox/build/type/script/token/internal/match.mjs
+function IsMatch2(value3) {
+  return IsEqual3(value3.length, 2);
+}
+function Match6(input2, ok2, fail) {
+  return IsMatch2(input2) ? ok2(input2[0], input2[1]) : fail();
+}
+
+// node_modules/typebox/build/type/script/token/internal/take.mjs
+function TakeVariant2(variant, input2) {
+  return IsEqual3(input2.indexOf(variant), 0) ? [variant, input2.slice(variant.length)] : [];
+}
+function Take2(variants, input2) {
+  for (let i2 = 0; i2 < variants.length; i2++) {
+    const result = TakeVariant2(variants[i2], input2);
+    if (IsMatch2(result))
+      return result;
+  }
+  return [];
+}
+
+// node_modules/typebox/build/type/script/token/internal/char.mjs
+function Range2(start, end) {
+  return Array.from({ length: end - start + 1 }, (_2, i2) => String.fromCharCode(start + i2));
+}
+var Alpha3 = [
+  ...Range2(97, 122),
+  // Lowercase
+  ...Range2(65, 90)
+  // Uppercase
+];
+var Zero2 = "0";
+var NonZero2 = Range2(49, 57);
+var Digit2 = [Zero2, ...NonZero2];
+var WhiteSpace2 = " ";
+var NewLine2 = "\n";
+var UnderScore2 = "_";
+var Dot2 = ".";
+var DollarSign2 = "$";
+var Hyphen2 = "-";
+
+// node_modules/typebox/build/type/script/token/internal/trim.mjs
+var LineComment2 = "//";
+var OpenComment2 = "/*";
+var CloseComment2 = "*/";
+function DiscardMultilineComment2(input2) {
+  const index3 = input2.indexOf(CloseComment2);
+  const result = IsEqual3(index3, -1) ? "" : input2.slice(index3 + 2);
+  return result;
+}
+function DiscardLineComment2(input2) {
+  const index3 = input2.indexOf(NewLine2);
+  const result = IsEqual3(index3, -1) ? "" : input2.slice(index3);
+  return result;
+}
+function TrimStartUntilNewline2(input2) {
+  return input2.replace(/^[ \t\r\f\v]+/, "");
+}
+function TrimWhitespace2(input2) {
+  const trimmed = TrimStartUntilNewline2(input2);
+  return trimmed.startsWith(OpenComment2) ? TrimWhitespace2(DiscardMultilineComment2(trimmed.slice(2))) : trimmed.startsWith(LineComment2) ? TrimWhitespace2(DiscardLineComment2(trimmed.slice(2))) : trimmed;
+}
+function Trim2(input2) {
+  const trimmed = input2.trimStart();
+  return trimmed.startsWith(OpenComment2) ? Trim2(DiscardMultilineComment2(trimmed.slice(2))) : trimmed.startsWith(LineComment2) ? Trim2(DiscardLineComment2(trimmed.slice(2))) : trimmed;
+}
+
+// node_modules/typebox/build/type/script/token/internal/optional.mjs
+function Optional5(value3, input2) {
+  return Match6(Take2([value3], input2), (Optional7, Rest3) => [Optional7, Rest3], () => ["", input2]);
+}
+
+// node_modules/typebox/build/type/script/token/internal/many.mjs
+function IsDiscard2(discard, input2) {
+  return discard.includes(input2);
+}
+function Many2(allowed, discard, input2, result = "") {
+  return Match6(Take2(allowed, input2), (Char, Rest3) => IsDiscard2(discard, Char) ? Many2(allowed, discard, Rest3, result) : Many2(allowed, discard, Rest3, `${result}${Char}`), () => [result, input2]);
+}
+
+// node_modules/typebox/build/type/script/token/unsigned_integer.mjs
+function TakeNonZero2(input2) {
+  return Take2(NonZero2, input2);
+}
+var AllowedDigits3 = [...Digit2, UnderScore2];
+function TakeDigits2(input2) {
+  return Many2(AllowedDigits3, [UnderScore2], input2);
+}
+function TakeUnsignedInteger2(input2) {
+  return Match6(Take2([Zero2], input2), (Zero3, ZeroRest) => [Zero3, ZeroRest], () => Match6(
+    TakeNonZero2(input2),
+    (NonZero3, NonZeroRest) => Match6(TakeDigits2(NonZeroRest), (Digits, DigitsRest) => [`${NonZero3}${Digits}`, DigitsRest], () => []),
+    // fail: did not match Digits
+    () => []
+  ));
+}
+function UnsignedInteger2(input2) {
+  return TakeUnsignedInteger2(Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/integer.mjs
+function TakeSign3(input2) {
+  return Optional5(Hyphen2, input2);
+}
+function TakeSignedInteger2(input2) {
+  return Match6(
+    TakeSign3(input2),
+    (Sign, SignRest) => Match6(UnsignedInteger2(SignRest), (UnsignedInteger3, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger3}`, UnsignedIntegerRest], () => []),
+    // fail: did not match unsigned integer
+    () => []
+  );
+}
+function Integer4(input2) {
+  return TakeSignedInteger2(Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/bigint.mjs
+function TakeBigInt2(input2) {
+  return Match6(
+    Integer4(input2),
+    (Integer5, IntegerRest) => Match6(Take2(["n"], IntegerRest), (_N, NRest) => [`${Integer5}`, NRest], () => []),
+    // fail: did not match 'n'
+    () => []
+  );
+}
+function BigInt5(input2) {
+  return TakeBigInt2(input2);
+}
+
+// node_modules/typebox/build/type/script/token/const.mjs
+function TakeConst2(const_, input2) {
+  return Take2([const_], input2);
+}
+function Const2(const_, input2) {
+  return IsEqual3(const_, "") ? ["", input2] : const_.startsWith(NewLine2) ? TakeConst2(const_, TrimWhitespace2(input2)) : const_.startsWith(WhiteSpace2) ? TakeConst2(const_, input2) : TakeConst2(const_, Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/ident.mjs
+var Initial2 = [...Alpha3, UnderScore2, DollarSign2];
+function TakeInitial3(input2) {
+  return Take2(Initial2, input2);
+}
+var Remaining2 = [...Initial2, ...Digit2];
+function TakeRemaining2(input2, result = "") {
+  return Match6(Take2(Remaining2, input2), (Remaining3, RemainingRest) => TakeRemaining2(RemainingRest, `${result}${Remaining3}`), () => [result, input2]);
+}
+function TakeIdent2(input2) {
+  return Match6(
+    TakeInitial3(input2),
+    (Initial3, InitialRest) => Match6(TakeRemaining2(InitialRest), (Remaining3, RemainingRest) => [`${Initial3}${Remaining3}`, RemainingRest], () => []),
+    // fail: did not match Remaining
+    () => []
+  );
+}
+function Ident2(input2) {
+  return TakeIdent2(Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/unsigned_number.mjs
+var AllowedDigits4 = [...Digit2, UnderScore2];
+function IsLeadingDot2(input2) {
+  return IsMatch2(Take2([Dot2], input2));
+}
+function TakeFractional2(input2) {
+  return Match6(Many2(AllowedDigits4, [UnderScore2], input2), (Digits, DigitsRest) => IsEqual3(Digits, "") ? [] : [Digits, DigitsRest], () => []);
+}
+function LeadingDot2(input2) {
+  return Match6(
+    Take2([Dot2], input2),
+    (Dot3, DotRest) => Match6(TakeFractional2(DotRest), (Fractional, FractionalRest) => [`0${Dot3}${Fractional}`, FractionalRest], () => []),
+    // fail: did not match Fractional
+    () => []
+  );
+}
+function LeadingInteger2(input2) {
+  return Match6(
+    UnsignedInteger2(input2),
+    (Integer5, IntegerRest) => Match6(
+      Take2([Dot2], IntegerRest),
+      (Dot3, DotRest) => Match6(TakeFractional2(DotRest), (Fractional, FractionalRest) => [`${Integer5}${Dot3}${Fractional}`, FractionalRest], () => [`${Integer5}`, DotRest]),
+      // fail: did not match Fractional, use Integer
+      () => [`${Integer5}`, IntegerRest]
+    ),
+    // fail: did not match Dot, use Integer
+    () => []
+  );
+}
+function TakeUnsignedNumber2(input2) {
+  return IsLeadingDot2(input2) ? LeadingDot2(input2) : LeadingInteger2(input2);
+}
+function UnsignedNumber2(input2) {
+  return TakeUnsignedNumber2(Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/number.mjs
+function TakeSign4(input2) {
+  return Optional5(Hyphen2, input2);
+}
+function TakeSignedNumber2(input2) {
+  return Match6(
+    TakeSign4(input2),
+    (Sign, SignRest) => Match6(UnsignedNumber2(SignRest), (UnsignedInteger3, UnsignedIntegerRest) => [`${Sign}${UnsignedInteger3}`, UnsignedIntegerRest], () => []),
+    // fail: did not match unsigned integer
+    () => []
+  );
+}
+function Number5(input2) {
+  return TakeSignedNumber2(Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/until.mjs
+function TakeOne2(input2) {
+  const result = IsEqual3(input2, "") ? [] : [input2.slice(0, 1), input2.slice(1)];
+  return result;
+}
+function IsInputMatchSentinal2(end, input2) {
+  return ShiftLeft2(end, (left, right) => input2.startsWith(left) ? true : IsInputMatchSentinal2(right, input2), () => false);
+}
+function Until2(end, input2, result = "") {
+  return Match6(
+    TakeOne2(input2),
+    (One, Rest3) => IsInputMatchSentinal2(end, input2) ? [result, input2] : Until2(end, Rest3, `${result}${One}`),
+    () => []
+  );
+}
+
+// node_modules/typebox/build/type/script/token/span.mjs
+function MultiLine2(start, end, input2) {
+  return Match6(
+    Take2([start], input2),
+    (_2, Rest3) => Match6(
+      Until2([end], Rest3),
+      (Until3, UntilRest) => Match6(Take2([end], UntilRest), (_3, Rest4) => [`${Until3}`, Rest4], () => []),
+      // fail: did not match End
+      () => []
+    ),
+    // fail: did not match Until
+    () => []
+  );
+}
+function SingleLine2(start, end, input2) {
+  return Match6(
+    Take2([start], input2),
+    (_2, Rest3) => Match6(
+      Until2([NewLine2, end], Rest3),
+      (Until3, UntilRest) => Match6(Take2([end], UntilRest), (_3, EndRest) => [`${Until3}`, EndRest], () => []),
+      // fail: did not match End
+      () => []
+    ),
+    // fail: did not match Until
+    () => []
+  );
+}
+function Span2(start, end, multiLine, input2) {
+  return multiLine ? MultiLine2(start, end, Trim2(input2)) : SingleLine2(start, end, Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/string.mjs
+function TakeInitial4(quotes, input2) {
+  return Take2(quotes, input2);
+}
+function TakeSpan2(quote, input2) {
+  return Span2(quote, quote, false, input2);
+}
+function TakeString2(quotes, input2) {
+  return Match6(TakeInitial4(quotes, input2), (Initial3, InitialRest) => TakeSpan2(Initial3, `${Initial3}${InitialRest}`), () => []);
+}
+function String5(quotes, input2) {
+  return TakeString2(quotes, Trim2(input2));
+}
+
+// node_modules/typebox/build/type/script/token/until_1.mjs
+function Until_12(end, input2) {
+  return Match6(Until2(end, input2), (Until3, UntilRest) => IsEqual3(Until3, "") ? [] : [Until3, UntilRest], () => []);
+}
+
+// node_modules/typebox/build/type/script/parser.mjs
+var If3 = (result, left, right = () => []) => result.length === 2 ? left(result) : right();
+var GenericParameterExtendsEquals2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("extends", input3), ([_1, input4]) => If3(Type3(input4), ([_2, input5]) => If3(Const2("=", input5), ([_3, input6]) => If3(Type3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [GenericParameterExtendsEqualsMapping2(_0), input3]);
+var GenericParameterExtends2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("extends", input3), ([_1, input4]) => If3(Type3(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [GenericParameterExtendsMapping2(_0), input3]);
+var GenericParameterEquals2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("=", input3), ([_1, input4]) => If3(Type3(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [GenericParameterEqualsMapping2(_0), input3]);
+var GenericParameterIdentifier2 = (input2) => If3(Ident2(input2), ([_0, input3]) => [GenericParameterIdentifierMapping2(_0), input3]);
+var GenericParameter2 = (input2) => If3(If3(GenericParameterExtendsEquals2(input2), ([_0, input3]) => [_0, input3], () => If3(GenericParameterExtends2(input2), ([_0, input3]) => [_0, input3], () => If3(GenericParameterEquals2(input2), ([_0, input3]) => [_0, input3], () => If3(GenericParameterIdentifier2(input2), ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [GenericParameterMapping2(_0), input3]);
+var GenericParameterList_02 = (input2, result = []) => If3(If3(Const2(",", input2), ([_0, input3]) => If3(GenericParameter2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => GenericParameterList_02(input3, [...result, _0]), () => [result, input2]);
+var GenericParameterList2 = (input2) => If3(If3(If3(GenericParameter2(input2), ([_0, input3]) => If3(GenericParameterList_02(input3), ([_1, input4]) => If3(If3(Const2(",", input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [GenericParameterListMapping2(_0), input3]);
+var GenericParameters2 = (input2) => If3(If3(Const2("<", input2), ([_0, input3]) => If3(GenericParameterList2(input3), ([_1, input4]) => If3(Const2(">", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [GenericParametersMapping2(_0), input3]);
+var GenericCallArgumentList_02 = (input2, result = []) => If3(If3(Const2(",", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => GenericCallArgumentList_02(input3, [...result, _0]), () => [result, input2]);
+var GenericCallArgumentList2 = (input2) => If3(If3(If3(Type3(input2), ([_0, input3]) => If3(GenericCallArgumentList_02(input3), ([_1, input4]) => If3(If3(Const2(",", input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [GenericCallArgumentListMapping2(_0), input3]);
+var GenericCallArguments2 = (input2) => If3(If3(Const2("<", input2), ([_0, input3]) => If3(GenericCallArgumentList2(input3), ([_1, input4]) => If3(Const2(">", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [GenericCallArgumentsMapping2(_0), input3]);
+var GenericCall2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(GenericCallArguments2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [GenericCallMapping2(_0), input3]);
+var OptionalSemiColon2 = (input2) => If3(If3(If3(Const2(";", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [OptionalSemiColonMapping2(_0), input3]);
+var KeywordString2 = (input2) => If3(Const2("string", input2), ([_0, input3]) => [KeywordStringMapping2(_0), input3]);
+var KeywordNumber2 = (input2) => If3(Const2("number", input2), ([_0, input3]) => [KeywordNumberMapping2(_0), input3]);
+var KeywordBoolean2 = (input2) => If3(Const2("boolean", input2), ([_0, input3]) => [KeywordBooleanMapping2(_0), input3]);
+var KeywordUndefined2 = (input2) => If3(Const2("undefined", input2), ([_0, input3]) => [KeywordUndefinedMapping2(_0), input3]);
+var KeywordNull2 = (input2) => If3(Const2("null", input2), ([_0, input3]) => [KeywordNullMapping2(_0), input3]);
+var KeywordInteger2 = (input2) => If3(Const2("integer", input2), ([_0, input3]) => [KeywordIntegerMapping2(_0), input3]);
+var KeywordBigInt2 = (input2) => If3(Const2("bigint", input2), ([_0, input3]) => [KeywordBigIntMapping2(_0), input3]);
+var KeywordUnknown2 = (input2) => If3(Const2("unknown", input2), ([_0, input3]) => [KeywordUnknownMapping2(_0), input3]);
+var KeywordAny2 = (input2) => If3(Const2("any", input2), ([_0, input3]) => [KeywordAnyMapping2(_0), input3]);
+var KeywordObject2 = (input2) => If3(Const2("object", input2), ([_0, input3]) => [KeywordObjectMapping2(_0), input3]);
+var KeywordNever2 = (input2) => If3(Const2("never", input2), ([_0, input3]) => [KeywordNeverMapping2(_0), input3]);
+var KeywordSymbol2 = (input2) => If3(Const2("symbol", input2), ([_0, input3]) => [KeywordSymbolMapping2(_0), input3]);
+var KeywordVoid2 = (input2) => If3(Const2("void", input2), ([_0, input3]) => [KeywordVoidMapping2(_0), input3]);
+var KeywordThis2 = (input2) => If3(Const2("this", input2), ([_0, input3]) => [KeywordThisMapping2(_0), input3]);
+var TemplateInterpolate2 = (input2) => If3(If3(Const2("${", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Const2("}", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [TemplateInterpolateMapping2(_0), input3]);
+var TemplateSpan2 = (input2) => If3(Until2(["${", "`"], input2), ([_0, input3]) => [TemplateSpanMapping2(_0), input3]);
+var TemplateBody2 = (input2) => If3(If3(If3(TemplateSpan2(input2), ([_0, input3]) => If3(TemplateInterpolate2(input3), ([_1, input4]) => If3(TemplateBody2(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3(If3(TemplateSpan2(input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3(If3(TemplateSpan2(input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => []))), ([_0, input3]) => [TemplateBodyMapping2(_0), input3]);
+var TemplateLiteralTypes2 = (input2) => If3(If3(Const2("`", input2), ([_0, input3]) => If3(TemplateBody2(input3), ([_1, input4]) => If3(Const2("`", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [TemplateLiteralTypesMapping2(_0), input3]);
+var TemplateLiteral3 = (input2) => If3(TemplateLiteralTypes2(input2), ([_0, input3]) => [TemplateLiteralMapping2(_0), input3]);
+var Dependent4 = (input2) => If3(If3(If3(Const2("if", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Const2("then", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => If3(Const2("else", input6), ([_4, input7]) => If3(Type3(input7), ([_5, input8]) => [[_0, _1, _2, _3, _4, _5], input8])))))), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("if", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Const2("then", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [DependentMapping2(_0), input3]);
+var LiteralBigInt2 = (input2) => If3(BigInt5(input2), ([_0, input3]) => [LiteralBigIntMapping2(_0), input3]);
+var LiteralBoolean2 = (input2) => If3(If3(Const2("true", input2), ([_0, input3]) => [_0, input3], () => If3(Const2("false", input2), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [LiteralBooleanMapping2(_0), input3]);
+var LiteralNumber2 = (input2) => If3(Number5(input2), ([_0, input3]) => [LiteralNumberMapping2(_0), input3]);
+var LiteralString2 = (input2) => If3(String5(["'", '"'], input2), ([_0, input3]) => [LiteralStringMapping2(_0), input3]);
+var KeyOf3 = (input2) => If3(If3(If3(Const2("keyof", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [KeyOfMapping2(_0), input3]);
+var IndexArray_02 = (input2, result = []) => If3(If3(If3(Const2("[", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Const2("]", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("[", input2), ([_0, input3]) => If3(Const2("]", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => IndexArray_02(input3, [...result, _0]), () => [result, input2]);
+var IndexArray2 = (input2) => If3(IndexArray_02(input2), ([_0, input3]) => [IndexArrayMapping2(_0), input3]);
+var Extends4 = (input2) => If3(If3(If3(Const2("extends", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Const2("?", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => If3(Const2(":", input6), ([_4, input7]) => If3(Type3(input7), ([_5, input8]) => [[_0, _1, _2, _3, _4, _5], input8])))))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ExtendsMapping2(_0), input3]);
+var Base2 = (input2) => If3(If3(If3(Const2("(", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Const2(")", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3(KeywordString2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordNumber2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordBoolean2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordUndefined2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordNull2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordInteger2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordBigInt2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordUnknown2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordAny2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordObject2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordNever2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordSymbol2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordVoid2(input2), ([_0, input3]) => [_0, input3], () => If3(KeywordThis2(input2), ([_0, input3]) => [_0, input3], () => If3(LiteralBigInt2(input2), ([_0, input3]) => [_0, input3], () => If3(LiteralBoolean2(input2), ([_0, input3]) => [_0, input3], () => If3(LiteralNumber2(input2), ([_0, input3]) => [_0, input3], () => If3(LiteralString2(input2), ([_0, input3]) => [_0, input3], () => If3(TemplateLiteral3(input2), ([_0, input3]) => [_0, input3], () => If3(Dependent4(input2), ([_0, input3]) => [_0, input3], () => If3(_Object_4(input2), ([_0, input3]) => [_0, input3], () => If3(_Tuple_2(input2), ([_0, input3]) => [_0, input3], () => If3(_Constructor_2(input2), ([_0, input3]) => [_0, input3], () => If3(_Function_4(input2), ([_0, input3]) => [_0, input3], () => If3(_Mapped_2(input2), ([_0, input3]) => [_0, input3], () => If3(GenericCall2(input2), ([_0, input3]) => [_0, input3], () => If3(Reference2(input2), ([_0, input3]) => [_0, input3], () => [])))))))))))))))))))))))))))), ([_0, input3]) => [BaseMapping2(_0), input3]);
+var With3 = (input2) => If3(If3(If3(Const2("with", input2), ([_0, input3]) => If3(WithObject2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [WithMapping2(_0), input3]);
+var Factor2 = (input2) => If3(If3(KeyOf3(input2), ([_0, input3]) => If3(Base2(input3), ([_1, input4]) => If3(IndexArray2(input4), ([_2, input5]) => If3(Extends4(input5), ([_3, input6]) => If3(With3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [FactorMapping2(_0), input3]);
+var ExprTermTail2 = (input2) => If3(If3(If3(Const2("&", input2), ([_0, input3]) => If3(Factor2(input3), ([_1, input4]) => If3(ExprTermTail2(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ExprTermTailMapping2(_0), input3]);
+var ExprTerm2 = (input2) => If3(If3(Factor2(input2), ([_0, input3]) => If3(ExprTermTail2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [ExprTermMapping2(_0), input3]);
+var ExprTail2 = (input2) => If3(If3(If3(Const2("|", input2), ([_0, input3]) => If3(ExprTerm2(input3), ([_1, input4]) => If3(ExprTail2(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ExprTailMapping2(_0), input3]);
+var Expr2 = (input2) => If3(If3(ExprTerm2(input2), ([_0, input3]) => If3(ExprTail2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [ExprMapping2(_0), input3]);
+var ExprReadonly2 = (input2) => If3(If3(Const2("readonly", input2), ([_0, input3]) => If3(Expr2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [ExprReadonlyMapping2(_0), input3]);
+var ExprPipe2 = (input2) => If3(If3(Const2("|", input2), ([_0, input3]) => If3(Expr2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [ExprPipeMapping2(_0), input3]);
+var GenericType2 = (input2) => If3(If3(GenericParameters2(input2), ([_0, input3]) => If3(Const2("=", input3), ([_1, input4]) => If3(Type3(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [GenericTypeMapping2(_0), input3]);
+var InferType2 = (input2) => If3(If3(If3(Const2("infer", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => If3(Const2("extends", input4), ([_2, input5]) => If3(Expr2(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("infer", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [InferTypeMapping2(_0), input3]);
+var Type3 = (input2) => If3(If3(InferType2(input2), ([_0, input3]) => [_0, input3], () => If3(ExprPipe2(input2), ([_0, input3]) => [_0, input3], () => If3(ExprReadonly2(input2), ([_0, input3]) => [_0, input3], () => If3(Expr2(input2), ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [TypeMapping2(_0), input3]);
+var PropertyKeyNumber2 = (input2) => If3(Number5(input2), ([_0, input3]) => [PropertyKeyNumberMapping2(_0), input3]);
+var PropertyKeyIdent2 = (input2) => If3(Ident2(input2), ([_0, input3]) => [PropertyKeyIdentMapping2(_0), input3]);
+var PropertyKeyQuoted2 = (input2) => If3(String5(["'", '"'], input2), ([_0, input3]) => [PropertyKeyQuotedMapping2(_0), input3]);
+var PropertyKeyIndex2 = (input2) => If3(If3(Const2("[", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => If3(Const2(":", input4), ([_2, input5]) => If3(If3(KeywordInteger2(input5), ([_02, input6]) => [_02, input6], () => If3(KeywordNumber2(input5), ([_02, input6]) => [_02, input6], () => If3(KeywordString2(input5), ([_02, input6]) => [_02, input6], () => If3(KeywordSymbol2(input5), ([_02, input6]) => [_02, input6], () => [])))), ([_3, input6]) => If3(Const2("]", input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [PropertyKeyIndexMapping2(_0), input3]);
+var PropertyKey2 = (input2) => If3(If3(PropertyKeyNumber2(input2), ([_0, input3]) => [_0, input3], () => If3(PropertyKeyIdent2(input2), ([_0, input3]) => [_0, input3], () => If3(PropertyKeyQuoted2(input2), ([_0, input3]) => [_0, input3], () => If3(PropertyKeyIndex2(input2), ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [PropertyKeyMapping2(_0), input3]);
+var Readonly4 = (input2) => If3(If3(If3(Const2("readonly", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ReadonlyMapping2(_0), input3]);
+var Optional6 = (input2) => If3(If3(If3(Const2("?", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [OptionalMapping2(_0), input3]);
+var Property2 = (input2) => If3(If3(Readonly4(input2), ([_0, input3]) => If3(PropertyKey2(input3), ([_1, input4]) => If3(Optional6(input4), ([_2, input5]) => If3(Const2(":", input5), ([_3, input6]) => If3(Type3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [PropertyMapping2(_0), input3]);
+var PropertyDelimiter2 = (input2) => If3(If3(If3(Const2(",", input2), ([_0, input3]) => If3(Const2("\n", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2(";", input2), ([_0, input3]) => If3(Const2("\n", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2(",", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3(If3(Const2(";", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("\n", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => []))))), ([_0, input3]) => [PropertyDelimiterMapping2(_0), input3]);
+var PropertyList_02 = (input2, result = []) => If3(If3(PropertyDelimiter2(input2), ([_0, input3]) => If3(Property2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => PropertyList_02(input3, [...result, _0]), () => [result, input2]);
+var PropertyList2 = (input2) => If3(If3(If3(Property2(input2), ([_0, input3]) => If3(PropertyList_02(input3), ([_1, input4]) => If3(If3(PropertyDelimiter2(input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [PropertyListMapping2(_0), input3]);
+var Properties2 = (input2) => If3(If3(Const2("{", input2), ([_0, input3]) => If3(PropertyList2(input3), ([_1, input4]) => If3(Const2("}", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [PropertiesMapping2(_0), input3]);
+var _Object_4 = (input2) => If3(Properties2(input2), ([_0, input3]) => [_Object_Mapping2(_0), input3]);
+var ElementNamed2 = (input2) => If3(If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("?", input3), ([_1, input4]) => If3(Const2(":", input4), ([_2, input5]) => If3(Const2("readonly", input5), ([_3, input6]) => If3(Type3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [_0, input3], () => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2(":", input3), ([_1, input4]) => If3(Const2("readonly", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [_0, input3], () => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("?", input3), ([_1, input4]) => If3(Const2(":", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [_0, input3], () => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2(":", input3), ([_1, input4]) => If3(Type3(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [ElementNamedMapping2(_0), input3]);
+var ElementBase2 = (input2) => If3(If3(ElementNamed2(input2), ([_0, input3]) => [_0, input3], () => If3(If3(Readonly4(input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => If3(Optional6(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ElementBaseMapping2(_0), input3]);
+var Element2 = (input2) => If3(If3(If3(Const2("...", input2), ([_0, input3]) => If3(ElementBase2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(ElementBase2(input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ElementMapping2(_0), input3]);
+var ElementList_02 = (input2, result = []) => If3(If3(Const2(",", input2), ([_0, input3]) => If3(Element2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => ElementList_02(input3, [...result, _0]), () => [result, input2]);
+var ElementList2 = (input2) => If3(If3(If3(Element2(input2), ([_0, input3]) => If3(ElementList_02(input3), ([_1, input4]) => If3(If3(Const2(",", input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ElementListMapping2(_0), input3]);
+var _Tuple_2 = (input2) => If3(If3(Const2("[", input2), ([_0, input3]) => If3(ElementList2(input3), ([_1, input4]) => If3(Const2("]", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_Tuple_Mapping2(_0), input3]);
+var ParameterReadonlyOptional2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("?", input3), ([_1, input4]) => If3(Const2(":", input4), ([_2, input5]) => If3(Const2("readonly", input5), ([_3, input6]) => If3(Type3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [ParameterReadonlyOptionalMapping2(_0), input3]);
+var ParameterReadonly2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2(":", input3), ([_1, input4]) => If3(Const2("readonly", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [ParameterReadonlyMapping2(_0), input3]);
+var ParameterOptional2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2("?", input3), ([_1, input4]) => If3(Const2(":", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [ParameterOptionalMapping2(_0), input3]);
+var ParameterType2 = (input2) => If3(If3(Ident2(input2), ([_0, input3]) => If3(Const2(":", input3), ([_1, input4]) => If3(Type3(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [ParameterTypeMapping2(_0), input3]);
+var ParameterBase2 = (input2) => If3(If3(ParameterReadonlyOptional2(input2), ([_0, input3]) => [_0, input3], () => If3(ParameterReadonly2(input2), ([_0, input3]) => [_0, input3], () => If3(ParameterOptional2(input2), ([_0, input3]) => [_0, input3], () => If3(ParameterType2(input2), ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [ParameterBaseMapping2(_0), input3]);
+var Parameter4 = (input2) => If3(If3(If3(Const2("...", input2), ([_0, input3]) => If3(ParameterBase2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(ParameterBase2(input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ParameterMapping2(_0), input3]);
+var ParameterList_02 = (input2, result = []) => If3(If3(Const2(",", input2), ([_0, input3]) => If3(Parameter4(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => ParameterList_02(input3, [...result, _0]), () => [result, input2]);
+var ParameterList2 = (input2) => If3(If3(If3(Parameter4(input2), ([_0, input3]) => If3(ParameterList_02(input3), ([_1, input4]) => If3(If3(Const2(",", input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ParameterListMapping2(_0), input3]);
+var _Function_4 = (input2) => If3(If3(Const2("(", input2), ([_0, input3]) => If3(ParameterList2(input3), ([_1, input4]) => If3(Const2(")", input4), ([_2, input5]) => If3(Const2("=>", input5), ([_3, input6]) => If3(Type3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [_Function_Mapping2(_0), input3]);
+var _Constructor_2 = (input2) => If3(If3(Const2("new", input2), ([_0, input3]) => If3(Const2("(", input3), ([_1, input4]) => If3(ParameterList2(input4), ([_2, input5]) => If3(Const2(")", input5), ([_3, input6]) => If3(Const2("=>", input6), ([_4, input7]) => If3(Type3(input7), ([_5, input8]) => [[_0, _1, _2, _3, _4, _5], input8])))))), ([_0, input3]) => [_Constructor_Mapping2(_0), input3]);
+var MappedReadonly2 = (input2) => If3(If3(If3(Const2("+", input2), ([_0, input3]) => If3(Const2("readonly", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("-", input2), ([_0, input3]) => If3(Const2("readonly", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("readonly", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [MappedReadonlyMapping2(_0), input3]);
+var MappedOptional2 = (input2) => If3(If3(If3(Const2("+", input2), ([_0, input3]) => If3(Const2("?", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("-", input2), ([_0, input3]) => If3(Const2("?", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("?", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])))), ([_0, input3]) => [MappedOptionalMapping2(_0), input3]);
+var MappedAs2 = (input2) => If3(If3(If3(Const2("as", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [MappedAsMapping2(_0), input3]);
+var _Mapped_2 = (input2) => If3(If3(Const2("{", input2), ([_0, input3]) => If3(MappedReadonly2(input3), ([_1, input4]) => If3(Const2("[", input4), ([_2, input5]) => If3(Ident2(input5), ([_3, input6]) => If3(Const2("in", input6), ([_4, input7]) => If3(Type3(input7), ([_5, input8]) => If3(MappedAs2(input8), ([_6, input9]) => If3(Const2("]", input9), ([_7, input10]) => If3(MappedOptional2(input10), ([_8, input11]) => If3(Const2(":", input11), ([_9, input12]) => If3(Type3(input12), ([_10, input13]) => If3(OptionalSemiColon2(input13), ([_11, input14]) => If3(Const2("}", input14), ([_12, input15]) => [[_0, _1, _2, _3, _4, _5, _6, _7, _8, _9, _10, _11, _12], input15]))))))))))))), ([_0, input3]) => [_Mapped_Mapping2(_0), input3]);
+var Reference2 = (input2) => If3(Ident2(input2), ([_0, input3]) => [ReferenceMapping2(_0), input3]);
+var WithBigInt2 = (input2) => If3(BigInt5(input2), ([_0, input3]) => [WithBigIntMapping2(_0), input3]);
+var WithNumber2 = (input2) => If3(Number5(input2), ([_0, input3]) => [WithNumberMapping2(_0), input3]);
+var WithBoolean2 = (input2) => If3(If3(Const2("true", input2), ([_0, input3]) => [_0, input3], () => If3(Const2("false", input2), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [WithBooleanMapping2(_0), input3]);
+var WithString2 = (input2) => If3(String5(['"', "'"], input2), ([_0, input3]) => [WithStringMapping2(_0), input3]);
+var WithNull2 = (input2) => If3(Const2("null", input2), ([_0, input3]) => [WithNullMapping2(_0), input3]);
+var WithUndefined2 = (input2) => If3(Const2("undefined", input2), ([_0, input3]) => [WithUndefinedMapping2(_0), input3]);
+var WithProperty2 = (input2) => If3(If3(PropertyKey2(input2), ([_0, input3]) => If3(Const2(":", input3), ([_1, input4]) => If3(WithValue2(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [WithPropertyMapping2(_0), input3]);
+var WithPropertyList_02 = (input2, result = []) => If3(If3(PropertyDelimiter2(input2), ([_0, input3]) => If3(WithProperty2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => WithPropertyList_02(input3, [...result, _0]), () => [result, input2]);
+var WithPropertyList2 = (input2) => If3(If3(If3(WithProperty2(input2), ([_0, input3]) => If3(WithPropertyList_02(input3), ([_1, input4]) => If3(If3(PropertyDelimiter2(input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [WithPropertyListMapping2(_0), input3]);
+var WithObject2 = (input2) => If3(If3(Const2("{", input2), ([_0, input3]) => If3(WithPropertyList2(input3), ([_1, input4]) => If3(Const2("}", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [WithObjectMapping2(_0), input3]);
+var WithElementList_02 = (input2, result = []) => If3(If3(Const2(",", input2), ([_0, input3]) => If3(WithValue2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => WithElementList_02(input3, [...result, _0]), () => [result, input2]);
+var WithElementList2 = (input2) => If3(If3(If3(WithValue2(input2), ([_0, input3]) => If3(WithElementList_02(input3), ([_1, input4]) => If3(If3(Const2(",", input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [WithElementListMapping2(_0), input3]);
+var WithArray2 = (input2) => If3(If3(Const2("[", input2), ([_0, input3]) => If3(WithElementList2(input3), ([_1, input4]) => If3(Const2("]", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [WithArrayMapping2(_0), input3]);
+var WithValue2 = (input2) => If3(If3(WithBigInt2(input2), ([_0, input3]) => [_0, input3], () => If3(WithNumber2(input2), ([_0, input3]) => [_0, input3], () => If3(WithBoolean2(input2), ([_0, input3]) => [_0, input3], () => If3(WithString2(input2), ([_0, input3]) => [_0, input3], () => If3(WithNull2(input2), ([_0, input3]) => [_0, input3], () => If3(WithUndefined2(input2), ([_0, input3]) => [_0, input3], () => If3(WithObject2(input2), ([_0, input3]) => [_0, input3], () => If3(WithArray2(input2), ([_0, input3]) => [_0, input3], () => [])))))))), ([_0, input3]) => [WithValueMapping2(_0), input3]);
+var PatternBigInt2 = (input2) => If3(Const2("-?(?:0|[1-9][0-9]*)n", input2), ([_0, input3]) => [PatternBigIntMapping2(_0), input3]);
+var PatternString2 = (input2) => If3(Const2(".*", input2), ([_0, input3]) => [PatternStringMapping2(_0), input3]);
+var PatternNumber2 = (input2) => If3(Const2("-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", input2), ([_0, input3]) => [PatternNumberMapping2(_0), input3]);
+var PatternInteger2 = (input2) => If3(Const2("-?(?:0|[1-9][0-9]*)", input2), ([_0, input3]) => [PatternIntegerMapping2(_0), input3]);
+var PatternNever2 = (input2) => If3(Const2("(?!)", input2), ([_0, input3]) => [PatternNeverMapping2(_0), input3]);
+var PatternText2 = (input2) => If3(Until_12(["-?(?:0|[1-9][0-9]*)n", ".*", "-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?", "-?(?:0|[1-9][0-9]*)", "(?!)", "(", ")", "$", "|"], input2), ([_0, input3]) => [PatternTextMapping2(_0), input3]);
+var PatternBase2 = (input2) => If3(If3(PatternBigInt2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternString2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternNumber2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternInteger2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternNever2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternGroup2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternText2(input2), ([_0, input3]) => [_0, input3], () => []))))))), ([_0, input3]) => [PatternBaseMapping2(_0), input3]);
+var PatternGroup2 = (input2) => If3(If3(Const2("(", input2), ([_0, input3]) => If3(PatternBody2(input3), ([_1, input4]) => If3(Const2(")", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [PatternGroupMapping2(_0), input3]);
+var PatternUnion2 = (input2) => If3(If3(If3(PatternTerm2(input2), ([_0, input3]) => If3(Const2("|", input3), ([_1, input4]) => If3(PatternUnion2(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3(If3(PatternTerm2(input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => []))), ([_0, input3]) => [PatternUnionMapping2(_0), input3]);
+var PatternTerm2 = (input2) => If3(If3(PatternBase2(input2), ([_0, input3]) => If3(PatternBody2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [PatternTermMapping2(_0), input3]);
+var PatternBody2 = (input2) => If3(If3(PatternUnion2(input2), ([_0, input3]) => [_0, input3], () => If3(PatternTerm2(input2), ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [PatternBodyMapping2(_0), input3]);
+var Pattern2 = (input2) => If3(If3(Const2("^", input2), ([_0, input3]) => If3(PatternBody2(input3), ([_1, input4]) => If3(Const2("$", input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [PatternMapping2(_0), input3]);
+var InterfaceDeclarationHeritageList_02 = (input2, result = []) => If3(If3(Const2(",", input2), ([_0, input3]) => If3(Type3(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => InterfaceDeclarationHeritageList_02(input3, [...result, _0]), () => [result, input2]);
+var InterfaceDeclarationHeritageList2 = (input2) => If3(If3(If3(Type3(input2), ([_0, input3]) => If3(InterfaceDeclarationHeritageList_02(input3), ([_1, input4]) => If3(If3(Const2(",", input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [InterfaceDeclarationHeritageListMapping2(_0), input3]);
+var InterfaceDeclarationHeritage2 = (input2) => If3(If3(If3(Const2("extends", input2), ([_0, input3]) => If3(InterfaceDeclarationHeritageList2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [InterfaceDeclarationHeritageMapping2(_0), input3]);
+var InterfaceDeclarationGeneric2 = (input2) => If3(If3(Const2("interface", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => If3(GenericParameters2(input4), ([_2, input5]) => If3(InterfaceDeclarationHeritage2(input5), ([_3, input6]) => If3(Properties2(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [InterfaceDeclarationGenericMapping2(_0), input3]);
+var InterfaceDeclaration2 = (input2) => If3(If3(Const2("interface", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => If3(InterfaceDeclarationHeritage2(input4), ([_2, input5]) => If3(Properties2(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [InterfaceDeclarationMapping2(_0), input3]);
+var TypeAliasDeclarationGeneric2 = (input2) => If3(If3(Const2("type", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => If3(GenericParameters2(input4), ([_2, input5]) => If3(Const2("=", input5), ([_3, input6]) => If3(Type3(input6), ([_4, input7]) => [[_0, _1, _2, _3, _4], input7]))))), ([_0, input3]) => [TypeAliasDeclarationGenericMapping2(_0), input3]);
+var TypeAliasDeclaration2 = (input2) => If3(If3(Const2("type", input2), ([_0, input3]) => If3(Ident2(input3), ([_1, input4]) => If3(Const2("=", input4), ([_2, input5]) => If3(Type3(input5), ([_3, input6]) => [[_0, _1, _2, _3], input6])))), ([_0, input3]) => [TypeAliasDeclarationMapping2(_0), input3]);
+var ExportKeyword2 = (input2) => If3(If3(If3(Const2("export", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ExportKeywordMapping2(_0), input3]);
+var ModuleDeclarationDelimiter2 = (input2) => If3(If3(If3(Const2(";", input2), ([_0, input3]) => If3(Const2("\n", input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [_0, input3], () => If3(If3(Const2(";", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => If3(If3(Const2("\n", input2), ([_0, input3]) => [[_0], input3]), ([_0, input3]) => [_0, input3], () => []))), ([_0, input3]) => [ModuleDeclarationDelimiterMapping2(_0), input3]);
+var ModuleDeclarationList_02 = (input2, result = []) => If3(If3(ModuleDeclarationDelimiter2(input2), ([_0, input3]) => If3(ModuleDeclaration2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => ModuleDeclarationList_02(input3, [...result, _0]), () => [result, input2]);
+var ModuleDeclarationList2 = (input2) => If3(If3(If3(ModuleDeclaration2(input2), ([_0, input3]) => If3(ModuleDeclarationList_02(input3), ([_1, input4]) => If3(If3(ModuleDeclarationDelimiter2(input4), ([_02, input5]) => [[_02], input5], () => [[], input4]), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [_0, input3], () => If3([[], input2], ([_0, input3]) => [_0, input3], () => [])), ([_0, input3]) => [ModuleDeclarationListMapping2(_0), input3]);
+var ModuleDeclaration2 = (input2) => If3(If3(ExportKeyword2(input2), ([_0, input3]) => If3(If3(InterfaceDeclarationGeneric2(input3), ([_02, input4]) => [_02, input4], () => If3(InterfaceDeclaration2(input3), ([_02, input4]) => [_02, input4], () => If3(TypeAliasDeclarationGeneric2(input3), ([_02, input4]) => [_02, input4], () => If3(TypeAliasDeclaration2(input3), ([_02, input4]) => [_02, input4], () => [])))), ([_1, input4]) => If3(OptionalSemiColon2(input4), ([_2, input5]) => [[_0, _1, _2], input5]))), ([_0, input3]) => [ModuleDeclarationMapping2(_0), input3]);
+var Module3 = (input2) => If3(If3(ModuleDeclaration2(input2), ([_0, input3]) => If3(ModuleDeclarationList2(input3), ([_1, input4]) => [[_0, _1], input4])), ([_0, input3]) => [ModuleMapping2(_0), input3]);
+var Script3 = (input2) => If3(If3(Module3(input2), ([_0, input3]) => [_0, input3], () => If3(GenericType2(input2), ([_0, input3]) => [_0, input3], () => If3(Type3(input2), ([_0, input3]) => [_0, input3], () => []))), ([_0, input3]) => [ScriptMapping2(_0), input3]);
+
+// node_modules/typebox/build/type/engine/patterns/template.mjs
+function ParseTemplateIntoTypes2(template) {
+  const parsed = TemplateLiteralTypes2(`\`${template}\``);
+  const result = guard_exports2.IsEqual(parsed.length, 2) ? parsed[0] : Unreachable3();
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/template_literal/encode.mjs
+function JoinString2(input2) {
+  return input2.join("|");
+}
+function UnwrapTemplateLiteralPattern2(pattern) {
+  return pattern.slice(1, pattern.length - 1);
+}
+function EncodeLiteral2(value3, right, pattern) {
+  return EncodeTypes2(right, `${pattern}${value3}`);
+}
+function EncodeBigInt2(right, pattern) {
+  return EncodeTypes2(right, `${pattern}${BigIntPattern2}`);
+}
+function EncodeInteger2(right, pattern) {
+  return EncodeTypes2(right, `${pattern}${IntegerPattern2}`);
+}
+function EncodeNumber2(right, pattern) {
+  return EncodeTypes2(right, `${pattern}${NumberPattern2}`);
+}
+function EncodeBoolean2(right, pattern) {
+  return EncodeType2(Union2([Literal2("false"), Literal2("true")]), right, pattern);
+}
+function EncodeString2(right, pattern) {
+  return EncodeTypes2(right, `${pattern}${StringPattern2}`);
+}
+function EncodeTemplateLiteral2(templatePattern, right, pattern) {
+  return EncodeTypes2(right, `${pattern}${UnwrapTemplateLiteralPattern2(templatePattern)}`);
+}
+function EncodeTemplateLiteralDeferred2(types4, right, pattern) {
+  const templateLiteral2 = TemplateLiteralAction2(types4, {});
+  const result = EncodeType2(templateLiteral2, right, pattern);
+  return result;
+}
+function EncodeEnum2(values, right, pattern) {
+  const evaluated = EvaluateEnum2(values);
+  return EncodeType2(evaluated, right, pattern);
+}
+function EncodeUnion2(types4, right, pattern, result = []) {
+  return guard_exports2.ShiftLeft(types4, (head, tail) => EncodeUnion2(tail, right, pattern, [...result, EncodeType2(head, [], "")]), () => EncodeTypes2(right, `${pattern}(${JoinString2(result)})`));
+}
+function EncodeType2(type, right, pattern) {
+  return IsEnum3(type) ? EncodeEnum2(type.enum, right, pattern) : IsInteger5(type) ? EncodeInteger2(right, pattern) : IsLiteral2(type) ? EncodeLiteral2(type.const, right, pattern) : IsBigInt5(type) ? EncodeBigInt2(right, pattern) : IsBoolean7(type) ? EncodeBoolean2(right, pattern) : IsNumber7(type) ? EncodeNumber2(right, pattern) : IsString7(type) ? EncodeString2(right, pattern) : IsTemplateLiteral2(type) ? EncodeTemplateLiteral2(type.pattern, right, pattern) : IsTemplateLiteralDeferred2(type) ? EncodeTemplateLiteralDeferred2(type.parameters[0], right, pattern) : IsUnion2(type) ? EncodeUnion2(type.anyOf, right, pattern) : NeverPattern2;
+}
+function EncodeTypes2(types4, pattern) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => EncodeType2(left, right, pattern), () => pattern);
+}
+function EncodePattern2(types4) {
+  const encoded = EncodeTypes2(types4, "");
+  const result = `^${encoded}$`;
+  return result;
+}
+function TemplateLiteralEncode2(types4) {
+  const pattern = EncodePattern2(types4);
+  const result = TemplateLiteralCreate2(pattern);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/template_literal/instantiate.mjs
+function TemplateLiteralAction2(types4, options) {
+  const result = CanInstantiate2(types4) ? memory_exports2.Update(TemplateLiteralEncode2(types4), {}, options) : TemplateLiteralDeferred2(types4, options);
+  return result;
+}
+function TemplateLiteralInstantiate2(context, state2, types4, options) {
+  const instantiatedTypes = InstantiateTypes2(context, state2, types4);
+  return TemplateLiteralAction2(instantiatedTypes, options);
+}
+
+// node_modules/typebox/build/type/types/template_literal.mjs
+function TemplateLiteralDeferred2(types4, options = {}) {
+  return Deferred2("TemplateLiteral", [types4], options);
+}
+function IsTemplateLiteralDeferred2(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "action") && guard_exports2.IsEqual(value3.action, "TemplateLiteral");
+}
+function TemplateLiteralFromTypes2(types4) {
+  return TemplateLiteralAction2(types4, {});
+}
+function TemplateLiteralFromString2(template) {
+  const types4 = ParseTemplateIntoTypes2(template);
+  return TemplateLiteralFromTypes2(types4);
+}
+function TemplateLiteral4(input2, options = {}) {
+  const type = guard_exports2.IsString(input2) ? TemplateLiteralFromString2(input2) : TemplateLiteralFromTypes2(input2);
+  return memory_exports2.Update(type, {}, options);
+}
+function IsTemplateLiteral2(value3) {
+  return IsKind2(value3, "TemplateLiteral");
+}
+
+// node_modules/typebox/build/type/extends/result.mjs
+var result_exports2 = {};
+__export(result_exports2, {
+  ExtendsFalse: () => ExtendsFalse2,
+  ExtendsTrue: () => ExtendsTrue2,
+  ExtendsUnion: () => ExtendsUnion3,
+  IsExtendsFalse: () => IsExtendsFalse2,
+  IsExtendsTrue: () => IsExtendsTrue2,
+  IsExtendsTrueLike: () => IsExtendsTrueLike2,
+  IsExtendsUnion: () => IsExtendsUnion2,
+  Match: () => Match7
+});
+function ExtendsUnion3(inferred) {
+  return memory_exports2.Create({ ["~kind"]: "ExtendsUnion" }, { inferred });
+}
+function IsExtendsUnion2(value3) {
+  return guard_exports2.IsObject(value3) && guard_exports2.HasPropertyKey(value3, "~kind") && guard_exports2.HasPropertyKey(value3, "inferred") && guard_exports2.IsEqual(value3["~kind"], "ExtendsUnion") && guard_exports2.IsObject(value3.inferred);
+}
+function ExtendsTrue2(inferred) {
+  return memory_exports2.Create({ ["~kind"]: "ExtendsTrue" }, { inferred });
+}
+function IsExtendsTrue2(value3) {
+  return guard_exports2.IsObject(value3) && guard_exports2.HasPropertyKey(value3, "~kind") && guard_exports2.HasPropertyKey(value3, "inferred") && guard_exports2.IsEqual(value3["~kind"], "ExtendsTrue") && guard_exports2.IsObject(value3.inferred);
+}
+function ExtendsFalse2() {
+  return memory_exports2.Create({ ["~kind"]: "ExtendsFalse" }, {});
+}
+function IsExtendsFalse2(value3) {
+  return guard_exports2.IsObject(value3) && guard_exports2.HasPropertyKey(value3, "~kind") && guard_exports2.IsEqual(value3["~kind"], "ExtendsFalse");
+}
+function IsExtendsTrueLike2(value3) {
+  return IsExtendsUnion2(value3) || IsExtendsTrue2(value3);
+}
+function Match7(result, true_, false_) {
+  return IsExtendsTrueLike2(result) ? true_(result.inferred) : false_();
+}
+
+// node_modules/typebox/build/type/extends/extends_right.mjs
+function ExtendsRightInfer2(inferred, name, left, right) {
+  return Match7(ExtendsLeft2(inferred, left, right), (checkInferred) => ExtendsTrue2(memory_exports2.Assign(memory_exports2.Assign(inferred, checkInferred), { [name]: left })), () => ExtendsFalse2());
+}
+function ExtendsRightAny2(inferred, _left) {
+  return ExtendsTrue2(inferred);
+}
+function ExtendsRightDependent2(inferred, left, if_, then_, else_) {
+  return Match7(ExtendsLeft2(inferred, left, if_), (inferred2) => Match7(ExtendsLeft2(inferred2, left, then_), (inferred3) => ExtendsTrue2(inferred3), () => ExtendsFalse2()), () => Match7(ExtendsLeft2(inferred, left, else_), (inferred2) => ExtendsTrue2(inferred2), () => ExtendsFalse2()));
+}
+function ExtendsRightEnum2(inferred, left, right) {
+  const evaluated = EvaluateEnum2(right);
+  return ExtendsLeft2(inferred, left, evaluated);
+}
+function ExtendsRightIntersect2(inferred, left, right) {
+  return guard_exports2.ShiftLeft(right, (head, tail) => Match7(ExtendsLeft2(inferred, left, head), (inferred2) => ExtendsRightIntersect2(inferred2, left, tail), () => ExtendsFalse2()), () => ExtendsTrue2(inferred));
+}
+function ExtendsRightTemplateLiteral2(inferred, left, right) {
+  const evaluated = EvaluateTemplateLiteral2(right);
+  return ExtendsLeft2(inferred, left, evaluated);
+}
+function ExtendsRightUnion2(inferred, left, right) {
+  return guard_exports2.ShiftLeft(right, (head, tail) => Match7(ExtendsLeft2(inferred, left, head), (inferred2) => ExtendsTrue2(inferred2), () => ExtendsRightUnion2(inferred, left, tail)), () => ExtendsFalse2());
+}
+function ExtendsRight2(inferred, left, right) {
+  return IsAny2(right) ? ExtendsRightAny2(inferred, left) : IsDependent2(right) ? ExtendsRightDependent2(inferred, left, right.if, right.then, right.else) : IsEnum3(right) ? ExtendsRightEnum2(inferred, left, right.enum) : IsInfer2(right) ? ExtendsRightInfer2(inferred, right.name, left, right.extends) : IsIntersect2(right) ? ExtendsRightIntersect2(inferred, left, right.allOf) : IsTemplateLiteral2(right) ? ExtendsRightTemplateLiteral2(inferred, left, right.pattern) : IsUnion2(right) ? ExtendsRightUnion2(inferred, left, right.anyOf) : IsUnknown2(right) ? ExtendsTrue2(inferred) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/extends/any.mjs
+function ExtendsAny2(inferred, left, right) {
+  return IsInfer2(right) ? ExtendsRight2(inferred, left, right) : IsAny2(right) ? ExtendsTrue2(inferred) : IsUnknown2(right) ? ExtendsTrue2(inferred) : ExtendsUnion3(inferred);
+}
+
+// node_modules/typebox/build/type/extends/array.mjs
+function ExtendsImmutable2(left, right) {
+  const isImmutableLeft = IsImmutable2(left);
+  const isImmutableRight = IsImmutable2(right);
+  return isImmutableLeft && isImmutableRight ? true : !isImmutableLeft && isImmutableRight ? true : isImmutableLeft && !isImmutableRight ? false : true;
+}
+function ExtendsArray2(inferred, arrayLeft, left, right) {
+  return IsArray5(right) ? ExtendsImmutable2(arrayLeft, right) ? ExtendsLeft2(inferred, left, right.items) : ExtendsFalse2() : ExtendsRight2(inferred, arrayLeft, right);
+}
+
+// node_modules/typebox/build/type/extends/bigint.mjs
+function ExtendsBigInt2(inferred, left, right) {
+  return IsBigInt5(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/boolean.mjs
+function ExtendsBoolean2(inferred, left, right) {
+  return IsBoolean7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/parameters.mjs
+function ParameterCompare2(inferred, left, leftRest, right, rightRest) {
+  const checkLeft = IsInfer2(right) ? left : right;
+  const checkRight = IsInfer2(right) ? right : left;
+  const isLeftOptional = IsOptional2(left);
+  const isRightOptional = IsOptional2(right);
+  return !isLeftOptional && isRightOptional ? ExtendsFalse2() : Match7(ExtendsLeft2(inferred, checkLeft, checkRight), (inferred2) => ExtendsParameters2(inferred2, leftRest, rightRest), () => ExtendsFalse2());
+}
+function ParameterRight2(inferred, left, leftRest, rightRest) {
+  return guard_exports2.ShiftLeft(rightRest, (head, tail) => ParameterCompare2(inferred, left, leftRest, head, tail), () => IsOptional2(left) ? ExtendsTrue2(inferred) : ExtendsFalse2());
+}
+function ParametersLeft2(inferred, left, rightRest) {
+  return guard_exports2.ShiftLeft(left, (head, tail) => ParameterRight2(inferred, head, tail, rightRest), () => ExtendsTrue2(inferred));
+}
+function ExtendsParameters2(inferred, left, right) {
+  return ParametersLeft2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/return_type.mjs
+function ExtendsReturnType2(inferred, left, right) {
+  return IsVoid2(right) ? ExtendsTrue2(inferred) : ExtendsLeft2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/constructor.mjs
+function ExtendsConstructor2(inferred, parameters, returnType, right) {
+  return IsAny2(right) ? ExtendsTrue2(inferred) : IsUnknown2(right) ? ExtendsTrue2(inferred) : IsConstructor5(right) ? Match7(ExtendsParameters2(inferred, parameters, right["parameters"]), (inferred2) => ExtendsReturnType2(inferred2, returnType, right["instanceType"]), () => ExtendsFalse2()) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/extends/dependent.mjs
+function ExtendsDependent2(inferred, if_, then_, else_, right) {
+  return Match7(ExtendsLeft2(inferred, if_, right), () => ExtendsLeft2(inferred, then_, right), () => ExtendsLeft2(inferred, else_, right));
+}
+
+// node_modules/typebox/build/type/extends/enum.mjs
+function ExtendsEnum2(inferred, left, right) {
+  const evaluated = EvaluateEnum2(left);
+  return ExtendsLeft2(inferred, evaluated, right);
+}
+
+// node_modules/typebox/build/type/extends/function.mjs
+function ExtendsFunction2(inferred, parameters, returnType, right) {
+  return IsAny2(right) ? ExtendsTrue2(inferred) : IsUnknown2(right) ? ExtendsTrue2(inferred) : IsFunction5(right) ? Match7(ExtendsParameters2(inferred, parameters, right["parameters"]), (inferred2) => ExtendsReturnType2(inferred2, returnType, right["returnType"]), () => ExtendsFalse2()) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/extends/integer.mjs
+function ExtendsInteger2(inferred, left, right) {
+  return IsInteger5(right) ? ExtendsTrue2(inferred) : IsNumber7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/intersect.mjs
+function ExtendsIntersect2(inferred, left, right) {
+  const evaluated = EvaluateIntersect2(left);
+  return ExtendsLeft2(inferred, evaluated, right);
+}
+
+// node_modules/typebox/build/type/extends/literal.mjs
+function ExtendsLiteralValue2(inferred, left, right) {
+  return left === right ? ExtendsTrue2(inferred) : ExtendsFalse2();
+}
+function ExtendsLiteralBigInt2(inferred, left, right) {
+  return IsLiteral2(right) ? ExtendsLiteralValue2(inferred, left, right.const) : IsBigInt5(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, Literal2(left), right);
+}
+function ExtendsLiteralBoolean2(inferred, left, right) {
+  return IsLiteral2(right) ? ExtendsLiteralValue2(inferred, left, right.const) : IsBoolean7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, Literal2(left), right);
+}
+function ExtendsLiteralNumber2(inferred, left, right) {
+  return IsLiteral2(right) ? ExtendsLiteralValue2(inferred, left, right.const) : IsNumber7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, Literal2(left), right);
+}
+function ExtendsLiteralString2(inferred, left, right) {
+  return IsLiteral2(right) ? ExtendsLiteralValue2(inferred, left, right.const) : IsString7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, Literal2(left), right);
+}
+function ExtendsLiteral2(inferred, left, right) {
+  return guard_exports2.IsBigInt(left.const) ? ExtendsLiteralBigInt2(inferred, left.const, right) : guard_exports2.IsBoolean(left.const) ? ExtendsLiteralBoolean2(inferred, left.const, right) : guard_exports2.IsNumber(left.const) ? ExtendsLiteralNumber2(inferred, left.const, right) : guard_exports2.IsString(left.const) ? ExtendsLiteralString2(inferred, left.const, right) : Unreachable3();
+}
+
+// node_modules/typebox/build/type/extends/never.mjs
+function ExtendsNever2(inferred, left, right) {
+  return IsInfer2(right) ? ExtendsRight2(inferred, left, right) : ExtendsTrue2(inferred);
+}
+
+// node_modules/typebox/build/type/extends/null.mjs
+function ExtendsNull2(inferred, left, right) {
+  return IsNull5(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/number.mjs
+function ExtendsNumber2(inferred, left, right) {
+  return IsNumber7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/object.mjs
+function ExtendsPropertyOptional2(inferred, left, right) {
+  return IsOptional2(left) ? IsOptional2(right) ? ExtendsTrue2(inferred) : ExtendsFalse2() : ExtendsTrue2(inferred);
+}
+function ExtendsProperty2(inferred, left, right) {
+  return (
+    // Right TInfer<TNever> is TExtendsFalse
+    IsInfer2(right) && IsNever2(right.extends) ? ExtendsFalse2() : Match7(ExtendsLeft2(inferred, left, right), (inferred2) => ExtendsPropertyOptional2(inferred2, left, right), () => ExtendsFalse2())
+  );
+}
+function ExtractInferredProperties2(keys, properties) {
+  return keys.reduce((result, key) => {
+    return key in properties ? IsExtendsTrueLike2(properties[key]) ? { ...result, ...properties[key].inferred } : Unreachable3() : Unreachable3();
+  }, {});
+}
+function ExtendsPropertiesComparer2(inferred, left, right) {
+  const properties = {};
+  for (const rightKey of guard_exports2.Keys(right)) {
+    properties[rightKey] = rightKey in left ? ExtendsProperty2({}, left[rightKey], right[rightKey]) : IsOptional2(right[rightKey]) ? IsInfer2(right[rightKey]) ? ExtendsTrue2(memory_exports2.Assign(inferred, { [right[rightKey].name]: right[rightKey].extends })) : ExtendsTrue2(inferred) : ExtendsFalse2();
+  }
+  const checked = guard_exports2.Values(properties).every((result) => IsExtendsTrueLike2(result));
+  const extracted = checked ? ExtractInferredProperties2(guard_exports2.Keys(properties), properties) : {};
+  return checked ? ExtendsTrue2(extracted) : ExtendsFalse2();
+}
+function ExtendsProperties2(inferred, left, right) {
+  const compared = ExtendsPropertiesComparer2(inferred, left, right);
+  return IsExtendsTrueLike2(compared) ? ExtendsTrue2(memory_exports2.Assign(inferred, compared.inferred)) : ExtendsFalse2();
+}
+function ExtendsObjectToObject2(inferred, left, right) {
+  return ExtendsProperties2(inferred, left, right);
+}
+function RecordMergeInferred2(left, right) {
+  return guard_exports2.Keys(right).reduce((result, key) => {
+    return {
+      ...result,
+      [key]: guard_exports2.HasPropertyKey(left, key) ? IsUnion2(result[key]) ? Union2([...result[key].anyOf, right[key]]) : Union2([left[key], right[key]]) : right[key]
+    };
+  }, left);
+}
+function ExtendsRecordComparer2(properties, keys, type, result) {
+  return guard_exports2.ShiftLeft(keys, (left, right) => Match7(ExtendsLeft2({}, properties[left], type), (inferred) => ExtendsRecordComparer2(properties, right, type, RecordMergeInferred2(result, inferred)), () => ExtendsFalse2()), () => ExtendsTrue2(result));
+}
+function ExtendsObjectToRecord2(inferred, properties, _pattern, value3) {
+  const keys = guard_exports2.Keys(properties);
+  const result = ExtendsRecordComparer2(properties, keys, value3, inferred);
+  return result;
+}
+function ExtendsObject2(inferred, left, right) {
+  return IsRecord2(right) ? ExtendsObjectToRecord2(inferred, left, RecordPattern2(right), RecordValue2(right)) : IsObject5(right) ? ExtendsObjectToObject2(inferred, left, right.properties) : ExtendsRight2(inferred, _Object_3(left), right);
+}
+
+// node_modules/typebox/build/type/extends/record.mjs
+function FromObject20(inferred, properties) {
+  return guard_exports2.IsEqual(guard_exports2.Keys(properties).length, 0) ? ExtendsTrue2(inferred) : ExtendsFalse2();
+}
+function FromRecord10(inferred, _leftKey, leftValue, _rightKey, rightValue) {
+  return ExtendsLeft2(inferred, leftValue, rightValue);
+}
+function ExtendsRecord2(inferred, leftPattern, leftValue, right) {
+  return IsRecord2(right) ? FromRecord10(inferred, RecordPatternToType2(leftPattern), leftValue, RecordPatternToType2(RecordPattern2(right)), RecordValue2(right)) : IsObject5(right) ? FromObject20(inferred, right.properties) : IsAny2(right) ? ExtendsTrue2(inferred) : IsUnknown2(right) ? ExtendsTrue2(inferred) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/extends/string.mjs
+function ExtendsString2(inferred, left, right) {
+  return IsString7(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/symbol.mjs
+function ExtendsSymbol2(inferred, left, right) {
+  return IsSymbol5(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/template_literal.mjs
+function ExtendsTemplateLiteral2(inferred, left, right) {
+  const evaluated = EvaluateTemplateLiteral2(left);
+  return ExtendsLeft2(inferred, evaluated, right);
+}
+
+// node_modules/typebox/build/type/extends/inference.mjs
+function Inferrable2(name, type) {
+  return memory_exports2.Create({ "~kind": "Inferrable" }, { name, type }, {});
+}
+function IsInferable2(value3) {
+  return guard_exports2.IsObject(value3) && guard_exports2.HasPropertyKey(value3, "~kind") && guard_exports2.HasPropertyKey(value3, "name") && guard_exports2.HasPropertyKey(value3, "type") && guard_exports2.IsEqual(value3["~kind"], "Inferrable") && guard_exports2.IsString(value3.name) && guard_exports2.IsObject(value3.type);
+}
+function TryRestInferable2(type) {
+  return IsRest2(type) ? IsInfer2(type.items) ? IsArray5(type.items.extends) ? Inferrable2(type.items.name, type.items.extends.items) : IsUnknown2(type.items.extends) ? Inferrable2(type.items.name, type.items.extends) : void 0 : Unreachable3() : void 0;
+}
+function TryInferable2(type) {
+  return IsInfer2(type) ? Inferrable2(type.name, type.extends) : void 0;
+}
+function TryInferResults2(rest, right, result = []) {
+  return guard_exports2.ShiftLeft(rest, (head, tail) => Match7(ExtendsLeft2({}, head, right), () => TryInferResults2(tail, right, [...result, head]), () => void 0), () => result);
+}
+function InferTupleResult2(inferred, name, left, right) {
+  const results = TryInferResults2(left, right);
+  return guard_exports2.IsArray(results) ? ExtendsTrue2(memory_exports2.Assign(inferred, { [name]: Tuple2(results) })) : ExtendsFalse2();
+}
+function InferUnionResult2(inferred, name, left, right) {
+  const results = TryInferResults2(left, right);
+  return guard_exports2.IsArray(results) ? ExtendsTrue2(memory_exports2.Assign(inferred, { [name]: Union2(results) })) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/extends/tuple.mjs
+function Reverse2(types4) {
+  return [...types4].reverse();
+}
+function ApplyReverse2(types4, reversed) {
+  return reversed ? Reverse2(types4) : types4;
+}
+function Reversed2(types4) {
+  const first = types4.length > 0 ? types4[0] : void 0;
+  const inferrable = IsSchema3(first) ? TryRestInferable2(first) : void 0;
+  return IsSchema3(inferrable);
+}
+function ElementsCompare2(inferred, reversed, left, leftRest, right, rightRest) {
+  return Match7(ExtendsLeft2(inferred, left, right), (checkInferred) => Elements2(checkInferred, reversed, leftRest, rightRest), () => ExtendsFalse2());
+}
+function ElementsLeft2(inferred, reversed, leftRest, right, rightRest) {
+  const inferable = TryRestInferable2(right);
+  return (
+    // Rest Inferrable Right Means we delegate to TInferTupleResult to Generate a Result
+    IsInferable2(inferable) ? InferTupleResult2(inferred, inferable["name"], ApplyReverse2(leftRest, reversed), inferable["type"]) : guard_exports2.ShiftLeft(leftRest, (head, tail) => ElementsCompare2(inferred, reversed, head, tail, right, rightRest), () => ExtendsFalse2())
+  );
+}
+function ElementsRight2(inferred, reversed, leftRest, rightRest) {
+  return guard_exports2.ShiftLeft(rightRest, (head, tail) => ElementsLeft2(inferred, reversed, leftRest, head, tail), () => guard_exports2.IsEqual(leftRest.length, 0) ? ExtendsTrue2(inferred) : ExtendsFalse2());
+}
+function Elements2(inferred, reversed, leftRest, rightRest) {
+  return ElementsRight2(inferred, reversed, leftRest, rightRest);
+}
+function ExtendsTupleToTuple2(inferred, left, right) {
+  const instantiatedRight = InstantiateElements2(inferred, State2([], []), right);
+  const reversed = Reversed2(instantiatedRight);
+  return Elements2(inferred, reversed, ApplyReverse2(left, reversed), ApplyReverse2(instantiatedRight, reversed));
+}
+function ExtendsTupleToArray2(inferred, left, right) {
+  const inferrable = TryInferable2(right);
+  return IsInferable2(inferrable) ? InferUnionResult2(inferred, inferrable["name"], left, inferrable["type"]) : guard_exports2.ShiftLeft(left, (head, tail) => Match7(ExtendsLeft2(inferred, head, right), (inferred2) => ExtendsTupleToArray2(inferred2, tail, right), () => ExtendsFalse2()), () => ExtendsTrue2(inferred));
+}
+function ExtendsTuple2(inferred, left, right) {
+  const instantiatedLeft = InstantiateElements2(inferred, State2([], []), left);
+  return IsTuple2(right) ? ExtendsTupleToTuple2(inferred, instantiatedLeft, right.items) : IsArray5(right) ? ExtendsTupleToArray2(inferred, instantiatedLeft, right.items) : ExtendsRight2(inferred, Tuple2(instantiatedLeft), right);
+}
+
+// node_modules/typebox/build/type/extends/undefined.mjs
+function ExtendsUndefined2(inferred, left, right) {
+  return IsVoid2(right) ? ExtendsTrue2(inferred) : IsUndefined5(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/union.mjs
+function ExtendsUnionSome2(inferred, type, unionTypes) {
+  return guard_exports2.ShiftLeft(unionTypes, (head, tail) => Match7(ExtendsLeft2(inferred, type, head), (inferred2) => ExtendsTrue2(inferred2), () => ExtendsUnionSome2(inferred, type, tail)), () => ExtendsFalse2());
+}
+function ExtendsUnionLeft2(inferred, left, right) {
+  return guard_exports2.ShiftLeft(left, (head, tail) => Match7(ExtendsUnionSome2(inferred, head, right), (inferred2) => ExtendsUnionLeft2(inferred2, tail, right), () => ExtendsFalse2()), () => ExtendsTrue2(inferred));
+}
+function ExtendsUnion4(inferred, left, right) {
+  const inferrable = TryInferable2(right);
+  return IsInferable2(inferrable) ? InferUnionResult2(inferred, inferrable.name, left, inferrable.type) : IsUnion2(right) ? ExtendsUnionLeft2(inferred, left, right.anyOf) : ExtendsUnionLeft2(inferred, left, [right]);
+}
+
+// node_modules/typebox/build/type/extends/unknown.mjs
+function ExtendsUnknown2(inferred, left, right) {
+  return IsInfer2(right) ? ExtendsRight2(inferred, left, right) : IsAny2(right) ? ExtendsTrue2(inferred) : IsUnknown2(right) ? ExtendsTrue2(inferred) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/extends/void.mjs
+function ExtendsVoid2(inferred, left, right) {
+  return IsVoid2(right) ? ExtendsTrue2(inferred) : ExtendsRight2(inferred, left, right);
+}
+
+// node_modules/typebox/build/type/extends/extends_left.mjs
+function ExtendsLeft2(inferred, left, right) {
+  return IsAny2(left) ? ExtendsAny2(inferred, left, right) : IsArray5(left) ? ExtendsArray2(inferred, left, left.items, right) : IsBigInt5(left) ? ExtendsBigInt2(inferred, left, right) : IsBoolean7(left) ? ExtendsBoolean2(inferred, left, right) : IsConstructor5(left) ? ExtendsConstructor2(inferred, left.parameters, left.instanceType, right) : IsDependent2(left) ? ExtendsDependent2(inferred, left.if, left.then, left.else, right) : IsEnum3(left) ? ExtendsEnum2(inferred, left.enum, right) : IsFunction5(left) ? ExtendsFunction2(inferred, left.parameters, left.returnType, right) : IsInteger5(left) ? ExtendsInteger2(inferred, left, right) : IsIntersect2(left) ? ExtendsIntersect2(inferred, left.allOf, right) : IsLiteral2(left) ? ExtendsLiteral2(inferred, left, right) : IsNever2(left) ? ExtendsNever2(inferred, left, right) : IsNull5(left) ? ExtendsNull2(inferred, left, right) : IsNumber7(left) ? ExtendsNumber2(inferred, left, right) : IsObject5(left) ? ExtendsObject2(inferred, left.properties, right) : IsRecord2(left) ? ExtendsRecord2(inferred, RecordPattern2(left), RecordValue2(left), right) : IsString7(left) ? ExtendsString2(inferred, left, right) : IsSymbol5(left) ? ExtendsSymbol2(inferred, left, right) : IsTemplateLiteral2(left) ? ExtendsTemplateLiteral2(inferred, left.pattern, right) : IsTuple2(left) ? ExtendsTuple2(inferred, left.items, right) : IsUndefined5(left) ? ExtendsUndefined2(inferred, left, right) : IsUnion2(left) ? ExtendsUnion4(inferred, left.anyOf, right) : IsUnknown2(left) ? ExtendsUnknown2(inferred, left, right) : IsVoid2(left) ? ExtendsVoid2(inferred, left, right) : ExtendsFalse2();
+}
+
+// node_modules/typebox/build/type/engine/interface/instantiate.mjs
+function InterfaceOperation2(heritage, properties) {
+  const result = EvaluateIntersect2([...heritage, _Object_3(properties)]);
+  return result;
+}
+function InterfaceAction2(heritage, properties, options) {
+  const result = CanInstantiate2(heritage) ? memory_exports2.Update(InterfaceOperation2(heritage, properties), {}, options) : InterfaceDeferred2(heritage, properties, options);
+  return result;
+}
+function InterfaceInstantiate2(context, state2, heritage, properties, options) {
+  const instantiatedHeritage = InstantiateTypes2(context, state2, heritage);
+  const instantiatedProperties = InstantiateProperties2(context, state2, properties);
+  return InterfaceAction2(instantiatedHeritage, instantiatedProperties, options);
+}
+
+// node_modules/typebox/build/type/action/interface.mjs
+function InterfaceDeferred2(heritage, properties, options = {}) {
+  return Deferred2("Interface", [heritage, properties], options);
+}
+function IsInterfaceDeferred2(value3) {
+  return IsSchema3(value3) && guard_exports2.HasPropertyKey(value3, "action") && guard_exports2.IsEqual(value3.action, "Interface");
+}
+function Interface2(heritage, properties, options = {}) {
+  return InterfaceAction2(heritage, properties, options);
+}
+
+// node_modules/typebox/build/type/engine/cyclic/check.mjs
+function FromRef12(stack, context, ref) {
+  return stack.includes(ref) ? true : FromType29([...stack, ref], context, context[ref]);
+}
+function FromProperties6(stack, context, properties) {
+  const types4 = PropertyValues2(properties);
+  return FromTypes8(stack, context, types4);
+}
+function FromTypes8(stack, context, types4) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => FromType29(stack, context, left) ? true : FromTypes8(stack, context, right), () => false);
+}
+function FromType29(stack, context, type) {
+  return IsRef3(type) ? FromRef12(stack, context, type.$ref) : IsArray5(type) ? FromType29(stack, context, type.items) : IsConstructor5(type) ? FromTypes8(stack, context, [...type.parameters, type.instanceType]) : IsFunction5(type) ? FromTypes8(stack, context, [...type.parameters, type.returnType]) : IsInterfaceDeferred2(type) ? FromProperties6(stack, context, type.parameters[1]) : IsIntersect2(type) ? FromTypes8(stack, context, type.allOf) : IsObject5(type) ? FromProperties6(stack, context, type.properties) : IsUnion2(type) ? FromTypes8(stack, context, type.anyOf) : IsTuple2(type) ? FromTypes8(stack, context, type.items) : IsRecord2(type) ? FromType29(stack, context, RecordValue2(type)) : false;
+}
+function CyclicCheck2(stack, context, type) {
+  const result = FromType29(stack, context, type);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/cyclic/candidates.mjs
+function ResolveCandidateKeys2(context, keys) {
+  return keys.reduce((result, left) => {
+    return CyclicCheck2([left], context, context[left]) ? [...result, left] : result;
+  }, []);
+}
+function CyclicCandidates2(context) {
+  const keys = PropertyKeys2(context);
+  const result = ResolveCandidateKeys2(context, keys);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/cyclic/dependencies.mjs
+function FromRef13(context, ref, result) {
+  return result.includes(ref) ? result : ref in context ? FromType30(context, context[ref], [...result, ref]) : Unreachable3();
+}
+function FromProperties7(context, properties, result) {
+  const types4 = PropertyValues2(properties);
+  return FromTypes9(context, types4, result);
+}
+function FromTypes9(context, types4, result) {
+  return types4.reduce((result2, left) => {
+    return FromType30(context, left, result2);
+  }, result);
+}
+function FromType30(context, type, result) {
+  return IsRef3(type) ? FromRef13(context, type.$ref, result) : IsArray5(type) ? FromType30(context, type.items, result) : IsConstructor5(type) ? FromTypes9(context, [...type.parameters, type.instanceType], result) : IsFunction5(type) ? FromTypes9(context, [...type.parameters, type.returnType], result) : IsInterfaceDeferred2(type) ? FromProperties7(context, type.parameters[1], result) : IsIntersect2(type) ? FromTypes9(context, type.allOf, result) : IsObject5(type) ? FromProperties7(context, type.properties, result) : IsUnion2(type) ? FromTypes9(context, type.anyOf, result) : IsTuple2(type) ? FromTypes9(context, type.items, result) : IsRecord2(type) ? FromType30(context, RecordValue2(type), result) : result;
+}
+function CyclicDependencies2(context, key, type) {
+  const result = FromType30(context, type, [key]);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/cyclic/extends.mjs
+function FromRef14(_ref) {
+  return Any2();
+}
+function FromProperties8(properties) {
+  return guard_exports2.Keys(properties).reduce((result, key) => {
+    return { ...result, [key]: FromType31(properties[key]) };
+  }, {});
+}
+function FromTypes10(types4) {
+  return types4.reduce((result, left) => {
+    return [...result, FromType31(left)];
+  }, []);
+}
+function FromType31(type) {
+  return IsRef3(type) ? FromRef14(type.$ref) : IsArray5(type) ? _Array_2(FromType31(type.items), ArrayOptions2(type)) : IsConstructor5(type) ? Constructor2(FromTypes10(type.parameters), FromType31(type.instanceType)) : IsFunction5(type) ? _Function_3(FromTypes10(type.parameters), FromType31(type.returnType)) : IsIntersect2(type) ? Intersect2(FromTypes10(type.allOf)) : IsObject5(type) ? _Object_3(FromProperties8(type.properties)) : IsRecord2(type) ? Record2(RecordKey2(type), FromType31(RecordValue2(type))) : IsUnion2(type) ? Union2(FromTypes10(type.anyOf)) : IsTuple2(type) ? Tuple2(FromTypes10(type.items)) : type;
+}
+function CyclicAnyFromParameters2(defs, ref) {
+  return ref in defs ? FromType31(defs[ref]) : Unknown2();
+}
+function CyclicExtends2(type) {
+  return CyclicAnyFromParameters2(type.$defs, type.$ref);
+}
+
+// node_modules/typebox/build/type/engine/cyclic/instantiate.mjs
+function CyclicInterface2(context, heritage, properties) {
+  const instantiatedHeritage = InstantiateTypes2(context, State2([], []), heritage);
+  const instantiatedProperties = InstantiateProperties2({}, State2([], []), properties);
+  const evaluatedInterface = EvaluateIntersect2([...instantiatedHeritage, _Object_3(instantiatedProperties)]);
+  return evaluatedInterface;
+}
+function CyclicDefinitions2(context, dependencies) {
+  const keys = guard_exports2.Keys(context).filter((key) => dependencies.includes(key));
+  return keys.reduce((result, key) => {
+    const type = context[key];
+    const instantiatedType = IsInterfaceDeferred2(type) ? CyclicInterface2(context, type.parameters[0], type.parameters[1]) : type;
+    return { ...result, [key]: instantiatedType };
+  }, {});
+}
+function InstantiateCyclic2(context, ref, type) {
+  const dependencies = CyclicDependencies2(context, ref, type);
+  const definitions = CyclicDefinitions2(context, dependencies);
+  const result = Cyclic2(definitions, ref);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/cyclic/target.mjs
+function Resolve2(defs, ref) {
+  return ref in defs ? IsRef3(defs[ref]) ? Resolve2(defs, defs[ref].$ref) : defs[ref] : Never2();
+}
+function CyclicTarget2(defs, ref) {
+  const result = Resolve2(defs, ref);
+  return result;
+}
+
+// node_modules/typebox/build/type/extends/extends.mjs
+function Canonical2(type) {
+  return IsCyclic2(type) ? CyclicExtends2(type) : IsUnsafe2(type) ? Unknown2() : type;
+}
+function Extends3(inferred, left, right) {
+  const canonicalLeft = Canonical2(left);
+  const canonicalRight = Canonical2(right);
+  return ExtendsLeft2(inferred, canonicalLeft, canonicalRight);
+}
+
+// node_modules/typebox/build/type/engine/evaluate/compare.mjs
+var CompareResultEqual = 0;
+var CompareResultDisjoint = 1;
+var CompareResultLeftInside = 2;
+var CompareResultRightInside = 3;
+function Compare2(left, right) {
+  const extendsCheck = [Extends3({}, left, right), Extends3({}, right, left)];
+  return result_exports2.IsExtendsTrueLike(extendsCheck[0]) && result_exports2.IsExtendsTrueLike(extendsCheck[1]) ? CompareResultEqual : result_exports2.IsExtendsTrueLike(extendsCheck[0]) && result_exports2.IsExtendsFalse(extendsCheck[1]) ? CompareResultLeftInside : result_exports2.IsExtendsFalse(extendsCheck[0]) && result_exports2.IsExtendsTrueLike(extendsCheck[1]) ? CompareResultRightInside : CompareResultDisjoint;
+}
+
+// node_modules/typebox/build/type/engine/evaluate/broaden.mjs
+function BroadenFilter(type, types4, result = [], all = types4) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => {
+    const compare2 = Compare2(type, left);
+    return guard_exports2.IsEqual(compare2, CompareResultLeftInside) || guard_exports2.IsEqual(compare2, CompareResultEqual) ? all : guard_exports2.IsEqual(compare2, CompareResultDisjoint) ? BroadenFilter(type, right, [...result, left], all) : BroadenFilter(type, right, result, all);
+  }, () => [...result, type]);
+}
+function BroadenType2(type, types4, result) {
+  const evaluated = EvaluateType2(type);
+  return IsAny2(evaluated) ? [evaluated] : (
+    // terminate (always the most broad)
+    IsUnknown2(evaluated) ? [evaluated] : (
+      // terminate (always the most broad)
+      IsNever2(evaluated) ? BroadenTypes2(types4, result) : (
+        // ignored: never is dropped
+        IsObject5(evaluated) ? BroadenTypes2(types4, [...result, evaluated]) : (
+          // objects are always considered (too expensive to compare)
+          BroadenTypes2(types4, BroadenFilter(evaluated, result))
+        )
+      )
+    )
+  );
+}
+function BroadenTypes2(types4, result = []) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => BroadenType2(left, right, result), () => result);
+}
+function Broaden2(types4) {
+  const broadened = BroadenTypes2(types4);
+  const flattened = Flatten2(broadened);
+  return flattened;
+}
+
+// node_modules/typebox/build/type/engine/evaluate/instantiate.mjs
+function EvaluateAction2(type, options) {
+  const result = memory_exports2.Update(EvaluateType2(type), {}, options);
+  return result;
+}
+function EvaluateInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return EvaluateAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/engine/call/distribute_arguments.mjs
+function CollectDistributionNames2(expression, result = []) {
+  return (
+    // Conditional
+    IsDeferred2(expression) && guard_exports2.IsEqual(expression.action, "Conditional") ? IsRef3(expression.parameters[0]) ? CollectDistributionNames2(expression.parameters[2], CollectDistributionNames2(expression.parameters[3], [...result, expression.parameters[0]["$ref"]])) : CollectDistributionNames2(expression.parameters[2], CollectDistributionNames2(expression.parameters[3], result)) : IsDeferred2(expression) && guard_exports2.IsEqual(expression.action, "Mapped") ? IsDeferred2(expression.parameters[1]) && guard_exports2.IsEqual(expression.parameters[1].action, "KeyOf") && IsRef3(expression.parameters[1].parameters[0]) ? [...result, expression.parameters[1].parameters[0]["$ref"]] : result : result
+  );
+}
+function BuildDistributionArray2(parameters, names2) {
+  return parameters.reduce((result, left) => [...result, names2.includes(left.name)], []);
+}
+function ZipDistributionArray2(arguments_, distributionArray, result = []) {
+  return guard_exports2.ShiftLeft(arguments_, (argumentLeft, argumentRight) => guard_exports2.ShiftLeft(distributionArray, (booleanLeft, booleanRight) => ZipDistributionArray2(argumentRight, booleanRight, [...result, [booleanLeft, argumentLeft]]), () => result), () => result);
+}
+function CanonicalArgument(type) {
+  return IsTemplateLiteral2(type) ? EvaluateTemplateLiteral2(type.pattern) : IsEnum3(type) ? EvaluateEnum2(type.enum) : type;
+}
+function Expand2(type) {
+  const canonicalArgument = CanonicalArgument(type);
+  return IsUnion2(canonicalArgument) ? [...canonicalArgument.anyOf] : [canonicalArgument];
+}
+function Append2(current, type) {
+  return current.reduce((result, left) => [...result, [...left, type]], []);
+}
+function Cross2(current, variants) {
+  return variants.reduce((result, left) => {
+    return [...result, ...Append2(current, left)];
+  }, []);
+}
+function Distribute4(zipped) {
+  return zipped.reduce((result, left) => {
+    return guard_exports2.IsEqual(left[0], true) ? Cross2(result, Expand2(left[1])) : Cross2(result, [left[1]]);
+  }, [[]]);
+}
+function DistributeArguments2(parameters, arguments_, expression) {
+  const distributionNames = CollectDistributionNames2(expression);
+  const distributionArray = BuildDistributionArray2(parameters, distributionNames);
+  const zippedArguments = ZipDistributionArray2(arguments_, distributionArray);
+  return IsDeferred2(expression) && guard_exports2.IsEqual(expression.action, "Conditional") ? Distribute4(zippedArguments) : IsDeferred2(expression) && guard_exports2.IsEqual(expression.action, "Mapped") ? Distribute4(zippedArguments) : [arguments_];
+}
+
+// node_modules/typebox/build/type/engine/call/resolve_target.mjs
+function FromNotResolvable2() {
+  return ["(not-resolvable)", Never2()];
+}
+function FromNotGeneric2() {
+  return ["(not-generic)", Never2()];
+}
+function FromGeneric2(name, parameters, expression) {
+  return [name, Generic2(parameters, expression)];
+}
+function FromRef15(context, ref, arguments_) {
+  return ref in context ? FromType32(context, ref, context[ref], arguments_) : FromNotResolvable2();
+}
+function FromType32(context, name, target, arguments_) {
+  return IsGeneric2(target) ? FromGeneric2(name, target.parameters, target.expression) : IsRef3(target) ? FromRef15(context, target.$ref, arguments_) : FromNotGeneric2();
+}
+function ResolveTarget2(context, target, arguments_) {
+  return FromType32(context, "(anonymous)", target, arguments_);
+}
+
+// node_modules/typebox/build/type/engine/call/resolve_arguments.mjs
+function AssertArgumentExtends2(name, type, extends_) {
+  if (IsInfer2(type) || IsCall2(type) || result_exports2.IsExtendsTrueLike(Extends3({}, type, extends_)))
+    return;
+  const cause = { parameter: name, expect: extends_, actual: type };
+  throw new Error(`Argument for parameter ${name} does not satisfy constraint`, { cause });
+}
+function BindArgument2(context, state2, name, extends_, type) {
+  const instantiatedArgument = InstantiateType2(context, state2, type);
+  AssertArgumentExtends2(name, instantiatedArgument, extends_);
+  return memory_exports2.Assign(context, { [name]: instantiatedArgument });
+}
+function BindArguments2(context, state2, parameterLeft, parameterRight, arguments_) {
+  const instantiatedExtends = InstantiateType2(context, state2, parameterLeft.extends);
+  const instantiatedEquals = InstantiateType2(context, state2, parameterLeft.equals);
+  return guard_exports2.ShiftLeft(arguments_, (left, right) => BindParameters2(BindArgument2(context, state2, parameterLeft["name"], instantiatedExtends, left), state2, parameterRight, right), () => BindParameters2(BindArgument2(context, state2, parameterLeft["name"], instantiatedExtends, instantiatedEquals), state2, parameterRight, []));
+}
+function BindParameters2(context, state2, parameters, arguments_) {
+  return guard_exports2.ShiftLeft(parameters, (left, right) => BindArguments2(context, state2, left, right, arguments_), () => context);
+}
+function ResolveArgumentsContext2(context, state2, parameters, arguments_) {
+  return BindParameters2(context, state2, parameters, arguments_);
+}
+
+// node_modules/typebox/build/type/engine/call/instantiate.mjs
+var instantiationDepth = 0;
+var instantiationCount = 0;
+function InstantiationAssert() {
+  if (guard_exports2.IsLessThan(instantiationCount, settings_exports2.Get().maxInstantiationCount))
+    return;
+  throw Error("Type instantiation is excessively deep and possibly infinite");
+}
+function InstantiationIncrement() {
+  InstantiationAssert();
+  instantiationCount++;
+  instantiationDepth++;
+}
+function InstantiationDecrement() {
+  instantiationDepth--;
+  if (guard_exports2.IsEqual(instantiationDepth, 0))
+    instantiationCount = 0;
+}
+function Peek2(state2) {
+  const result = guard_exports2.IsGreaterThan(state2.callstack.length, 0) ? state2.callstack[state2.callstack.length - 1] : "";
+  return result;
+}
+function IsTailCall2(state2, name) {
+  const result = guard_exports2.IsEqual(Peek2(state2), name);
+  return result;
+}
+function CallDispatch2(context, state2, target, parameters, expression, arguments_) {
+  InstantiationIncrement();
+  try {
+    const argumentsContext = ResolveArgumentsContext2(context, state2, parameters, arguments_);
+    const returnType = InstantiateType2(argumentsContext, State2([...state2["callstack"], target["$ref"]], state2["visited"]), expression);
+    return InstantiateType2(argumentsContext, State2([], []), returnType);
+  } finally {
+    InstantiationDecrement();
+  }
+}
+function CallDistributed2(context, state2, target, parameters, expression, distributedArguments) {
+  return distributedArguments.reduce((result, arguments_) => {
+    const returnType = CallDispatch2(context, state2, target, parameters, expression, arguments_);
+    return [...result, returnType];
+  }, []);
+}
+function CallImmediate2(context, state2, target, parameters, expression, arguments_) {
+  const distributedArguments = DistributeArguments2(parameters, arguments_, expression);
+  const returnTypes = CallDistributed2(context, state2, target, parameters, expression, distributedArguments);
+  const result = guard_exports2.IsEqual(returnTypes.length, 1) ? returnTypes[0] : EvaluateUnion2(returnTypes);
+  return result;
+}
+function CallInstantiate2(context, state2, target, arguments_) {
+  const instantiatedArguments = InstantiateTypes2(context, state2, arguments_);
+  const resolved = ResolveTarget2(context, target, arguments_);
+  const name = resolved[0];
+  const type = resolved[1];
+  const result = IsGeneric2(type) ? IsTailCall2(state2, name) ? CallConstruct2(Ref3(name), instantiatedArguments) : CallImmediate2(context, state2, Ref3(name), type.parameters, type.expression, instantiatedArguments) : CallConstruct2(target, instantiatedArguments);
+  return result;
+}
+
+// node_modules/typebox/build/type/types/call.mjs
+function CallConstruct2(target, arguments_) {
+  return memory_exports2.Create({ ["~kind"]: "Call" }, { type: "call", target, arguments: arguments_ }, {});
+}
+function Call3(target, arguments_) {
+  return CallInstantiate2({}, State2([], []), target, arguments_);
+}
+function IsCall2(value3) {
+  return IsKind2(value3, "Call");
+}
+
+// node_modules/typebox/build/type/engine/immutable/instantiate_remove.mjs
+function RemoveImmutableOperation2(type) {
+  return memory_exports2.Discard(type, ["~immutable"]);
+}
+function RemoveImmutableAction2(type, options) {
+  const result = memory_exports2.Update(RemoveImmutableOperation2(type), {}, options);
+  return result;
+}
+function RemoveImmutableInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return RemoveImmutableAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/engine/intrinsics/mapping.mjs
+function ApplyMapping2(mapping, value3) {
+  return mapping(value3);
+}
+
+// node_modules/typebox/build/type/engine/intrinsics/from_literal.mjs
+function FromLiteral10(mapping, value3) {
+  return guard_exports2.IsString(value3) ? Literal2(ApplyMapping2(mapping, value3)) : Literal2(value3);
+}
+
+// node_modules/typebox/build/type/engine/intrinsics/from_template_literal.mjs
+function FromTemplateLiteral7(mapping, pattern) {
+  const evaluated = EvaluateTemplateLiteral2(pattern);
+  const result = FromType33(mapping, evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/intrinsics/from_union.mjs
+function FromUnion17(mapping, types4) {
+  const result = types4.map((type) => FromType33(mapping, type));
+  return Union2(result);
+}
+
+// node_modules/typebox/build/type/engine/intrinsics/from_type.mjs
+function FromType33(mapping, type) {
+  return IsLiteral2(type) ? FromLiteral10(mapping, type.const) : IsTemplateLiteral2(type) ? FromTemplateLiteral7(mapping, type.pattern) : IsUnion2(type) ? FromUnion17(mapping, type.anyOf) : type;
+}
+
+// node_modules/typebox/build/type/action/capitalize.mjs
+function CapitalizeDeferred2(type, options = {}) {
+  return Deferred2("Capitalize", [type], options);
+}
+function Capitalize2(type, options = {}) {
+  return CapitalizeAction2(type, options);
+}
+
+// node_modules/typebox/build/type/action/lowercase.mjs
+function LowercaseDeferred2(type, options = {}) {
+  return Deferred2("Lowercase", [type], options);
+}
+function Lowercase2(type, options = {}) {
+  return LowercaseAction2(type, options);
+}
+
+// node_modules/typebox/build/type/action/uncapitalize.mjs
+function UncapitalizeDeferred2(type, options = {}) {
+  return Deferred2("Uncapitalize", [type], options);
+}
+function Uncapitalize2(type, options = {}) {
+  return UncapitalizeAction2(type, options);
+}
+
+// node_modules/typebox/build/type/action/uppercase.mjs
+function UppercaseDeferred2(type, options = {}) {
+  return Deferred2("Uppercase", [type], options);
+}
+function Uppercase2(type, options = {}) {
+  return UppercaseAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/intrinsics/instantiate.mjs
+var CapitalizeMapping2 = (input2) => input2[0].toUpperCase() + input2.slice(1);
+var LowercaseMapping2 = (input2) => input2.toLowerCase();
+var UncapitalizeMapping2 = (input2) => input2[0].toLowerCase() + input2.slice(1);
+var UppercaseMapping2 = (input2) => input2.toUpperCase();
+function CapitalizeAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType33(CapitalizeMapping2, type), {}, options) : CapitalizeDeferred2(type, options);
+  return result;
+}
+function LowercaseAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType33(LowercaseMapping2, type), {}, options) : LowercaseDeferred2(type, options);
+  return result;
+}
+function UncapitalizeAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType33(UncapitalizeMapping2, type), {}, options) : UncapitalizeDeferred2(type, options);
+  return result;
+}
+function UppercaseAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType33(UppercaseMapping2, type), {}, options) : UppercaseDeferred2(type, options);
+  return result;
+}
+function CapitalizeInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return CapitalizeAction2(instantiatedType, options);
+}
+function LowercaseInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return LowercaseAction2(instantiatedType, options);
+}
+function UncapitalizeInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return UncapitalizeAction2(instantiatedType, options);
+}
+function UppercaseInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return UppercaseAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/conditional.mjs
+function ConditionalDeferred2(left, right, true_, false_, options = {}) {
+  return Deferred2("Conditional", [left, right, true_, false_], options);
+}
+function Conditional2(left, right, true_, false_, options = {}) {
+  return ConditionalAction2({}, State2([], []), left, right, true_, false_, options);
+}
+
+// node_modules/typebox/build/type/engine/conditional/instantiate.mjs
+function ConditionalOperation2(context, state2, left, right, true_, false_) {
+  const extendsResult = Extends3(context, left, right);
+  return result_exports2.IsExtendsUnion(extendsResult) ? Union2([InstantiateType2(extendsResult.inferred, state2, true_), InstantiateType2(context, state2, false_)]) : result_exports2.IsExtendsTrue(extendsResult) ? InstantiateType2(extendsResult.inferred, state2, true_) : InstantiateType2(context, state2, false_);
+}
+function ConditionalAction2(context, state2, left, right, true_, false_, options) {
+  const result = CanInstantiate2([left, right]) ? memory_exports2.Update(ConditionalOperation2(context, state2, left, right, true_, false_), {}, options) : ConditionalDeferred2(left, right, true_, false_, options);
+  return result;
+}
+function ConditionalInstantiate2(context, state2, left, right, true_, false_, options) {
+  const instantiatedLeft = InstantiateType2(context, state2, left);
+  const instantiatedRight = InstantiateType2(context, state2, right);
+  return ConditionalAction2(context, state2, instantiatedLeft, instantiatedRight, true_, false_, options);
+}
+
+// node_modules/typebox/build/type/action/constructor_parameters.mjs
+function ConstructorParametersDeferred2(type, options = {}) {
+  return Deferred2("ConstructorParameters", [type], options);
+}
+function ConstructorParameters2(type, options = {}) {
+  return ConstructorParametersAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/constructor_parameters/instantiate.mjs
+function ConstructorParametersOperation2(type) {
+  const parameters = IsConstructor5(type) ? type["parameters"] : [];
+  const instantiatedParameters = InstantiateElements2({}, State2([], []), parameters);
+  const result = Tuple2(instantiatedParameters);
+  return result;
+}
+function ConstructorParametersAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(ConstructorParametersOperation2(type), {}, options) : ConstructorParametersDeferred2(type, options);
+  return result;
+}
+function ConstructorParametersInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return ConstructorParametersAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/exclude.mjs
+function ExcludeDeferred2(left, right, options = {}) {
+  return Deferred2("Exclude", [left, right], options);
+}
+function Exclude2(left, right, options = {}) {
+  return ExcludeAction2(left, right, options);
+}
+
+// node_modules/typebox/build/type/engine/exclude/instantiate.mjs
+function ExcludeAction2(left, right, options) {
+  const result = CanInstantiate2([left, right]) ? memory_exports2.Update(ExcludeOperation2(left, right), {}, options) : ExcludeDeferred2(left, right, options);
+  return result;
+}
+function ExcludeInstantiate2(context, state2, left, right, options) {
+  const instantiatedLeft = InstantiateType2(context, state2, left);
+  const instantiatedRight = InstantiateType2(context, state2, right);
+  return ExcludeAction2(instantiatedLeft, instantiatedRight, options);
+}
+
+// node_modules/typebox/build/type/action/extract.mjs
+function ExtractDeferred2(left, right, options = {}) {
+  return Deferred2("Extract", [left, right], options);
+}
+function Extract2(left, right, options = {}) {
+  return ExtractAction2(left, right, options);
+}
+
+// node_modules/typebox/build/type/engine/extract/operation.mjs
+function ExtractType2(left, right) {
+  const check2 = Extends3({}, left, right);
+  const result = result_exports2.IsExtendsTrueLike(check2) ? [left] : [];
+  return result;
+}
+function ExtractUnion2(left, right, result = []) {
+  return guard_exports2.ShiftLeft(left, (head, tail) => ExtractUnion2(tail, right, [...result, ...ExtractType2(head, right)]), () => result);
+}
+function ExtractOperation2(left, right) {
+  const evaluated = EvaluateType2(left);
+  const canonical2 = IsUnion2(evaluated) ? evaluated.anyOf : [evaluated];
+  const remaining = ExtractUnion2(canonical2, right);
+  const result = EvaluateUnion2(remaining);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/extract/instantiate.mjs
+function ExtractAction2(left, right, options) {
+  const result = CanInstantiate2([left, right]) ? memory_exports2.Update(ExtractOperation2(left, right), {}, options) : ExtractDeferred2(left, right, options);
+  return result;
+}
+function ExtractInstantiate2(context, state2, left, right, options) {
+  const instantiatedLeft = InstantiateType2(context, state2, left);
+  const instantiatedRight = InstantiateType2(context, state2, right);
+  return ExtractAction2(instantiatedLeft, instantiatedRight, options);
+}
+
+// node_modules/typebox/build/type/engine/helpers/keys_to_indexer.mjs
+function KeysToLiterals2(keys) {
+  return keys.reduce((result, left) => {
+    return IsLiteralValue2(left) ? [...result, Literal2(left)] : result;
+  }, []);
+}
+function KeysToIndexer2(keys) {
+  const literals = KeysToLiterals2(keys);
+  const result = Union2(literals);
+  return result;
+}
+
+// node_modules/typebox/build/type/action/indexed.mjs
+function IndexDeferred2(type, indexer, options = {}) {
+  return Deferred2("Index", [type, indexer], options);
+}
+function Index2(type, indexer_or_keys, options = {}) {
+  const indexer = guard_exports2.IsArray(indexer_or_keys) ? KeysToIndexer2(indexer_or_keys) : indexer_or_keys;
+  return IndexAction2(type, indexer, options);
+}
+
+// node_modules/typebox/build/type/engine/object/from_cyclic.mjs
+function FromCyclic12(defs, ref) {
+  const target = CyclicTarget2(defs, ref);
+  const result = FromType34(target);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/object/from_dependent.mjs
+function FromDependent6(if_, then_, else_) {
+  const evaluated = EvaluateDependent2(if_, then_, else_);
+  const result = FromType34(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/object/from_intersect.mjs
+function CollapseIntersectProperties2(left, right) {
+  const leftKeys = guard_exports2.Keys(left).filter((key) => !guard_exports2.HasPropertyKey(right, key));
+  const rightKeys = guard_exports2.Keys(right).filter((key) => !guard_exports2.HasPropertyKey(left, key));
+  const sharedKeys = guard_exports2.Keys(left).filter((key) => guard_exports2.HasPropertyKey(right, key));
+  const leftProperties = leftKeys.reduce((result, key) => ({ ...result, [key]: left[key] }), {});
+  const rightProperties = rightKeys.reduce((result, key) => ({ ...result, [key]: right[key] }), {});
+  const sharedProperties = sharedKeys.reduce((result, key) => ({ ...result, [key]: EvaluateIntersect2([left[key], right[key]]) }), {});
+  const unique = memory_exports2.Assign(leftProperties, rightProperties);
+  const shared = memory_exports2.Assign(unique, sharedProperties);
+  return shared;
+}
+function FromIntersect13(types4) {
+  return types4.reduce((result, left) => {
+    return CollapseIntersectProperties2(result, FromType34(left));
+  }, {});
+}
+
+// node_modules/typebox/build/type/engine/object/from_object.mjs
+function FromObject21(properties) {
+  return properties;
+}
+
+// node_modules/typebox/build/type/engine/object/from_tuple.mjs
+function FromTuple12(types4) {
+  const object3 = TupleToObject2(Tuple2(types4));
+  const result = FromType34(object3);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/object/from_union.mjs
+function CollapseUnionProperties2(left, right) {
+  const sharedKeys = guard_exports2.Keys(left).filter((key) => key in right);
+  const result = sharedKeys.reduce((result2, key) => {
+    return { ...result2, [key]: EvaluateUnion2([left[key], right[key]]) };
+  }, {});
+  return result;
+}
+function ReduceVariants2(types4, result) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => ReduceVariants2(right, CollapseUnionProperties2(result, FromType34(left))), () => result);
+}
+function FromUnion18(types4) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => ReduceVariants2(right, FromType34(left)), () => Unreachable3());
+}
+
+// node_modules/typebox/build/type/engine/object/from_type.mjs
+function FromType34(type) {
+  return IsCyclic2(type) ? FromCyclic12(type.$defs, type.$ref) : IsDependent2(type) ? FromDependent6(type.if, type.then, type.else) : IsIntersect2(type) ? FromIntersect13(type.allOf) : IsUnion2(type) ? FromUnion18(type.anyOf) : IsTuple2(type) ? FromTuple12(type.items) : IsObject5(type) ? FromObject21(type.properties) : {};
+}
+
+// node_modules/typebox/build/type/engine/object/collapse.mjs
+function CollapseToObject2(type) {
+  const properties = FromType34(type);
+  const result = _Object_3(properties);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/helpers/keys.mjs
+var integerKeyPattern2 = new RegExp("^(?:0|[1-9][0-9]*)$");
+function ConvertToIntegerKey2(value3) {
+  const normal = `${value3}`;
+  return integerKeyPattern2.test(normal) ? parseInt(normal) : value3;
+}
+
+// node_modules/typebox/build/type/engine/indexed/from_array.mjs
+function NormalizeLiteral2(value3) {
+  return Literal2(ConvertToIntegerKey2(value3));
+}
+function NormalizeIndexerTypes2(types4) {
+  return types4.map((type) => NormalizeIndexer2(type));
+}
+function NormalizeIndexer2(type) {
+  return IsIntersect2(type) ? Intersect2(NormalizeIndexerTypes2(type.allOf)) : IsUnion2(type) ? Union2(NormalizeIndexerTypes2(type.anyOf)) : IsLiteral2(type) ? NormalizeLiteral2(type.const) : type;
+}
+function FromArray16(type, indexer) {
+  const normalizedIndexer = NormalizeIndexer2(indexer);
+  const check2 = Extends3({}, normalizedIndexer, Number4());
+  const result = (
+    // indexer
+    result_exports2.IsExtendsTrueLike(check2) ? type : IsLiteral2(indexer) && guard_exports2.IsEqual(indexer.const, "length") ? Number4() : Never2()
+  );
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_cyclic.mjs
+function FromCyclic13(defs, ref) {
+  const target = CyclicTarget2(defs, ref);
+  const result = FromType35(target);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_dependent.mjs
+function FromDependent7(if_, then_, else_) {
+  const evaluated = EvaluateDependent2(if_, then_, else_);
+  const result = FromType35(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_enum.mjs
+function FromEnum6(values) {
+  const evaluated = EvaluateEnum2(values);
+  const result = FromType35(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_intersect.mjs
+function FromIntersect14(types4) {
+  const evaluated = EvaluateIntersect2(types4);
+  const result = FromType35(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_literal.mjs
+function FromLiteral11(value3) {
+  const result = [`${value3}`];
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_template_literal.mjs
+function FromTemplateLiteral8(pattern) {
+  const evaluated = EvaluateTemplateLiteral2(pattern);
+  const result = FromType35(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_union.mjs
+function FromUnion19(types4) {
+  return types4.reduce((result, left) => {
+    return [...result, ...FromType35(left)];
+  }, []);
+}
+
+// node_modules/typebox/build/type/engine/indexable/from_type.mjs
+function FromType35(type) {
+  return IsCyclic2(type) ? FromCyclic13(type.$defs, type.$ref) : IsDependent2(type) ? FromDependent7(type.if, type.then, type.else) : IsEnum3(type) ? FromEnum6(type.enum) : IsIntersect2(type) ? FromIntersect14(type.allOf) : IsLiteral2(type) ? FromLiteral11(type.const) : IsTemplateLiteral2(type) ? FromTemplateLiteral8(type.pattern) : IsUnion2(type) ? FromUnion19(type.anyOf) : [];
+}
+
+// node_modules/typebox/build/type/engine/indexable/to_indexable_keys.mjs
+function ToIndexableKeys2(type) {
+  const result = FromType35(type);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/this/expand_this.mjs
+function FromTypes11(properties, types4) {
+  return types4.map((type) => FromType36(properties, type));
+}
+function FromType36(properties, type) {
+  return IsArray5(type) ? _Array_2(FromType36(properties, type.items)) : IsConstructor5(type) ? Constructor2(FromTypes11(properties, type.parameters), FromType36(properties, type.instanceType)) : IsFunction5(type) ? _Function_3(FromTypes11(properties, type.parameters), FromType36(properties, type.returnType)) : IsTuple2(type) ? Tuple2(FromTypes11(properties, type.items)) : IsUnion2(type) ? Union2(FromTypes11(properties, type.anyOf)) : IsIntersect2(type) ? Intersect2(FromTypes11(properties, type.allOf)) : IsThis2(type) ? _Object_3(properties) : type;
+}
+function ExpandThis2(properties, type) {
+  const result = FromType36(properties, type);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexed/from_object.mjs
+function IndexProperty2(properties, key) {
+  const selectedType = key in properties ? properties[key] : Never2();
+  const result = ExpandThis2(properties, selectedType);
+  return result;
+}
+function IndexProperties2(properties, keys) {
+  return keys.reduce((result, left) => {
+    return [...result, IndexProperty2(properties, left)];
+  }, []);
+}
+function FromIndexer2(properties, indexer) {
+  const keys = ToIndexableKeys2(indexer);
+  const variants = IndexProperties2(properties, keys);
+  const result = EvaluateUnion2(variants);
+  return result;
+}
+var NumericKeyPattern2 = new RegExp(IntegerKey2);
+function NumericKeys2(keys) {
+  const result = keys.filter((key) => NumericKeyPattern2.test(key));
+  return result;
+}
+function FromIndexerNumber2(properties) {
+  const keys = PropertyKeys2(properties);
+  const numericKeys = NumericKeys2(keys);
+  const variants = IndexProperties2(properties, numericKeys);
+  const result = EvaluateUnion2(variants);
+  return result;
+}
+function FromObject22(properties, indexer) {
+  const result = IsNumber7(indexer) ? FromIndexerNumber2(properties) : FromIndexer2(properties, indexer);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/indexed/array_indexer.mjs
+function ConvertLiteral2(value3) {
+  return Literal2(ConvertToIntegerKey2(value3));
+}
+function ArrayIndexerTypes2(types4) {
+  return types4.map((type) => FormatArrayIndexer2(type));
+}
+function FormatArrayIndexer2(type) {
+  return IsIntersect2(type) ? Intersect2(ArrayIndexerTypes2(type.allOf)) : IsUnion2(type) ? Union2(ArrayIndexerTypes2(type.anyOf)) : IsLiteral2(type) ? ConvertLiteral2(type.const) : type;
+}
+
+// node_modules/typebox/build/type/engine/indexed/from_tuple.mjs
+function IndexElementsWithIndexer2(types4, indexer) {
+  return types4.reduceRight((result, right, index3) => {
+    const check2 = Extends3({}, Literal2(index3), indexer);
+    return result_exports2.IsExtendsTrueLike(check2) ? [right, ...result] : result;
+  }, []);
+}
+function FromTupleWithIndexer2(types4, indexer) {
+  const formattedArrayIndexer = FormatArrayIndexer2(indexer);
+  const elements = IndexElementsWithIndexer2(types4, formattedArrayIndexer);
+  return EvaluateUnionFast2(elements);
+}
+function FromTupleWithoutIndexer2(types4) {
+  return EvaluateUnionFast2(types4);
+}
+function FromTuple13(types4, indexer) {
+  return (
+    // length (intrinsic)
+    IsLiteral2(indexer) && guard_exports2.IsEqual(indexer.const, "length") ? Literal2(types4.length) : IsNumber7(indexer) || IsInteger5(indexer) ? FromTupleWithoutIndexer2(types4) : FromTupleWithIndexer2(types4, indexer)
+  );
+}
+
+// node_modules/typebox/build/type/engine/indexed/from_type.mjs
+function FromType37(type, indexer) {
+  return IsArray5(type) ? FromArray16(type.items, indexer) : IsObject5(type) ? FromObject22(type.properties, indexer) : IsTuple2(type) ? FromTuple13(type.items, indexer) : Never2();
+}
+
+// node_modules/typebox/build/type/engine/indexed/instantiate.mjs
+function NormalizeType3(type) {
+  const result = IsCyclic2(type) || IsDependent2(type) || IsIntersect2(type) || IsUnion2(type) ? CollapseToObject2(type) : type;
+  return result;
+}
+function IndexAction2(type, indexer, options) {
+  const result = CanInstantiate2([type, indexer]) ? memory_exports2.Update(FromType37(NormalizeType3(type), indexer), {}, options) : IndexDeferred2(type, indexer, options);
+  return result;
+}
+function IndexInstantiate2(context, state2, type, indexer, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  const instantiatedIndexer = InstantiateType2(context, state2, indexer);
+  return IndexAction2(instantiatedType, instantiatedIndexer, options);
+}
+
+// node_modules/typebox/build/type/action/instance_type.mjs
+function InstanceTypeDeferred2(type, options = {}) {
+  return Deferred2("InstanceType", [type], options);
+}
+function InstanceType2(type, options = {}) {
+  return InstanceTypeAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/instance_type/instantiate.mjs
+function InstanceTypeOperation2(type) {
+  return IsConstructor5(type) ? type["instanceType"] : Never2();
+}
+function InstanceTypeAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(InstanceTypeOperation2(type), {}, options) : InstanceTypeDeferred2(type, options);
+  return result;
+}
+function InstanceTypeInstantiate2(context, state2, type, options = {}) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return InstanceTypeAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/keyof.mjs
+function KeyOfDeferred2(type, options = {}) {
+  return Deferred2("KeyOf", [type], options);
+}
+function KeyOf4(type, options = {}) {
+  return KeyOfAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/keyof/from_any.mjs
+function FromAny2() {
+  return Union2([Number4(), String4(), Symbol3()]);
+}
+
+// node_modules/typebox/build/type/engine/keyof/from_array.mjs
+function FromArray17(_type) {
+  return Number4();
+}
+
+// node_modules/typebox/build/type/engine/keyof/from_object.mjs
+function FromPropertyKeys2(keys) {
+  const result = keys.reduce((result2, left) => {
+    return IsLiteralValue2(left) ? [...result2, Literal2(ConvertToIntegerKey2(left))] : Unreachable3();
+  }, []);
+  return result;
+}
+function FromObject23(properties) {
+  const propertyKeys = guard_exports2.Keys(properties);
+  const variants = FromPropertyKeys2(propertyKeys);
+  const result = EvaluateUnionFast2(variants);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/keyof/from_record.mjs
+function FromRecord11(type) {
+  return RecordKey2(type);
+}
+
+// node_modules/typebox/build/type/engine/keyof/from_tuple.mjs
+function FromTuple14(types4) {
+  const result = types4.map((_2, index3) => Literal2(index3));
+  return EvaluateUnionFast2(result);
+}
+
+// node_modules/typebox/build/type/engine/keyof/from_type.mjs
+function FromType38(type) {
+  return IsAny2(type) ? FromAny2() : IsArray5(type) ? FromArray17(type.items) : IsObject5(type) ? FromObject23(type.properties) : IsRecord2(type) ? FromRecord11(type) : IsTuple2(type) ? FromTuple14(type.items) : Never2();
+}
+
+// node_modules/typebox/build/type/engine/keyof/instantiate.mjs
+function NormalizeType4(type) {
+  const result = IsCyclic2(type) || IsDependent2(type) || IsIntersect2(type) || IsUnion2(type) ? CollapseToObject2(type) : type;
+  return result;
+}
+function KeyOfAction2(type, options) {
+  return CanInstantiate2([type]) ? memory_exports2.Update(FromType38(NormalizeType4(type)), {}, options) : KeyOfDeferred2(type, options);
+}
+function KeyOfInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return KeyOfAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/mapped.mjs
+function MappedDeferred2(identifier2, type, as, property, options = {}) {
+  return Deferred2("Mapped", [identifier2, type, as, property], options);
+}
+function Mapped2(identifier2, type, as, property, options = {}) {
+  return MappedAction2({}, State2([], []), identifier2, type, as, property, options);
+}
+
+// node_modules/typebox/build/type/engine/mapped/mapped_variants.mjs
+function FromTemplateLiteral9(pattern) {
+  const evaluated = EvaluateTemplateLiteral2(pattern);
+  const result = FromType39(evaluated);
+  return result;
+}
+function FromUnion20(types4) {
+  return types4.reduce((result, left) => {
+    return [...result, ...FromType39(left)];
+  }, []);
+}
+function FromEnum7(values) {
+  const evaluated = EvaluateEnum2(values);
+  const result = FromType39(evaluated);
+  return result;
+}
+function FromLiteral12(value3) {
+  const result = guard_exports2.IsNumber(value3) ? [Literal2(`${value3}`)] : [Literal2(value3)];
+  return result;
+}
+function FromType39(type) {
+  const result = IsEnum3(type) ? FromEnum7(type.enum) : IsLiteral2(type) ? FromLiteral12(type.const) : IsTemplateLiteral2(type) ? FromTemplateLiteral9(type.pattern) : IsUnion2(type) ? FromUnion20(type.anyOf) : [type];
+  return result;
+}
+function MappedVariants2(type) {
+  const result = FromType39(type);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/mapped/mapped_operation.mjs
+function CanonicalAs2(instantiatedAs) {
+  const result = IsTemplateLiteral2(instantiatedAs) ? EvaluateTemplateLiteral2(instantiatedAs.pattern) : instantiatedAs;
+  return result;
+}
+function MappedVariant2(context, state2, identifier2, variant, as, property) {
+  const variantContext = memory_exports2.Assign(context, { [identifier2["name"]]: variant });
+  const instantiatedAs = InstantiateType2(variantContext, state2, as);
+  const canonicalAs = CanonicalAs2(instantiatedAs);
+  const instantiatedProperty = InstantiateType2(variantContext, state2, property);
+  return IsLiteralNumber2(canonicalAs) || IsLiteralString2(canonicalAs) ? { [canonicalAs.const]: instantiatedProperty } : {};
+}
+function MappedProperties2(context, state2, identifier2, variants, as, property) {
+  return variants.reduce((result, left) => {
+    return [...result, MappedVariant2(context, state2, identifier2, left, as, property)];
+  }, []);
+}
+function MappedObjects2(properties) {
+  return properties.reduce((result, left) => {
+    return [...result, _Object_3(left)];
+  }, []);
+}
+function MappedOperation2(context, state2, identifier2, type, as, property) {
+  const variants = MappedVariants2(type);
+  const mappedProperties = MappedProperties2(context, state2, identifier2, variants, as, property);
+  const mappedObjects = MappedObjects2(mappedProperties);
+  const result = EvaluateIntersect2(mappedObjects);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/mapped/instantiate.mjs
+function MappedAction2(context, state2, identifier2, type, as, property, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(MappedOperation2(context, state2, identifier2, type, as, property), {}, options) : MappedDeferred2(identifier2, type, as, property, options);
+  return result;
+}
+function MappedInstantiate2(context, state2, identifier2, type, as, property, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return MappedAction2(context, state2, identifier2, instantiatedType, as, property, options);
+}
+
+// node_modules/typebox/build/type/engine/module/instantiate.mjs
+function InstantiateCyclics2(context, declarations, cyclicKeys) {
+  const declarationContext = memory_exports2.Assign(context, declarations);
+  const declarationKeys = guard_exports2.Keys(declarations).filter((key) => cyclicKeys.includes(key));
+  return declarationKeys.reduce((result, key) => {
+    return { ...result, [key]: InstantiateCyclic2(declarationContext, key, declarations[key]) };
+  }, {});
+}
+function InstantiateNonCyclics2(context, declarations, cyclicKeys) {
+  const declarationContext = memory_exports2.Assign(context, declarations);
+  const declarationKeys = guard_exports2.Keys(declarations).filter((key) => !cyclicKeys.includes(key));
+  return declarationKeys.reduce((result, key) => {
+    return { ...result, [key]: InstantiateType2(declarationContext, State2([], []), declarations[key]) };
+  }, {});
+}
+function InstantiateModule2(context, declarations, options) {
+  const cyclicCandidates = CyclicCandidates2(declarations);
+  const instantiatedCyclics = InstantiateCyclics2(context, declarations, cyclicCandidates);
+  const instantiatedNonCyclics = InstantiateNonCyclics2(context, declarations, cyclicCandidates);
+  const instantiatedModule = { ...instantiatedCyclics, ...instantiatedNonCyclics };
+  return memory_exports2.Update(instantiatedModule, {}, options);
+}
+function ModuleInstantiate2(context, _state, declarations, options) {
+  const instantiatedModule = InstantiateModule2(context, declarations, options);
+  return instantiatedModule;
+}
+
+// node_modules/typebox/build/type/action/non_nullable.mjs
+function NonNullableDeferred2(type, options = {}) {
+  return Deferred2("NonNullable", [type], options);
+}
+function NonNullable2(type, options = {}) {
+  return NonNullableAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/non_nullable/instantiate.mjs
+function NonNullableOperation2(type) {
+  const excluded = Union2([Null2(), Undefined2()]);
+  return ExcludeAction2(type, excluded, {});
+}
+function NonNullableAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(NonNullableOperation2(type), {}, options) : NonNullableDeferred2(type, options);
+  return result;
+}
+function NonNullableInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return NonNullableAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/omit.mjs
+function OmitDeferred2(type, indexer, options = {}) {
+  return Deferred2("Omit", [type, indexer], options);
+}
+function Omit2(type, indexer_or_keys, options = {}) {
+  const indexer = guard_exports2.IsArray(indexer_or_keys) ? KeysToIndexer2(indexer_or_keys) : indexer_or_keys;
+  return OmitAction2(type, indexer, options);
+}
+
+// node_modules/typebox/build/type/engine/indexable/to_indexable.mjs
+function ToIndexable2(type) {
+  const collapsed = CollapseToObject2(type);
+  const result = IsObject5(collapsed) ? collapsed.properties : Unreachable3();
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/omit/from_type.mjs
+function FromKeys3(properties, keys) {
+  const result = guard_exports2.Keys(properties).reduce((result2, key) => {
+    return keys.includes(key) ? result2 : { ...result2, [key]: properties[key] };
+  }, {});
+  return result;
+}
+function FromType40(type, indexer) {
+  const indexable = ToIndexable2(type);
+  const indexableKeys = ToIndexableKeys2(indexer);
+  const omitted = FromKeys3(indexable, indexableKeys);
+  const result = _Object_3(omitted);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/omit/instantiate.mjs
+function OmitAction2(type, indexer, options) {
+  const result = CanInstantiate2([type, indexer]) ? memory_exports2.Update(FromType40(type, indexer), {}, options) : OmitDeferred2(type, indexer, options);
+  return result;
+}
+function OmitInstantiate2(context, state2, type, indexer, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  const instantiatedIndexer = InstantiateType2(context, state2, indexer);
+  return OmitAction2(instantiatedType, instantiatedIndexer, options);
+}
+
+// node_modules/typebox/build/type/action/parameters.mjs
+function ParametersDeferred2(type, options = {}) {
+  return Deferred2("Parameters", [type], options);
+}
+function Parameters2(type, options = {}) {
+  return ParametersAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/parameters/instantiate.mjs
+function ParametersOperation2(type) {
+  const parameters = IsFunction5(type) ? type["parameters"] : [];
+  const instantiatedParameters = InstantiateElements2({}, State2([], []), parameters);
+  const result = Tuple2(instantiatedParameters);
+  return result;
+}
+function ParametersAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(ParametersOperation2(type), {}, options) : ParametersDeferred2(type, options);
+  return result;
+}
+function ParametersInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return ParametersAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/partial.mjs
+function PartialDeferred2(type, options = {}) {
+  return Deferred2("Partial", [type], options);
+}
+function Partial2(type, options = {}) {
+  return PartialAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/partial/from_cyclic.mjs
+function FromCyclic14(defs, ref) {
+  const target = CyclicTarget2(defs, ref);
+  const partial2 = FromType41(target);
+  const result = Cyclic2(memory_exports2.Assign(defs, { [ref]: partial2 }), ref);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/partial/from_dependent.mjs
+function FromDependent8(if_, then_, else_) {
+  const evaluated = EvaluateDependent2(if_, then_, else_);
+  const result = FromType41(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/partial/from_intersect.mjs
+function FromIntersect15(types4) {
+  const evaluated = EvaluateIntersect2(types4);
+  const result = FromType41(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/partial/from_union.mjs
+function FromUnion21(types4) {
+  const result = types4.map((type) => FromType41(type));
+  return Union2(result);
+}
+
+// node_modules/typebox/build/type/engine/partial/from_object.mjs
+function FromObject24(properties) {
+  const mapped = guard_exports2.Keys(properties).reduce((result2, left) => {
+    return { ...result2, [left]: AddOptional2(properties[left]) };
+  }, {});
+  const result = _Object_3(mapped);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/partial/from_type.mjs
+function FromType41(type) {
+  return IsCyclic2(type) ? FromCyclic14(type.$defs, type.$ref) : IsDependent2(type) ? FromDependent8(type.if, type.then, type.else) : IsIntersect2(type) ? FromIntersect15(type.allOf) : IsUnion2(type) ? FromUnion21(type.anyOf) : IsObject5(type) ? FromObject24(type.properties) : _Object_3({});
+}
+
+// node_modules/typebox/build/type/engine/partial/instantiate.mjs
+function PartialAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType41(type), {}, options) : PartialDeferred2(type, options);
+  return result;
+}
+function PartialInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return PartialAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/pick.mjs
+function PickDeferred2(type, indexer, options = {}) {
+  return Deferred2("Pick", [type, indexer], options);
+}
+function Pick2(type, indexer_or_keys, options = {}) {
+  const indexer = guard_exports2.IsArray(indexer_or_keys) ? KeysToIndexer2(indexer_or_keys) : indexer_or_keys;
+  return PickAction2(type, indexer, options);
+}
+
+// node_modules/typebox/build/type/engine/pick/from_type.mjs
+function FromKeys4(properties, keys) {
+  const result = guard_exports2.Keys(properties).reduce((result2, key) => {
+    return keys.includes(key) ? memory_exports2.Assign(result2, { [key]: properties[key] }) : result2;
+  }, {});
+  return result;
+}
+function FromType42(type, indexer) {
+  const indexable = ToIndexable2(type);
+  const keys = ToIndexableKeys2(indexer);
+  const applied = FromKeys4(indexable, keys);
+  const result = _Object_3(applied);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/pick/instantiate.mjs
+function PickAction2(type, indexer, options) {
+  const result = CanInstantiate2([type, indexer]) ? memory_exports2.Update(FromType42(type, indexer), {}, options) : PickDeferred2(type, indexer, options);
+  return result;
+}
+function PickInstantiate2(context, state2, type, indexer, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  const instantiatedIndexer = InstantiateType2(context, state2, indexer);
+  return PickAction2(instantiatedType, instantiatedIndexer, options);
+}
+
+// node_modules/typebox/build/type/action/readonly_object.mjs
+function ReadonlyObjectDeferred2(type, options = {}) {
+  return Deferred2("ReadonlyObject", [type], options);
+}
+function ReadonlyObject2(type, options = {}) {
+  return ReadonlyObjectAction2(type, options);
+}
+var ReadonlyType2 = ReadonlyObject2;
+
+// node_modules/typebox/build/type/engine/readonly_object/from_array.mjs
+function FromArray18(type) {
+  const result = AddImmutable2(_Array_2(type));
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_cyclic.mjs
+function FromCyclic15(defs, ref) {
+  const target = CyclicTarget2(defs, ref);
+  const partial2 = FromType43(target);
+  const result = Cyclic2(memory_exports2.Assign(defs, { [ref]: partial2 }), ref);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_dependent.mjs
+function FromDependent9(if_, then_, else_) {
+  const evaluated = EvaluateDependent2(if_, then_, else_);
+  const result = FromType43(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_intersect.mjs
+function FromIntersect16(types4) {
+  const evaluated = EvaluateIntersect2(types4);
+  const result = FromType43(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_object.mjs
+function FromObject25(properties) {
+  const mapped = guard_exports2.Keys(properties).reduce((result2, left) => {
+    return { ...result2, [left]: AddReadonly2(properties[left]) };
+  }, {});
+  const result = _Object_3(mapped);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_tuple.mjs
+function FromTuple15(types4) {
+  const result = AddImmutable2(Tuple2(types4));
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_union.mjs
+function FromUnion22(types4) {
+  const result = types4.map((type) => FromType43(type));
+  return Union2(result);
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/from_type.mjs
+function FromType43(type) {
+  return IsArray5(type) ? FromArray18(type.items) : IsCyclic2(type) ? FromCyclic15(type.$defs, type.$ref) : IsDependent2(type) ? FromDependent9(type.if, type.then, type.else) : IsIntersect2(type) ? FromIntersect16(type.allOf) : IsObject5(type) ? FromObject25(type.properties) : IsTuple2(type) ? FromTuple15(type.items) : IsUnion2(type) ? FromUnion22(type.anyOf) : type;
+}
+
+// node_modules/typebox/build/type/engine/readonly_object/instantiate.mjs
+function ReadonlyObjectAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType43(type), {}, options) : ReadonlyObjectDeferred2(type);
+  return result;
+}
+function ReadonlyObjectInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return ReadonlyObjectAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/engine/ref/instantiate.mjs
+function RefInstantiate2(context, state2, type, ref) {
+  return state2.visited.includes(ref) ? type : ref in context ? InstantiateType2(context, State2(state2["callstack"], [...state2["visited"], ref]), context[ref]) : type;
+}
+
+// node_modules/typebox/build/type/engine/required/from_cyclic.mjs
+function FromCyclic16(defs, ref) {
+  const target = CyclicTarget2(defs, ref);
+  const partial2 = FromType44(target);
+  const result = Cyclic2(memory_exports2.Assign(defs, { [ref]: partial2 }), ref);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/required/from_dependent.mjs
+function FromDependent10(if_, then_, else_) {
+  const evaluated = EvaluateDependent2(if_, then_, else_);
+  const result = FromType44(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/required/from_intersect.mjs
+function FromIntersect17(types4) {
+  const evaluated = EvaluateIntersect2(types4);
+  const result = FromType44(evaluated);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/required/from_union.mjs
+function FromUnion23(types4) {
+  const result = types4.map((type) => FromType44(type));
+  return Union2(result);
+}
+
+// node_modules/typebox/build/type/engine/required/from_object.mjs
+function FromObject26(properties) {
+  const mapped = guard_exports2.Keys(properties).reduce((result2, left) => {
+    return { ...result2, [left]: RemoveOptional2(properties[left]) };
+  }, {});
+  const result = _Object_3(mapped);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/required/from_type.mjs
+function FromType44(type) {
+  return IsCyclic2(type) ? FromCyclic16(type.$defs, type.$ref) : IsDependent2(type) ? FromDependent10(type.if, type.then, type.else) : IsIntersect2(type) ? FromIntersect17(type.allOf) : IsUnion2(type) ? FromUnion23(type.anyOf) : IsObject5(type) ? FromObject26(type.properties) : _Object_3({});
+}
+
+// node_modules/typebox/build/type/action/required.mjs
+function RequiredDeferred2(type, options = {}) {
+  return Deferred2("Required", [type], options);
+}
+function Required2(type, options = {}) {
+  return RequiredAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/required/instantiate.mjs
+function RequiredAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(FromType44(type), {}, options) : RequiredDeferred2(type, options);
+  return result;
+}
+function RequiredInstantiate2(context, state2, type, options) {
+  const instaniatedType = InstantiateType2(context, state2, type);
+  return RequiredAction2(instaniatedType, options);
+}
+
+// node_modules/typebox/build/type/action/return_type.mjs
+function ReturnTypeDeferred2(type, options = {}) {
+  return Deferred2("ReturnType", [type], options);
+}
+function ReturnType2(type, options = {}) {
+  return ReturnTypeAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/return_type/instantiate.mjs
+function ReturnTypeOperation2(type) {
+  return IsFunction5(type) ? type["returnType"] : Never2();
+}
+function ReturnTypeAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(ReturnTypeOperation2(type), {}, options) : ReturnTypeDeferred2(type, options);
+  return result;
+}
+function ReturnTypeInstantiate2(context, state2, type, options = {}) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return ReturnTypeAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/with.mjs
+function WithDeferred2(type, options) {
+  return Deferred2("With", [type, options], {});
+}
+function With4(type, options) {
+  return WithAction2(type, options);
+}
+
+// node_modules/typebox/build/type/engine/with/instantiate.mjs
+function WithAction2(type, options) {
+  const result = CanInstantiate2([type]) ? memory_exports2.Update(type, {}, options) : WithDeferred2(type, options);
+  return result;
+}
+function WithInstantiate2(context, state2, type, options) {
+  const instaniatedType = InstantiateType2(context, state2, type);
+  return WithAction2(instaniatedType, options);
+}
+
+// node_modules/typebox/build/type/engine/rest/spread.mjs
+function SpreadElement2(type) {
+  const result = IsRest2(type) ? IsTuple2(type.items) ? RestSpread2(type.items.items) : IsInfer2(type.items) ? [type] : IsRef3(type.items) ? [type] : [Never2()] : [type];
+  return result;
+}
+function RestSpread2(types4) {
+  const result = types4.reduce((result2, left) => {
+    return [...result2, ...SpreadElement2(left)];
+  }, []);
+  return result;
+}
+
+// node_modules/typebox/build/type/engine/instantiate.mjs
+function State2(callstack, visited2) {
+  return { callstack, visited: visited2 };
+}
+function CanInstantiate2(types4) {
+  return guard_exports2.ShiftLeft(types4, (left, right) => IsRef3(left) ? false : CanInstantiate2(right), () => true);
+}
+function InstantiateProperties2(context, state2, properties) {
+  return guard_exports2.Keys(properties).reduce((result, key) => {
+    return { ...result, [key]: InstantiateType2(context, state2, properties[key]) };
+  }, {});
+}
+function InstantiateElements2(context, state2, types4) {
+  const elements = InstantiateTypes2(context, state2, types4);
+  const result = RestSpread2(elements);
+  return result;
+}
+function InstantiateTypes2(context, state2, types4) {
+  return types4.map((type) => InstantiateType2(context, state2, type));
+}
+function WithModifiers2(type, instantiatedType) {
+  const withOptional = IsOptional2(type) ? AddOptionalAction2(instantiatedType, {}) : instantiatedType;
+  const withReadonly = IsReadonly2(type) ? AddReadonlyAction2(withOptional, {}) : withOptional;
+  const withImmutable = IsImmutable2(type) ? AddImmutableAction2(withReadonly, {}) : withReadonly;
+  return withImmutable;
+}
+function InstantiateDeferred2(context, state2, action, parameters, options) {
+  return (
+    // Modifiers
+    guard_exports2.IsEqual(action, "AddImmutable") ? AddImmutableInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "RemoveImmutable") ? RemoveImmutableInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "AddReadonly") ? AddReadonlyInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "RemoveReadonly") ? RemoveReadonlyInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "AddOptional") ? AddOptionalInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "RemoveOptional") ? RemoveOptionalInstantiate2(context, state2, parameters[0], options) : (
+      // Actions
+      guard_exports2.IsEqual(action, "Capitalize") ? CapitalizeInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Conditional") ? ConditionalInstantiate2(context, state2, parameters[0], parameters[1], parameters[2], parameters[3], options) : guard_exports2.IsEqual(action, "ConstructorParameters") ? ConstructorParametersInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Evaluate") ? EvaluateInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Exclude") ? ExcludeInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "Extract") ? ExtractInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "Index") ? IndexInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "InstanceType") ? InstanceTypeInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Interface") ? InterfaceInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "KeyOf") ? KeyOfInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Lowercase") ? LowercaseInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Mapped") ? MappedInstantiate2(context, state2, parameters[0], parameters[1], parameters[2], parameters[3], options) : guard_exports2.IsEqual(action, "Module") ? ModuleInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "NonNullable") ? NonNullableInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Pick") ? PickInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "Parameters") ? ParametersInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Partial") ? PartialInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Omit") ? OmitInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "ReadonlyObject") ? ReadonlyObjectInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Record") ? RecordInstantiate2(context, state2, parameters[0], parameters[1], options) : guard_exports2.IsEqual(action, "Required") ? RequiredInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "ReturnType") ? ReturnTypeInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "TemplateLiteral") ? TemplateLiteralInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Uncapitalize") ? UncapitalizeInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "Uppercase") ? UppercaseInstantiate2(context, state2, parameters[0], options) : guard_exports2.IsEqual(action, "With") ? WithInstantiate2(context, state2, parameters[0], parameters[1]) : Deferred2(action, parameters, options)
+    )
+  );
+}
+function InstantiateImmediate2(context, state2, type) {
+  const instantiatedType = IsRef3(type) ? RefInstantiate2(context, state2, type, type.$ref) : IsArray5(type) ? _Array_2(InstantiateType2(context, state2, type.items), ArrayOptions2(type)) : IsCall2(type) ? CallInstantiate2(context, state2, type.target, type.arguments) : IsConstructor5(type) ? Constructor2(InstantiateTypes2(context, state2, type.parameters), InstantiateType2(context, state2, type.instanceType), ConstructorOptions2(type)) : IsFunction5(type) ? _Function_3(InstantiateTypes2(context, state2, type.parameters), InstantiateType2(context, state2, type.returnType), FunctionOptions2(type)) : IsDependent2(type) ? Dependent3(InstantiateType2(context, state2, type.if), InstantiateType2(context, state2, type.then), InstantiateType2(context, state2, type.else), DependentOptions2(type)) : IsIntersect2(type) ? Intersect2(InstantiateTypes2(context, state2, type.allOf), IntersectOptions2(type)) : IsObject5(type) ? _Object_3(InstantiateProperties2(context, state2, type.properties), ObjectOptions2(type)) : IsRecord2(type) ? RecordFromPattern2(RecordPattern2(type), InstantiateType2(context, state2, RecordValue2(type))) : IsRest2(type) ? Rest2(InstantiateType2(context, state2, type.items)) : IsTuple2(type) ? Tuple2(InstantiateElements2(context, state2, type.items), TupleOptions2(type)) : IsUnion2(type) ? Union2(InstantiateTypes2(context, state2, type.anyOf), UnionOptions2(type)) : type;
+  const withModifiers = WithModifiers2(type, instantiatedType);
+  return withModifiers;
+}
+function InstantiateType2(context, state2, type) {
+  const result = IsDeferred2(type) ? InstantiateDeferred2(context, state2, type.action, type.parameters, type.options) : InstantiateImmediate2(context, state2, type);
+  return result;
+}
+function Instantiate2(context, type) {
+  return InstantiateType2(context, State2([], []), type);
+}
+
+// node_modules/typebox/build/type/engine/immutable/instantiate_add.mjs
+function AddImmutableOperation2(type) {
+  return memory_exports2.Update(type, { "~immutable": true }, {});
+}
+function AddImmutableAction2(type, options) {
+  const result = memory_exports2.Update(AddImmutableOperation2(type), {}, options);
+  return result;
+}
+function AddImmutableInstantiate2(context, state2, type, options) {
+  const instantiatedType = InstantiateType2(context, state2, type);
+  return AddImmutableAction2(instantiatedType, options);
+}
+
+// node_modules/typebox/build/type/action/_add_immutable.mjs
+function AddImmutableDeferred2(type, options = {}) {
+  return Deferred2("AddImmutable", [type], options);
+}
+function AddImmutable2(type, options = {}) {
+  return AddImmutableAction2(type, options);
+}
+
+// node_modules/typebox/build/type/action/evaluate.mjs
+function EvaluateDeferred2(type, options = {}) {
+  return Deferred2("Evaluate", [type], options);
+}
+function Evaluate3(type, options = {}) {
+  return EvaluateAction2(type, options);
+}
+
+// node_modules/typebox/build/type/action/module.mjs
+function ModuleDeferred2(declarations, options = {}) {
+  return Deferred2("Module", [declarations], options);
+}
+function Module4(declarations, options = {}) {
+  return ModuleInstantiate2({}, State2([], []), declarations, options);
+}
+
+// node_modules/typebox/build/type/script/script.mjs
+function Script4(...args) {
+  const [context, input2, options] = arguments_exports2.Match(args, {
+    2: (script, options2) => guard_exports2.IsString(script) ? [{}, script, options2] : [script, options2, {}],
+    3: (context2, script, options2) => [context2, script, options2],
+    1: (script) => [{}, script, {}]
+  });
+  const result = Script3(input2);
+  const parsed = guard_exports2.IsArray(result) && guard_exports2.IsEqual(result.length, 2) ? InstantiateType2(context, State2([], []), result[0]) : Never2();
+  return memory_exports2.Update(parsed, {}, options);
+}
+
+// node_modules/typebox/build/typebox.mjs
+var typebox_exports2 = {};
+__export(typebox_exports2, {
+  Any: () => Any2,
+  Array: () => _Array_2,
+  BigInt: () => BigInt4,
+  Boolean: () => Boolean3,
+  Call: () => Call3,
+  Capitalize: () => Capitalize2,
+  Codec: () => Codec2,
+  Conditional: () => Conditional2,
+  Constructor: () => Constructor2,
+  ConstructorParameters: () => ConstructorParameters2,
+  Cyclic: () => Cyclic2,
+  Decode: () => Decode11,
+  DecodeBuilder: () => DecodeBuilder2,
+  Dependent: () => Dependent3,
+  Encode: () => Encode10,
+  EncodeBuilder: () => EncodeBuilder2,
+  Enum: () => Enum2,
+  Evaluate: () => Evaluate3,
+  Exclude: () => Exclude2,
+  Extends: () => Extends3,
+  ExtendsResult: () => result_exports2,
+  Extract: () => Extract2,
+  Function: () => _Function_3,
+  Generic: () => Generic2,
+  Identifier: () => Identifier2,
+  Immutable: () => Immutable2,
+  Index: () => Index2,
+  Infer: () => Infer2,
+  InstanceType: () => InstanceType2,
+  Instantiate: () => Instantiate2,
+  Integer: () => Integer3,
+  Interface: () => Interface2,
+  Intersect: () => Intersect2,
+  IsAny: () => IsAny2,
+  IsArray: () => IsArray5,
+  IsBigInt: () => IsBigInt5,
+  IsBoolean: () => IsBoolean7,
+  IsCall: () => IsCall2,
+  IsCodec: () => IsCodec2,
+  IsConstructor: () => IsConstructor5,
+  IsCyclic: () => IsCyclic2,
+  IsDependent: () => IsDependent2,
+  IsEnum: () => IsEnum3,
+  IsEnumValue: () => IsEnumValue2,
+  IsFunction: () => IsFunction5,
+  IsGeneric: () => IsGeneric2,
+  IsIdentifier: () => IsIdentifier3,
+  IsImmutable: () => IsImmutable2,
+  IsInfer: () => IsInfer2,
+  IsInteger: () => IsInteger5,
+  IsIntersect: () => IsIntersect2,
+  IsKind: () => IsKind2,
+  IsLiteral: () => IsLiteral2,
+  IsNever: () => IsNever2,
+  IsNull: () => IsNull5,
+  IsNumber: () => IsNumber7,
+  IsObject: () => IsObject5,
+  IsOptional: () => IsOptional2,
+  IsParameter: () => IsParameter2,
+  IsReadonly: () => IsReadonly2,
+  IsRecord: () => IsRecord2,
+  IsRef: () => IsRef3,
+  IsRefine: () => IsRefine3,
+  IsRest: () => IsRest2,
+  IsSchema: () => IsSchema3,
+  IsString: () => IsString7,
+  IsSymbol: () => IsSymbol5,
+  IsTemplateLiteral: () => IsTemplateLiteral2,
+  IsThis: () => IsThis2,
+  IsTuple: () => IsTuple2,
+  IsUndefined: () => IsUndefined5,
+  IsUnion: () => IsUnion2,
+  IsUnknown: () => IsUnknown2,
+  IsUnsafe: () => IsUnsafe2,
+  IsVoid: () => IsVoid2,
+  KeyOf: () => KeyOf4,
+  Literal: () => Literal2,
+  Lowercase: () => Lowercase2,
+  Mapped: () => Mapped2,
+  Module: () => Module4,
+  Never: () => Never2,
+  NonNullable: () => NonNullable2,
+  Null: () => Null2,
+  Number: () => Number4,
+  Object: () => _Object_3,
+  Omit: () => Omit2,
+  Optional: () => Optional4,
+  Parameter: () => Parameter3,
+  Parameters: () => Parameters2,
+  Partial: () => Partial2,
+  Pick: () => Pick2,
+  Readonly: () => Readonly3,
+  ReadonlyObject: () => ReadonlyObject2,
+  ReadonlyType: () => ReadonlyType2,
+  Record: () => Record2,
+  RecordKey: () => RecordKey2,
+  RecordPattern: () => RecordPattern2,
+  RecordValue: () => RecordValue2,
+  Ref: () => Ref3,
+  Refine: () => Refine2,
+  Required: () => Required2,
+  Rest: () => Rest2,
+  ReturnType: () => ReturnType2,
+  Script: () => Script4,
+  String: () => String4,
+  Symbol: () => Symbol3,
+  TemplateLiteral: () => TemplateLiteral4,
+  This: () => This2,
+  Tuple: () => Tuple2,
+  Uncapitalize: () => Uncapitalize2,
+  Undefined: () => Undefined2,
+  Union: () => Union2,
+  Unknown: () => Unknown2,
+  Unsafe: () => Unsafe2,
+  Uppercase: () => Uppercase2,
+  Void: () => Void2,
+  With: () => With4
+});
+
+// packages/pi-runtime/dist/pi-runtime.js
 import path26 from "node:path";
 
 // packages/pi-runtime/dist/pi-sdk.js
@@ -314287,7 +318695,7 @@ ${request.task}
 - Prefer targeted edits over rewriting whole files.
 - Verify paths rather than guessing.
 - ${dependencyGuidance(provisioning)}
-- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), stop immediately and return one structured result with failureType missing_context or permission_error, an exact description of what is missing, and a recommendedNextAction for the Main Agent. Do not burn the budget on workarounds.
+- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.
 - Diagnose a failed tool call before retrying with a changed approach.
 - Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.
 - Do not reveal or request chain-of-thought.
@@ -314425,6 +318833,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
         role: request.role,
         model: request.model,
         abortRequested: false,
+        stopRequested: false,
         timedOut: false
       };
       this.activeSessions.set(executionKey, entry);
@@ -314446,11 +318855,53 @@ var PiExpertRuntime = class _PiExpertRuntime {
       if (!resourceLoader) {
         throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
       }
+      let settleStop;
+      const stopReported = new Promise((resolve17) => {
+        settleStop = resolve17;
+      });
+      entry.forceStop = (report) => settleStop?.(report);
+      const stopTool = {
+        name: "report_and_stop",
+        description: "Report that the assigned task cannot be completed with the assigned tools and workspace, and stop immediately. Use it when a required tool is missing, the environment lacks a dependency (no installed dependencies, absent files, no network path), permissions are denied, or you determine that continued work cannot reach the goal. Do NOT use it for mere difficulty: try a reasonable alternative approach first. After the tool confirms, end your turn with a one-paragraph summary; do not continue the task.",
+        parameters: typebox_exports2.Object({
+          reason: typebox_exports2.String({
+            description: "The exact blocker and why it is not resolvable with the assigned tools and workspace."
+          }),
+          findings: typebox_exports2.Optional(typebox_exports2.Array(typebox_exports2.String(), {
+            description: "Useful discoveries made so far (paths, symbols, root causes)."
+          })),
+          risks: typebox_exports2.Optional(typebox_exports2.Array(typebox_exports2.String(), {
+            description: "Risks the Main Agent should know before re-dispatching."
+          })),
+          recommendedNextAction: typebox_exports2.String({
+            description: "The single most useful next step for the Main Agent (e.g. provide X, run Y, or dispatch Z instead)."
+          })
+        }),
+        execute: async (_toolCallId, params) => {
+          entry.stopRequested = true;
+          const text = (value3, limit3) => String(value3 ?? "").slice(0, limit3);
+          const lines = (value3) => Array.isArray(value3) ? value3.map((item) => String(item).slice(0, 500)).filter((item) => item.length > 0).slice(0, 20) : void 0;
+          settleStop?.({
+            reason: text(params.reason, 4e3) || "Expert reported the task cannot be completed.",
+            ...lines(params.findings) ? { findings: lines(params.findings) } : {},
+            ...lines(params.risks) ? { risks: lines(params.risks) } : {},
+            ...text(params.recommendedNextAction, 1e3) ? { recommendedNextAction: text(params.recommendedNextAction, 1e3) } : {}
+          });
+          return {
+            content: [{
+              type: "text",
+              text: "Stop report recorded. End your turn now with a one-paragraph summary of what you did and learned. Do not continue the task."
+            }],
+            details: {}
+          };
+        }
+      };
       const created = await this.sdk.createAgentSession({
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools,
+        tools: [...tools, "report_and_stop"],
+        customTools: [stopTool],
         ...resourceLoader ? { resourceLoader } : {},
         ...this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}
       });
@@ -314483,10 +318934,18 @@ var PiExpertRuntime = class _PiExpertRuntime {
           reject(new ExecutionTimeoutError(`Expert execution timed out after ${timeoutMs}ms.`));
         }, timeoutMs);
       });
+      let stopDelivered;
+      const stopOutcome = stopReported.then((report) => {
+        stopDelivered = report;
+      });
       try {
-        await Promise.race([execution2, timeout, abortSettled]);
+        await Promise.race([execution2, timeout, abortSettled, stopOutcome]);
       } catch (error61) {
         if (error61 instanceof ExecutionTimeoutError) {
+          const aborting = session.abort?.();
+          void aborting?.catch(() => void 0);
+        }
+        if (stopDelivered) {
           const aborting = session.abort?.();
           void aborting?.catch(() => void 0);
         }
@@ -314500,6 +318959,9 @@ var PiExpertRuntime = class _PiExpertRuntime {
       }
       if (entry.abortRequested) {
         return await this.buildAbortedResult(entry, request, started);
+      }
+      if (stopDelivered) {
+        return await this.buildStoppedResult(entry, request, started, stopDelivered);
       }
       const rawText = finalAssistantText(session);
       const sessionError = finalSessionError(session);
@@ -314634,6 +319096,38 @@ var PiExpertRuntime = class _PiExpertRuntime {
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         failureType: "aborted",
+        durationMs: Date.now() - started,
+        ...usage2 ? { usage: usage2 } : {}
+      }
+    };
+  }
+  /** Build the preserved-progress result for an expert-initiated report_and_stop. */
+  async buildStoppedResult(entry, request, started, report) {
+    let changedFiles = [];
+    try {
+      changedFiles = await this.boundary.changedFiles(entry.workspace);
+    } catch {
+    }
+    const usage2 = sessionUsage(entry.session);
+    const summary = safeText(`[Task stopped by expert] ${report.reason}
+
+${finalAssistantText(entry.session) ?? ""}`.trim(), 4e3) ?? `[Task stopped by expert] ${report.reason}`;
+    return {
+      status: "partial",
+      role: request.role,
+      model: request.model,
+      summary,
+      ...changedFiles.length ? { filesChanged: changedFiles.slice(0, 1e3) } : {},
+      ...report.findings?.length ? { findings: report.findings } : {},
+      ...report.risks?.length ? { risks: report.risks } : {},
+      ...report.recommendedNextAction ? { recommendedNextAction: report.recommendedNextAction } : {},
+      executionMetadata: {
+        attempts: request.attempt,
+        workspace: entry.workspace.root,
+        isolated: entry.workspace.isolated,
+        provisioning: entry.workspace.provisioning,
+        failureType: "missing_context",
+        stoppedByExpert: true,
         durationMs: Date.now() - started,
         ...usage2 ? { usage: usage2 } : {}
       }
@@ -314867,7 +319361,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.6" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.7.7" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

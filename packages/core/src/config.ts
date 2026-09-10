@@ -223,6 +223,7 @@ export const councilConfigSchema = z.object({
       allowedWorkspaceRoots: z.array(z.string().min(1)).default([]),
       trustedSkills: z.array(z.string().min(1)).default([]),
       worktreeRetentionMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
+      expertLifetime: z.enum(["host-bound", "detached"]).default("host-bound"),
       workspaceProvisioning: z
         .object({
           mode: z.enum(["auto", "none", "custom"]).default("none"),
@@ -247,6 +248,7 @@ export const councilConfigSchema = z.object({
       allowedWorkspaceRoots: [],
       trustedSkills: [],
       worktreeRetentionMs: 24 * 60 * 60_000,
+      expertLifetime: "host-bound",
       workspaceProvisioning: {
         mode: "none",
         timeoutMs: 600_000,

@@ -1079,6 +1079,27 @@ describe("required delegation timeouts", () => {
     expect(runtime.requests[1]?.timeoutMs).toBe(900_000);
   });
 
+  it("terminates the loop when an expert stops itself via report_and_stop (partial + missing_context)", async () => {
+    const runtime = new MockRuntime(abortModels, [
+      {
+        status: "partial",
+        role: "scout",
+        reasoningLevel: "medium",
+        model: "p/dead",
+        summary: "[Task stopped by expert] The worktree has no installed dependencies.",
+        findings: ["src/entry.ts exports run()"],
+        recommendedNextAction: "Dispatch with provisioning enabled.",
+        executionMetadata: { failureType: "missing_context", stoppedByExpert: true },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "must not run" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(markAssessment) });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("partial");
+    expect(result.executionMetadata).toMatchObject({ failureType: "missing_context", stoppedByExpert: true, attempts: 1, escalationCount: 0 });
+    expect(result.recommendedNextAction).toBe("Dispatch with provisioning enabled.");
+  });
+
   it("terminates the loop on a task-level blocker without retry or escalation", async () => {
     const runtime = new MockRuntime(abortModels, [
       {

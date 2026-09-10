@@ -25,6 +25,8 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
 - 写入型专家的独立 Git worktree 隔离，及按仓库锁文件（npm/pnpm/bun/uv）的**自动依赖供给**：`--ignore-scripts`、白名单化子进程环境、按执行复用工作树；Python 生态自动暴露宿主 `.venv` 解释器绝对路径。
 - **运行时验证门**：供给完成后自动运行仓库 typecheck 与测试，失败把成功结果降级为 `partial` 并触发修正重试，全程零主代理开销。
+- **专家主动停止工具 `report_and_stop`**：专家判定任务无法完成（缺工具/缺环境/权限拒绝）时立即提交结构化报告（阻塞原因、发现、风险、建议下一步）并以 `partial` 结果终止，委派循环不重试不升级，变更工作树保留待检。
+- **专家与主会话同生命周期**（`security.expertLifetime`，默认 `host-bound`）：主会话退出或被替换时自动中止所有运行中的专家，孤儿专家不再烧额度；`detached` 可恢复旧行为。
 - `timeoutMs` 与 `reasoningLevel` 均为必填派遣参数：主代理必须按任务与模型显式选择；组合名单可按角色/模型钉定思考档位并覆盖派遣参数。
 - 专家 fail-fast 纪律：发现工具或环境不可能完成任务时立即以结构化 `missing_context`/`permission_error` 终止并实时回传，委派循环不做无谓重试。
 - 持久化理事会组合：`council-compositions.json` 命名名单（角色可配多模型与思考档位）、首问组合菜单、会话绑定、`model` 钉定与同角色并发派遣。
@@ -107,7 +109,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -645,7 +647,7 @@ packages/codex-integration/plugin/expert-council/
 `v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -671,7 +673,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.6 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.7 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json

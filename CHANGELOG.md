@@ -2,6 +2,13 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.7.7 - 2026-09-10
+
+### Added
+
+- **`report_and_stop` expert tool**: every expert session receives a built-in tool for deterministically ending a task it cannot complete (missing tool, absent environment, denied permission, unreachable goal). The call delivers a structured report — exact blocker, findings, risks, `recommendedNextAction` — as a `partial` result with `failureType: missing_context` and `stoppedByExpert: true`, aborts the session, and terminates the delegation loop without retry or escalation. The mutation worktree stays intact for inspection, and the prompt now instructs experts to use it instead of burning the budget on silent workarounds.
+- **Host-bound expert lifetime** (`security.expertLifetime`, default `host-bound`): the Pi package extension now subscribes to `session_shutdown` and aborts all running expert executions when the host session quits or is replaced (new/resume/fork), so experts never outlive the conversation burning quota with no receiver for their results; their persisted state records the abort for a later `expert_result` lookup. Set `expertLifetime: "detached"` to restore the old orphaned-run behavior.
+
 ## 0.7.6 - 2026-09-10
 
 ### Fixed
