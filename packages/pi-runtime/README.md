@@ -17,7 +17,7 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.8.1) includes:
+The current version (0.8.2) includes:
 
 - **Interactive experts**: a running expert can pause on a major, hard-to-reverse, or ambiguous decision and present 2-4 recommended options (+ optional free text) to the Main Agent through `request_decision`; the host answers with `expert_respond` and the expert continues in the **same session**. Non-terminal — distinct from `report_and_stop`.
 - **Dynamic tool permissions**: preset role tools are a **seed, not a ceiling**. An expert requests a missing tool via `request_tool`; the host grants `once` (auto-revoked after one use), `persistent` (this session), or `reject`. `security.toolGrants` gives operator-defined persistent per-role grants. A read-only execution can never be escalated to a mutating/shell tool (isolation guarantee).
@@ -119,7 +119,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.1 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -670,7 +670,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.1 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -696,7 +696,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.1 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -707,7 +707,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.1` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.2` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 

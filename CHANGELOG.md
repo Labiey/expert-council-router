@@ -2,6 +2,26 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.2 - 2026-09-15
+
+### Fixed
+- **The host-bound expert abort no longer silently disappears on fresh installs.** The `session_shutdown` handler read the operator config to decide between `host-bound` and `detached` lifetime, but it passed the optional data-directory `council-config.json` as an **explicit** config path — and an explicit path is a promise the operator made, so a missing file throws. On any install that never created that file (the documented zero-config default), the throw was swallowed by the teardown `catch`, the lifetime check never ran, and running experts were **never aborted**: orphaned experts kept burning provider quota with no receiver for their results. This affected every distribution's native Pi path since 0.7.7 and was invisible to anyone who had already created a config file.
+  - The optional file is now loaded as the optional default it is, and an unreadable configuration falls back to `host-bound` — failing toward aborting rather than toward leaving orphans.
+  - A regression test drives the real `session_shutdown` handler against an empty data directory; it reproduces the shipped failure and passes only with the fix (verified both directions).
+
+### Notes
+- The README's operator-config resolution wording was checked against the code and the CLI rather than assumed: an explicit `configPath` or `EXPERT_COUNCIL_CONFIG` really must point at an existing file (`expert-council models` exits 1 with `Unable to read Expert Council config … ENOENT`), while the data-directory default is optional and silently skipped. The documentation was correct; the shutdown path was the one place that violated it.
+
+## 0.8.2（中文）
+
+### 修复
+- **全新安装下，host-bound 的专家中止不再静默失效。** `session_shutdown` 处理需读取运营者配置以判定 `host-bound` 还是 `detached` 生命周期，但它把可选的数据目录 `council-config.json` 当成了**显式**配置路径传入——而显式路径代表运维者做出的承诺，文件缺失就会抛错。于是在任何未创建该文件的安装（即文档承诺的零配置默认）上，异常被 teardown 的 `catch` 吞掉，生命周期判定从未执行，运行中的专家**永不被中止**：孤儿专家在无人接收结果的情况下持续消耗供应商配额。该缺陷自 0.7.7 起存在于各分发的原生 Pi 路径，且对早已建过配置文件的人完全不可见。
+  - 现在按本来的语义把该文件当作可选默认项加载；配置不可读时回退到 `host-bound`——宁可中止也不留孤儿。
+  - 新增回归测试：用空数据目录驱动真实的 `session_shutdown` 处理；它能复现已发布的失效，且仅在修复后通过（两个方向均已验证）。
+
+### 说明
+- README 关于运营者配置解析顺序的表述已比对代码与 CLI 实测，而非臆断：显式 `configPath` 或 `EXPERT_COUNCIL_CONFIG` 确实必须指向存在的文件（`expert-council models` 会以 `Unable to read Expert Council config … ENOENT` 退出码 1），而数据目录默认项可选且缺失静默跳过。文档是对的；违反它的只有 shutdown 这条路径。
+
 ## 0.8.1 - 2026-09-15
 
 ### Fixed

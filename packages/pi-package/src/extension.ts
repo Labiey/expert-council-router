@@ -577,8 +577,20 @@ export default function expertCouncilExtension(
   pi.on("session_shutdown", async (_event, ctx) => {
     try {
       const paths = defaultCouncilStoragePaths(ctx.cwd);
-      const loaded = await loadCouncilConfig(paths.councilConfigPath, paths.councilConfigPath);
-      if (loaded.config.security.expertLifetime === "detached") return;
+      // The data-directory council-config.json is optional. It must be passed as
+      // the *default* path, not as an explicit one: an explicit path is a promise
+      // the operator made and throws when missing, which would otherwise be
+      // swallowed by the teardown catch and silently skip aborting running experts
+      // on every fresh install that never created the file.
+      let lifetime: "host-bound" | "detached" = "host-bound";
+      try {
+        const loaded = await loadCouncilConfig(undefined, paths.councilConfigPath);
+        lifetime = loaded.config.security.expertLifetime;
+      } catch {
+        // Unreadable configuration falls back to host-bound, the safe direction:
+        // experts are aborted rather than left orphaned with no result receiver.
+      }
+      if (lifetime === "detached") return;
       const council = await getCouncil(ctx.cwd);
       // Preferred: shutdownAll persists the terminal aborted results before
       // returning, so the state file never keeps a running record for an

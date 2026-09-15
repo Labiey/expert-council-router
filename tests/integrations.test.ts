@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -272,7 +273,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.1 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -289,7 +290,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.1 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });
@@ -816,6 +817,39 @@ describe("Pi adapter registration", () => {
       { cwd: ".", sessionManager: { getBranch: () => [] } },
     );
     expect(requests.at(-1)?.composition).toBe("daily-cheap");
+  });
+
+  it("aborts host-bound experts at session shutdown when no operator config file exists", async () => {
+    // A fresh install has no council-config.json. Treating that optional default
+    // file as an explicit path made the loader throw, the teardown catch swallowed
+    // it, and running experts were silently never aborted (orphans burning quota).
+    const dataDir = await mkdtemp(path.join(tmpdir(), "expert-council-empty-data-"));
+    const previous = process.env.EXPERT_COUNCIL_DATA_DIR;
+    let shutdownCalls = 0;
+    try {
+      process.env.EXPERT_COUNCIL_DATA_DIR = dataDir;
+      const handlers: Record<string, (event: unknown, ctx: unknown) => Promise<void>> = {};
+      const council = {
+        shutdownAll: async () => {
+          shutdownCalls += 1;
+          return { aborted: [] };
+        },
+      } as unknown as ExpertCouncil;
+      piExtension({
+        registerTool: () => undefined,
+        on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<void>) => {
+          handlers[event] = handler;
+        },
+        sendMessage: () => undefined,
+      } as never, { councilFor: async () => council });
+      expect(typeof handlers.session_shutdown).toBe("function");
+      await handlers.session_shutdown!(undefined, { cwd: process.cwd() });
+      expect(shutdownCalls).toBe(1);
+    } finally {
+      if (previous === undefined) delete process.env.EXPERT_COUNCIL_DATA_DIR;
+      else process.env.EXPERT_COUNCIL_DATA_DIR = previous;
+      await rm(dataDir, { recursive: true, force: true, maxRetries: 3 });
+    }
   });
 
   it("forwards an optional model pin on a single delegation", async () => {
