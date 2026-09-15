@@ -319057,6 +319057,8 @@ var PiExpertRuntime = class _PiExpertRuntime {
   packageName;
   boundary;
   activeSessions = /* @__PURE__ */ new Map();
+  /** Cached capability probe for Pi's runtime tool-set narrowing API. */
+  canNarrowTools;
   /** Marks executions whose current interaction was answered by the host (vs. by the wait timeout). */
   lastHostResponded = /* @__PURE__ */ new Map();
   skillDiscoveryWarning;
@@ -319201,11 +319203,16 @@ var PiExpertRuntime = class _PiExpertRuntime {
       workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, executionKey);
       const capabilities = await this.getCapabilities();
       const mutationTools = /* @__PURE__ */ new Set(["edit", "write", "bash", "powershell"]);
-      const tools = request.tools.filter((tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)));
+      const seedTools = request.tools.filter((tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)));
       for (const granted of this.options.config.security.toolGrants[request.role] ?? []) {
-        if (capabilities.supportedTools.includes(granted) && (!effectiveReadOnly || !mutationTools.has(granted)) && !tools.includes(granted))
-          tools.push(granted);
+        if (capabilities.supportedTools.includes(granted) && (!effectiveReadOnly || !mutationTools.has(granted)) && !seedTools.includes(granted))
+          seedTools.push(granted);
       }
+      const interactionToolNames = ["report_and_stop", "request_decision", "request_tool"];
+      const canRegisterSuperset = !effectiveReadOnly && this.canNarrowTools !== false;
+      const registeredNames = effectiveReadOnly ? capabilities.supportedTools.filter((tool) => !mutationTools.has(tool)) : canRegisterSuperset ? capabilities.supportedTools : seedTools;
+      const tools = [.../* @__PURE__ */ new Set([...registeredNames, ...interactionToolNames])];
+      const initialActive = [.../* @__PURE__ */ new Set([...seedTools, ...interactionToolNames])];
       const resourceLoader = await this.createSafeResourceLoader(workspace.cwd, request.skills);
       if (!resourceLoader) {
         throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
@@ -319327,14 +319334,19 @@ Apply this decision and continue the assigned task now. If the decision changed 
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools: [...tools, "report_and_stop", "request_decision", "request_tool"],
+        tools,
         customTools: [stopTool, decisionTool, requestTool],
         ...resourceLoader ? { resourceLoader } : {},
         ...this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}
       });
       session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
       Object.assign(entry, { session, workspace });
-      entry.activeToolNames = [...tools, "report_and_stop", "request_decision", "request_tool"];
+      const canNarrow = typeof session.setActiveToolsByName === "function";
+      if (this.canNarrowTools === void 0)
+        this.canNarrowTools = canNarrow;
+      entry.activeToolNames = canNarrow ? initialActive : tools;
+      if (canNarrow)
+        session.setActiveToolsByName(entry.activeToolNames);
       entry.onceTools = /* @__PURE__ */ new Set();
       entry.unsubscribe = session.subscribe?.((event) => {
         const e2 = event;
@@ -319649,6 +319661,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         durationMs: Date.now() - started,
+        ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {},
         ...usage2 ? { usage: usage2 } : {}
       }
     };
@@ -319679,6 +319692,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
         provisioning: entry.workspace.provisioning,
         failureType: "aborted",
         durationMs: Date.now() - started,
+        ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {},
         ...usage2 ? { usage: usage2 } : {}
       }
     };
@@ -319711,6 +319725,7 @@ ${finalAssistantText(entry.session) ?? ""}`.trim(), 4e3) ?? `[Task stopped by ex
         failureType: "missing_context",
         stoppedByExpert: true,
         durationMs: Date.now() - started,
+        ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {},
         ...usage2 ? { usage: usage2 } : {}
       }
     };

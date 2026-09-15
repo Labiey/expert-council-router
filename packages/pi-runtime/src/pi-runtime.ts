@@ -442,6 +442,8 @@ interface ActiveExpertSession {
 export class PiExpertRuntime implements ExpertRuntime {
   private readonly boundary: WorkspaceBoundary;
   private readonly activeSessions = new Map<string, ActiveExpertSession>();
+  /** Cached capability probe for Pi's runtime tool-set narrowing API. */
+  private canNarrowTools: boolean | undefined;
   /** Marks executions whose current interaction was answered by the host (vs. by the wait timeout). */
   private readonly lastHostResponded = new Map<string, boolean>();
   private skillDiscoveryWarning?: string;
@@ -620,7 +622,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       workspace = await this.boundary.prepare(request.workspace, effectiveReadOnly, executionKey);
       const capabilities = await this.getCapabilities();
       const mutationTools = new Set(["edit", "write", "bash", "powershell"]);
-      const tools = request.tools.filter(
+      const seedTools = request.tools.filter(
         (tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)),
       );
       // Apply persistent per-role grants from config as an additional seed. The
@@ -629,9 +631,26 @@ export class PiExpertRuntime implements ExpertRuntime {
         if (
           capabilities.supportedTools.includes(granted) &&
           (!effectiveReadOnly || !mutationTools.has(granted)) &&
-          !tools.includes(granted)
-        ) tools.push(granted);
+          !seedTools.includes(granted)
+        ) seedTools.push(granted);
       }
+      const interactionToolNames = ["report_and_stop", "request_decision", "request_tool"];
+      // Pi's createAgentSession `tools` option is a registration allowlist: a tool
+      // that is not registered can never be activated later, so dynamic grants
+      // require registering the superset up front and narrowing the ACTIVE set with
+      // setActiveToolsByName (verified to restrict the model's visible tools).
+      // A read-only execution registers only read tools, so mutating/shell tools
+      // stay unreachable at the registration layer too. If the installed Pi lacks
+      // the narrowing API, later executions fall back to seed-only registration
+      // (no dynamic grants) instead of silently over-privileging experts.
+      const canRegisterSuperset = !effectiveReadOnly && this.canNarrowTools !== false;
+      const registeredNames = effectiveReadOnly
+        ? capabilities.supportedTools.filter((tool) => !mutationTools.has(tool))
+        : canRegisterSuperset
+          ? capabilities.supportedTools
+          : seedTools;
+      const tools = [...new Set([...registeredNames, ...interactionToolNames])];
+      const initialActive = [...new Set([...seedTools, ...interactionToolNames])];
       const resourceLoader = await this.createSafeResourceLoader(workspace.cwd, request.skills);
       if (!resourceLoader) {
         throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
@@ -783,7 +802,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools: [...tools, "report_and_stop", "request_decision", "request_tool"],
+        tools,
         customTools: [stopTool, decisionTool, requestTool],
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
@@ -792,11 +811,14 @@ export class PiExpertRuntime implements ExpertRuntime {
       // Fill the pre-registered entry in place: abortExecution may hold this
       // exact object reference and setting a fresh one could drop its flag.
       Object.assign(entry, { session, workspace });
-      // Dynamic tool permissions: track the active set so a granted tool can be
-      // added at runtime, and observe tool completions to auto-revoke "once" grants
-      // after a single use. Best-effort: a session without these hooks degrades to
-      // session-scoped grants (never a crash).
-      entry.activeToolNames = [...tools, "report_and_stop", "request_decision", "request_tool"];
+      // Dynamic tool permissions: register the seed as the active set so a granted
+      // tool can be added at runtime, and observe tool completions to auto-revoke
+      // "once" grants after a single use. Best-effort: a session without these
+      // hooks degrades to session-scoped grants (never a crash).
+      const canNarrow = typeof session.setActiveToolsByName === "function";
+      if (this.canNarrowTools === undefined) this.canNarrowTools = canNarrow;
+      entry.activeToolNames = canNarrow ? initialActive : tools;
+      if (canNarrow) session.setActiveToolsByName!(entry.activeToolNames);
       entry.onceTools = new Set<string>();
       entry.unsubscribe = session.subscribe?.((event) => {
         const e = event as { type?: string; toolName?: string };
@@ -1150,6 +1172,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         durationMs: Date.now() - started,
+        ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),
         ...(usage ? { usage } : {}),
       },
     };
@@ -1186,6 +1209,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         provisioning: entry.workspace.provisioning,
         failureType: "aborted",
         durationMs: Date.now() - started,
+        ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),
         ...(usage ? { usage } : {}),
       },
     };
@@ -1226,6 +1250,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         failureType: "missing_context",
         stoppedByExpert: true,
         durationMs: Date.now() - started,
+        ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),
         ...(usage ? { usage } : {}),
       },
     };

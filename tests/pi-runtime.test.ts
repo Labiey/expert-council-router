@@ -282,9 +282,69 @@ describe("Pi runtime adapter", () => {
       cacheWriteTokens: 2,
       estimatedCost: 0.02,
     });
-    expect(sessionOptions?.tools).toEqual(["read", "grep", "report_and_stop", "request_decision", "request_tool"]);
+    // Dynamic grants require registering the superset up front, so a read-only
+    // execution registers every non-mutation built-in and activates only its role
+    // seed. The security property that matters: mutating/shell tools are never
+    // even registered for a read-only run, so no approval can reach them.
+    expect(sessionOptions?.tools).toEqual([
+      "read",
+      "grep",
+      "find",
+      "ls",
+      "report_and_stop",
+      "request_decision",
+      "request_tool",
+    ]);
+    expect((sessionOptions?.tools as string[]).some((tool) => ["edit", "write", "bash", "powershell"].includes(tool))).toBe(false);
     expect((sessionOptions?.customTools as Array<{ name: string }> | undefined)?.[0]?.name).toBe("report_and_stop");
     expect(sessionOptions?.model).toBe(nativeModel);
+  });
+
+  it("narrows a read-only run to its role seed despite superset registration", async () => {
+    const narrowCalls: string[][] = [];
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({
+        session: {
+          prompt: async () => undefined,
+          waitForIdle: async () => {},
+          dispose: () => {},
+          subscribe: () => () => {},
+          setActiveToolsByName: (names: string[]) => {
+            narrowCalls.push([...names]);
+          },
+          state: {
+            messages: [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "narrowed", filesChanged: [], tests: [], findings: [] }) }] }],
+          },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const result = await runtime.executeExpert({
+      executionId: "exec_narrow",
+      role: "scout",
+      task: "narrow",
+      model: "p/m",
+      tools: ["read", "grep"],
+      skills: [],
+      readOnly: true,
+      workspace: process.cwd(),
+      timeoutMs: 20_000,
+      attempt: 1,
+    });
+    expect(result.status).toBe("success");
+    expect(narrowCalls.length).toBeGreaterThan(0);
+    // Only the role seed plus interaction tools go active; other registered
+    // read tools (find/ls) stay inactive until granted.
+    expect(narrowCalls[0]).toEqual(["read", "grep", "report_and_stop", "request_decision", "request_tool"]);
+    expect(narrowCalls[0]).not.toContain("find");
   });
 
   it("delivers a structured partial result when the expert calls report_and_stop", async () => {

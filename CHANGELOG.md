@@ -18,7 +18,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - MCP / Pi-package / CLI all expose `expert_respond`; the CLI gains `respond`.
 
 ### Notes
-- Built on verified Pi primitives: `session.steer/followUp/subscribe/setActiveToolsByName`, custom-tool resolve (same template as `report_and_stop`). The passive tool-call block (auto-raising approval on an un-granted built-in) degrades to the expert proactively calling `request_tool`, since it cannot invoke a tool that is not in its active set — documented rather than faked.
+- Built on verified Pi primitives: `session.steer/followUp/subscribe/setActiveToolsByName`, custom-tool resolve (same template as `report_and_stop`). Live validation against a real model confirmed the two non-obvious ones: `setActiveToolsByName` genuinely restricts the model's visible tools (so a role seed stays the default even though mutation-capable executions register a wider built-in set to make grants possible), and a granted tool really executes. Verified live end-to-end: an expert raised `request_decision` with two options, the host answer let it finish in the same session applying the choice; another expert requested `powershell`, was granted it, and returned a correct command result. The passive tool-call block (auto-raising approval on an un-granted built-in) degrades to the expert proactively calling `request_tool`, since it cannot invoke a tool that is not in its active set — documented rather than faked.
 
 ## 0.8.0（中文）
 
@@ -36,7 +36,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - MCP / Pi 包 / CLI 均提供 `expert_respond`；CLI 新增 `respond`。
 
 ### 说明
-- 构建于已核实的 Pi 原语：`session.steer/followUp/subscribe/setActiveToolsByName`、custom-tool resolve（与 `report_and_stop` 同模板）。被动工具门（在未授权内建工具被调用时自动弹审批）降级为专家主动调 `request_tool`（未激活的工具本就无法被调用）——如实文档化而非假装。
+- 构建于已核实的 Pi 原语：`session.steer/followUp/subscribe/setActiveToolsByName`、custom-tool resolve（与 `report_and_stop` 同模板）。针对真实模型的实机验证确认了两处非常显然的行为：`setActiveToolsByName` 确实会限制模型可见工具（因此即便为让授权成为可能而向变更型执行注册更宽的内建集，角色种子仍是默认），且被授予的工具能真正执行。端到端实测通过：一个专家提出含两个选项的 `request_decision`，宿主答复后其在同一会话按所选继续完成；另一个专家申请 `powershell` 获授后返回了正确命令结果。被动工具门（在未授权内建工具被调用时自动弹审批）降级为专家主动调 `request_tool`（未激活的工具本就无法被调用）——如实文档化而非假装。
 
 ## 0.7.10 - 2026-09-11
 
