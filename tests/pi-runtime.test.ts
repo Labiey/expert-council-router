@@ -401,6 +401,53 @@ describe("Pi runtime adapter", () => {
     }
   });
 
+  it("tells read-only experts that delivering content in the report is completion", async () => {
+    let promptText = "";
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({
+        session: {
+          prompt: async (text: unknown) => {
+            promptText = String(text);
+          },
+          waitForIdle: async () => {},
+          dispose: () => {},
+          subscribe: () => () => {},
+          state: {
+            messages: [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "delivered", filesChanged: [], tests: [], findings: [] }) }] }],
+          },
+        },
+      }),
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const result = await runtime.executeExpert({
+      executionId: "exec_readonly_completion",
+      role: "scout",
+      task: "Condense the duty sentence and hand the text back.",
+      model: "p/m",
+      tools: ["read", "grep", "find", "ls"],
+      skills: [],
+      readOnly: true,
+      workspace: process.cwd(),
+      timeoutMs: 20_000,
+      attempt: 1,
+    });
+    expect(result.status).toBe("success");
+    // Regression: a read-only scout that delivered the requested text reported
+    // partial + permission_error just because it could not write files, which
+    // taught telemetry to punish a model for a correctly finished run.
+    expect(promptText).toContain("inside your report IS completion");
+    expect(promptText).toContain("writer-capable pass");
+    expect(promptText).toContain("never downgrade a finished read-only deliverable");
+  });
+
   it("delivers a structured partial result when the expert calls report_and_stop", async () => {
     const nativeModel = { provider: "p", id: "m" };
     const modelRuntime = {

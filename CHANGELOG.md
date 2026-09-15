@@ -2,6 +2,11 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## Unreleased
+
+### Fixed
+- Read-only experts are told that handing back the requested content, analysis, or replacement text in their report **is** completion, and must not report `partial`/`permission_error` merely because their role cannot write files. Observed live: a scout that produced exactly the condensed text its host asked for still self-labelled `permission_error`, which taught telemetry to punish a model for a correctly finished run. Hosts are also guided (shared Skill item 9) to ask read-only experts to *return* rather than *apply*.
+
 ## 0.8.0 - 2026-09-11
 
 ### Added — Interactive experts, dynamic permissions, cross-language environments
