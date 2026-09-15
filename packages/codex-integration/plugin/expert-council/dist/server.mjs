@@ -310118,6 +310118,12 @@ var councilConfigSchema = external_exports.object({
      */
     toolGrants: external_exports.partialRecord(expertRoleSchema, external_exports.array(external_exports.string().min(1).max(60)).max(20)).default({}),
     expertLifetime: external_exports.enum(["host-bound", "detached"]).default("host-bound"),
+    /** Expert progress visibility. The pendingInteraction channel is always on (correctness). */
+    observability: external_exports.object({
+      expertWindow: external_exports.enum(["off", "events", "interactive"]).default("off"),
+      streamToHost: external_exports.boolean().default(true),
+      redactToolArgs: external_exports.boolean().default(true)
+    }).default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
       strategy: external_exports.enum(["auto", "drivers", "as-code", "in-place"]).default("auto"),
@@ -310145,6 +310151,7 @@ var councilConfigSchema = external_exports.object({
     worktreeRetentionMs: 24 * 60 * 6e4,
     toolGrants: {},
     expertLifetime: "host-bound",
+    observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
     workspaceProvisioning: {
       mode: "none",
       strategy: "auto",
@@ -312812,9 +312819,16 @@ var ExpertCouncilService = class {
         ...typeof execution2.timeoutMs === "number" ? { remainingMs: Math.max(0, execution2.timeoutMs - elapsedMs) } : {}
       };
     });
+    const showProgress = this.config.security.observability.expertWindow !== "off" && this.config.security.observability.streamToHost;
     return await Promise.all(base.map(async (view) => {
       const progress = await this.runtime.inspectExecution?.(view.id).catch(() => void 0);
-      return progress?.pendingInteraction ? { ...view, pendingInteraction: progress.pendingInteraction } : view;
+      if (!progress)
+        return view;
+      return {
+        ...view,
+        ...progress.pendingInteraction ? { pendingInteraction: progress.pendingInteraction } : {},
+        ...showProgress ? { progress: { messageCount: progress.messageCount, ...progress.lastAssistantText ? { lastActivity: progress.lastAssistantText } : {} } } : {}
+      };
     }));
   }
   /**

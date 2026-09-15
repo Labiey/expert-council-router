@@ -1429,9 +1429,17 @@ export class ExpertCouncilService implements ExpertCouncil {
     // Attach the live interaction the expert is blocked on, when any. This is a
     // correctness channel (a headless host discovers pending work here), so it is
     // surfaced regardless of the observability toggle and best-effort per execution.
+    const showProgress = this.config.security.observability.expertWindow !== "off" && this.config.security.observability.streamToHost;
     return await Promise.all(base.map(async (view) => {
       const progress = await this.runtime.inspectExecution?.(view.id).catch(() => undefined);
-      return progress?.pendingInteraction ? { ...view, pendingInteraction: progress.pendingInteraction } : view;
+      if (!progress) return view;
+      return {
+        ...view,
+        ...(progress.pendingInteraction ? { pendingInteraction: progress.pendingInteraction } : {}),
+        ...(showProgress
+          ? { progress: { messageCount: progress.messageCount, ...(progress.lastAssistantText ? { lastActivity: progress.lastAssistantText } : {}) } }
+          : {}),
+      };
     }));
   }
 

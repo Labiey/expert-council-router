@@ -197,6 +197,33 @@ describe("retry and escalation", () => {
       .toMatchObject({ executionId: "exec_2", status: "not-found" });
   });
 
+  it("attaches live progress to the running view only when expertWindow is enabled", async () => {
+    const runtime = new MockRuntime([model("cheap", "one")], [
+      new Promise<ExpertResult>(() => {}),
+      new Promise<ExpertResult>(() => {}),
+    ]);
+    runtime.inspectExecution = async (executionId: string) => ({
+      executionId,
+      status: "running" as const,
+      role: "reviewer",
+      model: "cheap/one",
+      startedAt: new Date().toISOString(),
+      elapsedMs: 10,
+      messageCount: 7,
+      lastAssistantText: "reading the diff",
+    });
+    const off = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    off.startDelegation({ role: "reviewer", task: "Review", timeoutMs: 60_000 });
+    await new Promise((r) => setTimeout(r, 15));
+    expect((await off.getStatus({ view: "running" })).running[0]?.progress).toBeUndefined();
+
+    const events = new ExpertCouncilService(runtime, { profiles: { models: profiles }, security: { observability: { expertWindow: "events" } } });
+    events.startDelegation({ role: "reviewer", task: "Review", timeoutMs: 60_000 });
+    await new Promise((r) => setTimeout(r, 15));
+    const view = (await events.getStatus({ view: "running" })).running[0];
+    expect(view?.progress).toMatchObject({ messageCount: 7, lastActivity: "reading the diff" });
+  });
+
   it("waits without polling until any requested background execution completes", async () => {
     type Completed = { status: "success"; role: "reviewer"; model: string; summary: string };
     const finishers: Array<(result: Completed) => void> = [];

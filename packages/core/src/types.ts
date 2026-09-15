@@ -103,6 +103,16 @@ export interface WorkspaceProvisioningConfig {
   removalTimeoutMs: number;
 }
 
+/** Expert progress visibility settings (security.observability). */
+export interface ObservabilityConfig {
+  /** "off" = minimal running view; "events" = bounded live progress; "interactive" = advanced (RPC projection, not implemented in 0.8.0). */
+  expertWindow: "off" | "events" | "interactive";
+  /** Whether progress/interaction is streamed to the host through status/result views. */
+  streamToHost: boolean;
+  /** Whether tool-argument summaries in surfaced events are redacted/bounded. */
+  redactToolArgs: boolean;
+}
+
 export interface RuntimeCapabilities {
   hostType: string;
   modelDiscovery: boolean;
@@ -850,6 +860,8 @@ export interface RunningExecutionView {
   remainingMs?: number;
   /** A live interaction the expert is blocked on, when one is open. */
   pendingInteraction?: PendingInteraction;
+  /** Bounded live progress, surfaced only when security.observability.expertWindow is "events"/"interactive". */
+  progress?: { messageCount: number; lastActivity?: string };
 }
 
 /** One finished execution in the summary status view. */

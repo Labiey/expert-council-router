@@ -393,6 +393,12 @@ describe("configuration", () => {
     // Unknown role rejected (partialRecord keys are validated).
     expect(() => parseCouncilConfig({ security: { toolGrants: { "not-a-role": ["bash"] } } })).toThrow(ConfigValidationError);
   });
+
+  it("defaults and validates security.observability", () => {
+    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true });
+    expect(parseCouncilConfig({ security: { observability: { expertWindow: "events" } } }).security.observability).toMatchObject({ expertWindow: "events", streamToHost: true });
+    expect(() => parseCouncilConfig({ security: { observability: { expertWindow: "magic" } } })).toThrow(ConfigValidationError);
+  });
 });
 
 describe("runtime availability markers", () => {
