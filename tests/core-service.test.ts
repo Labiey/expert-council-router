@@ -249,6 +249,23 @@ describe("retry and escalation", () => {
     expect(view?.progress).toMatchObject({ messageCount: 7, lastActivity: "reading the diff" });
   });
 
+  it("echoes the effective observability settings and warns when interactive is configured", async () => {
+    // A config toggle the host cannot observe is a placebo: inspect must report the
+    // effective values, and the unimplemented tier must announce itself.
+    const interactive = new ExpertCouncilService(new MockRuntime([model("cheap", "one")]), {
+      profiles: { models: profiles },
+      security: { observability: { expertWindow: "interactive" } },
+    });
+    const inventory = await interactive.inspectResources();
+    expect(inventory.operatorConfig?.observability).toEqual({ expertWindow: "interactive", streamToHost: true });
+    expect(inventory.warnings.join(" ")).toContain("has no distinct behavior yet");
+
+    const quiet = new ExpertCouncilService(new MockRuntime([model("cheap", "one")]), { profiles: { models: profiles } });
+    const quietInventory = await quiet.inspectResources();
+    expect(quietInventory.operatorConfig?.observability).toEqual({ expertWindow: "off", streamToHost: true });
+    expect(quietInventory.warnings.join(" ")).not.toContain("has no distinct behavior yet");
+  });
+
   it("waits without polling until any requested background execution completes", async () => {
     type Completed = { status: "success"; role: "reviewer"; model: string; summary: string };
     const finishers: Array<(result: Completed) => void> = [];

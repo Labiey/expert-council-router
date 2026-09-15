@@ -584,6 +584,78 @@ describe("Pi runtime adapter", () => {
     expect((await runtime.inspectExecution(executionId))?.pendingInteraction).toBeUndefined();
   });
 
+  it("refuses a concurrent second interaction instead of orphaning the open one", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    let decisionTool: { execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> } | undefined;
+    let toolTexts: string[] = [];
+    const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        decisionTool = custom.find((tool) => tool.name === "request_decision");
+        return {
+          session: {
+            prompt: async () => {
+              // Two decision requests raised from one assistant turn (parallel tool calls).
+              const [first, second] = await Promise.all([
+                decisionTool!.execute("t1", { question: "First?", options: [{ label: "f1" }, { label: "f2" }] }),
+                decisionTool!.execute("t2", { question: "Second?", options: [{ label: "s1" }, { label: "s2" }] }),
+              ]);
+              toolTexts = [first.content[0]!.text, second.content[0]!.text];
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "both settled" }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            state,
+          },
+        };
+      },
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({}),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    const executionId = "exec_serialize_test";
+    const running = runtime.executeExpert({
+      executionId,
+      role: "implementation-worker",
+      task: "Ask two questions at once",
+      model: "p/m",
+      tools: ["read", "bash"],
+      skills: [],
+      reasoningLevel: "low",
+      readOnly: false,
+      workspace: process.cwd(),
+      timeoutMs: 20_000,
+      attempt: 1,
+    });
+    // Before the fix the second request overwrote pendingInteraction and the first
+    // tool call hung until the 15-minute wait timeout: the host could never answer it.
+    let progress = await runtime.inspectExecution(executionId);
+    for (let i = 0; i < 50 && !progress?.pendingInteraction; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      progress = await runtime.inspectExecution(executionId);
+    }
+    expect(progress?.pendingInteraction?.request.question).toBe("First?");
+    expect((await runtime.respondToInteraction(executionId, { kind: "decision", choice: "f1" })).status).toBe("resolved");
+    const result = await running;
+    expect(result.status).toBe("success");
+    expect(toolTexts.filter((text) => text.includes("Main Agent decision: f1"))).toHaveLength(1);
+    expect(toolTexts.filter((text) => text.includes("already awaiting the Main Agent"))).toHaveLength(1);
+    // A refusal is not charged against the interaction budget.
+    expect(result.executionMetadata?.interactionRounds).toBe(1);
+  }, 30_000);
+
   it("respondToInteraction reports not-found for an unknown execution without throwing", async () => {
     const modelRuntime = {
       getAvailable: async () => [],

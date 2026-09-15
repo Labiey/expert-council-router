@@ -310119,11 +310119,15 @@ var councilConfigSchema = external_exports.object({
     toolGrants: external_exports.partialRecord(expertRoleSchema, external_exports.array(external_exports.string().min(1).max(60)).max(20)).default({}),
     expertLifetime: external_exports.enum(["host-bound", "detached"]).default("host-bound"),
     /** Expert progress visibility. The pendingInteraction channel is always on (correctness). */
+    /**
+     * Expert progress visibility. `pendingInteraction` is always surfaced
+     * (correctness channel); this governs the optional live progress block.
+     * No tool arguments are ever surfaced, so there is nothing to redact here.
+     */
     observability: external_exports.object({
       expertWindow: external_exports.enum(["off", "events", "interactive"]).default("off"),
-      streamToHost: external_exports.boolean().default(true),
-      redactToolArgs: external_exports.boolean().default(true)
-    }).default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
+      streamToHost: external_exports.boolean().default(true)
+    }).default({ expertWindow: "off", streamToHost: true }),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
       strategy: external_exports.enum(["auto", "drivers", "as-code", "in-place"]).default("auto"),
@@ -310151,7 +310155,7 @@ var councilConfigSchema = external_exports.object({
     worktreeRetentionMs: 24 * 60 * 6e4,
     toolGrants: {},
     expertLifetime: "host-bound",
-    observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
+    observability: { expertWindow: "off", streamToHost: true },
     workspaceProvisioning: {
       mode: "none",
       strategy: "auto",
@@ -311899,11 +311903,18 @@ var ExpertCouncilService = class {
       ...compositions ? { compositions } : {},
       operatorConfig: {
         ...this.stateOptions.operatorConfigPath ? { path: this.stateOptions.operatorConfigPath } : {},
-        provisioningMode: this.config.security.workspaceProvisioning.mode
+        provisioningMode: this.config.security.workspaceProvisioning.mode,
+        observability: {
+          expertWindow: this.config.security.observability.expertWindow,
+          streamToHost: this.config.security.observability.streamToHost
+        }
       },
       warnings: [
         ...this.routePolicyWarning ? [this.routePolicyWarning] : [],
         ...this.compositionsWarning ? [this.compositionsWarning] : [],
+        ...this.config.security.observability.expertWindow === "interactive" ? [
+          'security.observability.expertWindow = "interactive" has no distinct behavior yet (no RPC projection) and acts as "events".'
+        ] : [],
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
@@ -319537,6 +319548,13 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     if (!entry || (entry.interactionRounds ?? 0) >= maxRounds) {
       return { response: { ...autonomous, otherText: autonomous.otherText ?? "Interaction budget exhausted; decide autonomously and note the assumption." }, hostAbsent: true, exhausted: true };
     }
+    if (entry.pendingInteraction) {
+      return {
+        response: request.kind === "decision" ? { kind: "decision", otherText: "An interaction is already awaiting the Main Agent for this execution, so this one was not asked. Choose the most conservative reasonable option yourself, note the assumption in your risks, and do not ask again while one is open." } : { kind: "tool_approval", scope: "reject" },
+        hostAbsent: true,
+        exhausted: false
+      };
+    }
     entry.interactionRounds = (entry.interactionRounds ?? 0) + 1;
     const round = entry.interactionRounds;
     const openedAt = (/* @__PURE__ */ new Date()).toISOString();
@@ -320047,7 +320065,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.8.2" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.8.3" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

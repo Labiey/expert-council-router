@@ -17,13 +17,13 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.8.2) includes:
+The current version (0.8.3) includes:
 
 - **Interactive experts**: a running expert can pause on a major, hard-to-reverse, or ambiguous decision and present 2-4 recommended options (+ optional free text) to the Main Agent through `request_decision`; the host answers with `expert_respond` and the expert continues in the **same session**. Non-terminal — distinct from `report_and_stop`.
 - **Dynamic tool permissions**: preset role tools are a **seed, not a ceiling**. An expert requests a missing tool via `request_tool`; the host grants `once` (auto-revoked after one use), `persistent` (this session), or `reject`. `security.toolGrants` gives operator-defined persistent per-role grants. A read-only execution can never be escalated to a mutating/shell tool (isolation guarantee).
 - **Interaction discovery on a correctness channel**: an open interaction surfaces as `pendingInteraction` in `expert_status(view:"running")` and `expert_result(includeProgress)`, and the native Pi package additionally wakes the host with an `expert-council-interaction` notice the moment one opens; headless hosts (Codex/MCP, no server-push) keep polling. Bounded per execution (default 3 rounds + wait timeout).
 - **Cross-language environments**: `provisionWorkspace` is no longer Node-only. A driver registry materializes node/pnpm/yarn/bun, python (uv/poetry/host venv), rust, go, jvm/maven, dotnet, ruby, php, elixir from each toolchain's already-global download cache. Environment-as-code backends (`flake.nix`, `.devcontainer/`) are detected and delegated, not re-implemented. New `security.workspaceProvisioning.strategy` (`auto`/`drivers`/`as-code`/`in-place`) and `runtimeEnv` (`isolated`/`host-env`); concurrent worktrees never share a recompiled target directory.
-- **Progress observability toggle**: `security.observability.expertWindow` (`off` default / `events` / `interactive`) surfaces bounded live progress in the running view.
+- **Progress observability toggle**: `security.observability.expertWindow` (`off` default / `events`) surfaces bounded live progress (`messageCount` plus the last assistant text) in the running view, and `security.observability.streamToHost` can switch that stream off. `interactive` is accepted for forward compatibility but behaves as `events` until an RPC projection exists, and `expert_inspect` warns when it is configured. Neither toggle gates the `pendingInteraction` correctness channel, nor an explicit `expert_result(includeProgress)`.
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
 - Per-expert hard tool allowlists and installed-Skill filtering.
@@ -31,7 +31,7 @@ The current version (0.8.2) includes:
 - A **runtime verification gate**: after provisioning, the repository typecheck and tests run automatically; a failing gate downgrades a successful result to `partial` and engages the corrected-retry path — zero Main Agent overhead.
 - **`report_and_stop` expert tool**: when an expert determines the task cannot be completed (missing tool, absent environment, denied permission), it submits a structured stop report — blocker, findings, risks, `recommendedNextAction` — delivered as a `partial` result that terminates the delegation loop without retry or escalation, with the mutation worktree retained for inspection.
 - **Host-bound expert lifetime** (`security.expertLifetime`, default `host-bound`): running experts are aborted automatically when the host session quits or is replaced, so orphaned experts never burn quota with no receiver; `detached` restores the old behavior.
-- **Failure results keep artifacts**: timed-out, session-error, and thrown-error results include `filesChanged` and the last assistant text, so a long timeout no longer returns an empty result.
+- **Failure results keep artifacts**: on writable runs, timed-out, session-error, and thrown-error results include `filesChanged` and the last assistant text, so a long timeout no longer returns an empty result. Read-only runs correctly report no `filesChanged` at all.
 - **State write-side clamp**: oversized arrays and text are truncated at the single persistence choke point, so a verbose expert can no longer write an unreadable state file.
 - **`expert_availability_reset`**: clear misrecorded or recovered availability markers by `*`/provider/`provider/id` without editing files or restarting.
 - **`expert_verify`**: run a bounded command plugin-side in a retained worktree or validated workspace and get the real exit code and output tail; `tests[]` now carry exit codes, counts, durations, and output tails.
@@ -42,9 +42,9 @@ The current version (0.8.2) includes:
 - Persistent council compositions: named rosters in `council-compositions.json` (roles may pin multiple models and reasoning levels), a first-build composition menu, session bindings, `model` pinning, and concurrent same-role dispatch.
 - Provider limits and concurrency: per-provider daily/weekly weighted-token caps (accounted in `usage-ledger.json` via `costMultiplier`) and concurrency limits from `route-policy.json`; excluded candidates report the reason.
 - Tiered runtime availability markers: dead models (24h), plan-quota exhaustion (6h, provider-wide), and **transient TPM/RPM throttling (2 minutes)** — throttling is no longer misread as quota exhaustion.
-- `council-config.json` operator configuration discovered by default in the data directory (no environment variable); `expert_inspect` returns its path and the effective mode so the Main Agent can edit it on request.
+- `council-config.json` operator configuration discovered by default in the data directory (no environment variable); `expert_inspect` returns its path, the effective provisioning mode, and the effective progress-visibility settings so the Main Agent can edit them on request.
 - A CLI with JSON output.
-- An MCP Server with 12 async semantic tools, event-driven completion waits, a feedback loop, and explicit worktree cleanup.
+- An MCP Server with 13 async semantic tools, event-driven completion waits, a feedback loop, and explicit worktree cleanup.
 - A native Pi Package.
 - Provider session-error pass-through: upstream refusals such as `403 AccessDenied` reach the Main Agent with real diagnostics and the correct failure type.
 - Cross-process shared model assessment: availability markers are visible to parallel instances without restarts.
@@ -119,7 +119,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.3 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -670,7 +670,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.3 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -696,7 +696,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.2 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.3 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -707,7 +707,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.2` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.3` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 

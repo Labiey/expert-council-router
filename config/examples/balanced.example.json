@@ -62,8 +62,7 @@
     },
     "observability": {
       "expertWindow": "events",
-      "streamToHost": true,
-      "redactToolArgs": true
+      "streamToHost": true
     },
     "workspaceProvisioning": {
       "mode": "auto",

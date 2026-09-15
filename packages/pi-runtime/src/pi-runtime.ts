@@ -1024,6 +1024,22 @@ export class PiExpertRuntime implements ExpertRuntime {
     if (!entry || (entry.interactionRounds ?? 0) >= maxRounds) {
       return { response: { ...autonomous, otherText: autonomous.otherText ?? "Interaction budget exhausted; decide autonomously and note the assumption." }, hostAbsent: true, exhausted: true };
     }
+    // Exactly one interaction may be open per execution. The host answers the single
+    // pendingInteraction slot, so a concurrent second request (two tool calls issued
+    // in one assistant turn) must not overwrite the first: that would leave the
+    // orphaned tool call hanging until the wait timeout while nothing shows it as
+    // answerable. Refuse it immediately with an explicit instruction, and do not
+    // charge the refusal against the round budget - the expert did get a real answer
+    // path for the interaction that is open.
+    if (entry.pendingInteraction) {
+      return {
+        response: request.kind === "decision"
+          ? { kind: "decision", otherText: "An interaction is already awaiting the Main Agent for this execution, so this one was not asked. Choose the most conservative reasonable option yourself, note the assumption in your risks, and do not ask again while one is open." }
+          : { kind: "tool_approval", scope: "reject" },
+        hostAbsent: true,
+        exhausted: false,
+      };
+    }
     entry.interactionRounds = (entry.interactionRounds ?? 0) + 1;
     const round = entry.interactionRounds;
     const openedAt = new Date().toISOString();

@@ -395,9 +395,13 @@ describe("configuration", () => {
   });
 
   it("defaults and validates security.observability", () => {
-    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true });
+    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true });
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "events" } } }).security.observability).toMatchObject({ expertWindow: "events", streamToHost: true });
     expect(() => parseCouncilConfig({ security: { observability: { expertWindow: "magic" } } })).toThrow(ConfigValidationError);
+    // The inert redactToolArgs key was removed (nothing ever surfaced tool arguments),
+    // but configs that still carry it must keep loading instead of failing validation.
+    expect(parseCouncilConfig({ security: { observability: { expertWindow: "events", redactToolArgs: false } } }).security.observability)
+      .toEqual({ expertWindow: "events", streamToHost: true });
   });
 });
 

@@ -231,13 +231,17 @@ export const councilConfigSchema = z.object({
       toolGrants: z.partialRecord(expertRoleSchema, z.array(z.string().min(1).max(60)).max(20)).default({}),
       expertLifetime: z.enum(["host-bound", "detached"]).default("host-bound"),
       /** Expert progress visibility. The pendingInteraction channel is always on (correctness). */
+      /**
+       * Expert progress visibility. `pendingInteraction` is always surfaced
+       * (correctness channel); this governs the optional live progress block.
+       * No tool arguments are ever surfaced, so there is nothing to redact here.
+       */
       observability: z
         .object({
           expertWindow: z.enum(["off", "events", "interactive"]).default("off"),
           streamToHost: z.boolean().default(true),
-          redactToolArgs: z.boolean().default(true),
         })
-        .default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
+        .default({ expertWindow: "off", streamToHost: true }),
       workspaceProvisioning: z
         .object({
           mode: z.enum(["auto", "none", "custom"]).default("none"),
@@ -268,7 +272,7 @@ export const councilConfigSchema = z.object({
       worktreeRetentionMs: 24 * 60 * 60_000,
       toolGrants: {},
       expertLifetime: "host-bound",
-      observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
+      observability: { expertWindow: "off", streamToHost: true },
       workspaceProvisioning: {
         mode: "none",
         strategy: "auto",

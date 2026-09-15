@@ -2,6 +2,32 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.3 - 2026-09-16
+
+### Fixed
+- **Two interactions raised in one assistant turn no longer orphan each other.** Role tools are a seed, not a ceiling — but until now only one request at a time could actually be served. An expert that issued two `request_decision`/`request_tool` calls in the same turn overwrote the single `pendingInteraction` slot: the first tool call kept waiting for an answer the host could no longer see, and only released when the 15-minute wait timeout expired. Exactly one interaction may now be open per execution: a concurrent second request is refused immediately with an explicit instruction to choose the conservative option and note the assumption, and the refusal is not charged against the per-execution round budget. A regression test drives the real custom-tool path with two concurrent requests and is verified in both directions (guard removed → fails, guard present → passes).
+
+### Changed
+- **`security.observability.redactToolArgs` removed.** It was accepted, validated, documented — and read by nothing, because no code path ever surfaced tool arguments. A control that changes nothing is worse than no control: it teaches operators to trust the wrong knob. Configurations that still carry the key continue to load unchanged (the `observability` block ignores unknown keys).
+- **`expert_inspect` now echoes the effective `security.observability` values** (`expertWindow`, `streamToHost`) and emits a warning when `expertWindow: "interactive"` is configured, since that tier has no distinct behavior until an RPC projection exists and otherwise silently behaves as `events`.
+
+### Documentation
+- Corrected the advertised MCP tool count: the MCP Server exposes **13** `expert_*` tools; the native Pi Package exposes **12** (`expert_wait` is MCP-only, because a Pi host can await natively). A new test asserts both READMEs' stated counts against the tool registry, so this class of drift cannot recur silently.
+- Stated precisely what the progress toggle does *not* gate: the `pendingInteraction` correctness channel and an explicit `expert_result(includeProgress)` snapshot are always available, so `expertWindow: "off"` means "no ambient progress stream", not "no way to see where an expert is". Also noted that read-only runs correctly report no `filesChanged`.
+
+### 中文
+
+### 修复
+- **同一助手轮次内发起两个交互不再互相孤儿化。** 角色工具是种子而非上限——但此前同一时刻只有一个请求真能被服务。专家在同一轮发出两个 `request_decision`/`request_tool` 时，会覆写唯一的 `pendingInteraction` 位：第一个工具调用继续等待一个宿主已看不见的答复，直到 15 分钟等待超时才释放。现在每次执行只允许一个未决交互：并发的第二个请求会被立即拒答，并附上“自行选择保守选项并记录假设”的明确指令，且不扣除该执行的交互轮次预算。回归测试以两个并发请求驱动真实 custom tool 路径，并双向反证（去掉守卫 → 红；守卫在位 → 绿）。
+
+### 变更
+- **移除 `security.observability.redactToolArgs`。** 它被接受、被校验、被写入文档，却没有任何代码读取它——因为根本没有任何路径会外抛工具入参。一个改变不了任何行为的开关比没有开关更糟：它会让运维者误信错误的旋钮。仍携带该键的配置照旧加载不变（`observability` 块忽略未知键）。
+- **`expert_inspect` 现在回显生效的 `security.observability` 值**（`expertWindow`、`streamToHost`），并在配置为 `interactive` 时给出告警——该档在 RPC 投影实现前并无独立行为，否则它只会静默等同 `events`。
+
+### 文档
+- 修正对外宣称的 MCP 工具数：MCP Server 暴露 **13** 个 `expert_*` 工具；原生 Pi Package 暴露 **12** 个（`expert_wait` 仅 MCP 提供，因为 Pi 宿主能原生等待）。新增测试将两份 README 所写的工具数对照工具注册表断言，使这类口径漂移无法悄悄重现。
+- 明说进度开关**不**约束哪些通道：`pendingInteraction` 正确性通道与宿主显式索取的 `expert_result(includeProgress)` 快照始终可用，所以 `expertWindow: "off"` 意为“不持续播报环境进度”，而非“无法得知专家跑到哪”。同时注明只读执行正确地不上报 `filesChanged`。
+
 ## 0.8.2 - 2026-09-15
 
 ### Fixed

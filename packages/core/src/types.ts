@@ -105,12 +105,19 @@ export interface WorkspaceProvisioningConfig {
 
 /** Expert progress visibility settings (security.observability). */
 export interface ObservabilityConfig {
-  /** "off" = minimal running view; "events" = bounded live progress; "interactive" = advanced (RPC projection, not implemented in 0.8.0). */
+  /**
+   * "off" = minimal running view; "events" = bounded live progress.
+   * "interactive" is accepted for forward compatibility but is not a distinct
+   * mode yet (no RPC projection): it behaves exactly as "events", and
+   * `expert_inspect` reports a warning so a host is never left guessing.
+   */
   expertWindow: "off" | "events" | "interactive";
-  /** Whether progress/interaction is streamed to the host through status/result views. */
+  /**
+   * Whether the bounded live progress block is surfaced in running views.
+   * The pendingInteraction channel is always on: it is a correctness channel,
+   * not an observability one.
+   */
   streamToHost: boolean;
-  /** Whether tool-argument summaries in surfaced events are redacted/bounded. */
-  redactToolArgs: boolean;
 }
 
 export interface RuntimeCapabilities {
@@ -683,7 +690,12 @@ export interface ResourceInventory {
   /** Saved council compositions and the session binding; omitted when the feature is unwired. */
   compositions?: ResourceCompositionsView;
   /** Operator configuration file location and the effective provisioning mode; helps hosts edit the file on request. */
-  operatorConfig?: { path?: string; provisioningMode: string };
+  operatorConfig?: {
+    path?: string;
+    provisioningMode: string;
+    /** Effective progress-visibility settings, so a host can see what the toggle actually does. */
+    observability?: { expertWindow: string; streamToHost: boolean };
+  };
   /** Per-provider caps, weighted usage, and in-flight counts; omitted when caps are unwired. */
   providerLimits?: ProviderLimitsView[];
   warnings: string[];

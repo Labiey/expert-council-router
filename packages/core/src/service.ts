@@ -335,10 +335,19 @@ export class ExpertCouncilService implements ExpertCouncil {
       operatorConfig: {
         ...(this.stateOptions.operatorConfigPath ? { path: this.stateOptions.operatorConfigPath } : {}),
         provisioningMode: this.config.security.workspaceProvisioning.mode,
+        observability: {
+          expertWindow: this.config.security.observability.expertWindow,
+          streamToHost: this.config.security.observability.streamToHost,
+        },
       },
       warnings: [
         ...(this.routePolicyWarning ? [this.routePolicyWarning] : []),
         ...(this.compositionsWarning ? [this.compositionsWarning] : []),
+        ...(this.config.security.observability.expertWindow === "interactive"
+          ? [
+            'security.observability.expertWindow = "interactive" has no distinct behavior yet (no RPC projection) and acts as "events".',
+          ]
+          : []),
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
         ...modelAvailabilityWarnings(this.modelAssessment, models),
