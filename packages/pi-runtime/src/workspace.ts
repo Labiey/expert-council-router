@@ -477,7 +477,13 @@ export class WorkspaceBoundary {
     const identity = typeof process.getuid === "function"
       ? `uid-${process.getuid()}`
       : createHash("sha256").update(userInfo().username).digest("hex").slice(0, 16);
-    return path.resolve(tmpdir(), `expert-council-worktrees-${identity}`);
+    // EXPERT_COUNCIL_WORKTREES redirects the parent directory (administrative
+    // input, like the other EXPERT_COUNCIL_* path flags) so operators can move
+    // worktrees off a short-path or slow volume, and tests can isolate
+    // themselves from the shared production namespace. The per-user private
+    // identity directory is always preserved.
+    const parent = (process.env.EXPERT_COUNCIL_WORKTREES ?? "").trim();
+    return path.resolve(parent || tmpdir(), `expert-council-worktrees-${identity}`);
   }
 
   private async secureWorktreeBase(): Promise<string> {

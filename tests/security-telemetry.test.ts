@@ -56,6 +56,37 @@ describe("workspace isolation", () => {
     }
   });
 
+  it("honors EXPERT_COUNCIL_WORKTREES as the worktree parent while keeping the private namespace", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "expert-council-repo-"));
+    const parent = await mkdtemp(path.join(tmpdir(), "expert-council-wt-parent-"));
+    const previous = process.env.EXPERT_COUNCIL_WORKTREES;
+    let created: string | undefined;
+    try {
+      await execFileAsync("git", ["init", repo]);
+      await execFileAsync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
+      await execFileAsync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
+      await writeFile(path.join(repo, "file.txt"), "before\n", "utf8");
+      await execFileAsync("git", ["-C", repo, "add", "file.txt"]);
+      await execFileAsync("git", ["-C", repo, "commit", "-m", "initial"]);
+      process.env.EXPERT_COUNCIL_WORKTREES = parent;
+      const config = parseCouncilConfig({ security: { workspaceStrategy: "auto", allowInPlaceMutations: false } });
+      const boundary = new WorkspaceBoundary(repo, config.security);
+      const prepared = await boundary.prepare(repo, false, `test-parent-${Date.now()}`);
+      created = prepared.root;
+      expect(prepared.isolated).toBe(true);
+      // The override moves the parent, but the per-user private subdirectory is
+      // still appended so a shared parent cannot mix experts' checkouts.
+      expect(prepared.root.startsWith(path.join(parent, "expert-council-worktrees-"))).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.EXPERT_COUNCIL_WORKTREES;
+      else process.env.EXPERT_COUNCIL_WORKTREES = previous;
+      if (created) await execFileAsync("git", ["-C", repo, "worktree", "remove", "--force", created]).catch(() => undefined);
+      await execFileAsync("git", ["-C", repo, "worktree", "prune"]).catch(() => undefined);
+      await rm(parent, { recursive: true, force: true, maxRetries: 3 });
+      await rm(repo, { recursive: true, force: true, maxRetries: 3 });
+    }
+  });
+
   it("reports fail-closed mutation capability with an actionable in-place opt-in", async () => {
     const directory = await mkdtemp(path.join(tmpdir(), "expert-council-nongit-"));
     try {

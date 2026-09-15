@@ -592,6 +592,7 @@ node packages/mcp-server/dist/bin.js
 - `EXPERT_COUNCIL_CONFIG`：用户 JSON 配置。
 - `EXPERT_COUNCIL_TELEMETRY`：本地遥测 JSONL 路径。
 - `EXPERT_COUNCIL_STATE`：持久化计划、执行和结果状态路径。
+- `EXPERT_COUNCIL_WORKTREES`：专家变更 worktree 的父目录（仍保留按用户隔离的私有子目录）；适用于短路径盘或更快的磁盘。
 - `EXPERT_COUNCIL_COMPOSITIONS`：已保存委员会编成的路径。
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`：同步 MCP 操作的有限超时，默认 30000 毫秒。
 - `PI_CODING_AGENT_MODULE`：自动解析失败时显式指定 Pi 包目录。

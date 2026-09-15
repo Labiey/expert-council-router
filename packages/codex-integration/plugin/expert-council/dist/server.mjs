@@ -318414,7 +318414,8 @@ var WorkspaceBoundary = class {
   }
   worktreeBasePath() {
     const identity = typeof process.getuid === "function" ? `uid-${process.getuid()}` : createHash2("sha256").update(userInfo().username).digest("hex").slice(0, 16);
-    return path25.resolve(tmpdir8(), `expert-council-worktrees-${identity}`);
+    const parent = (process.env.EXPERT_COUNCIL_WORKTREES ?? "").trim();
+    return path25.resolve(parent || tmpdir8(), `expert-council-worktrees-${identity}`);
   }
   async secureWorktreeBase() {
     const expected = this.worktreeBasePath();

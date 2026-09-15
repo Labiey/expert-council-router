@@ -596,6 +596,7 @@ Supported environment variables:
 - `EXPERT_COUNCIL_CONFIG`: user JSON configuration.
 - `EXPERT_COUNCIL_TELEMETRY`: local telemetry JSONL path.
 - `EXPERT_COUNCIL_STATE`: persisted plans, executions, and results state path.
+- `EXPERT_COUNCIL_WORKTREES`: parent directory for private expert mutation worktrees (the per-user private subdirectory is always kept); useful for short-path volumes or a faster disk.
 - `EXPERT_COUNCIL_COMPOSITIONS`: saved council compositions path.
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`: bounded timeout for synchronous MCP operations, 30000 ms by default.
 - `PI_CODING_AGENT_MODULE`: explicit Pi package directory when automatic resolution fails.
