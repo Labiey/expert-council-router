@@ -393,6 +393,8 @@ Roles are defined by task semantics and never bound to a model name:
 
 Tiny tasks use one Worker; normal tasks use Worker plus Verifier; complex features use Planner, Worker, Reviewer, and Verifier; complex debugging uses Scout, Debugger, Oracle, and Verifier. `maxExperts` caps team size, and the Main Agent is never duplicated as a redundant `lead` expert.
 
+Read-only experts run in the main workspace and therefore **never report `filesChanged`**: they have no mutation tool, so anything git-dirty there belongs to the Main Agent and attributing it to the expert would fabricate authorship. `expert_cleanup` on such a run answers `not-required` because no worktree exists. If you need changes made, dispatch an implementation-worker or debugger and review its isolated worktree instead.
+
 Task classification and all scoring math are deterministic. Hosts can inspect the selected model, alternatives, scores, and concise reasons before delegating. Council assembly also applies configurable diversity penalties; Reviewers prefer a different provider and inferred model family from earlier members when economical, but role fit and hard constraints still dominate.
 
 ## Routing pipeline
