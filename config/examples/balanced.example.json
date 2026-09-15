@@ -57,8 +57,18 @@
     "allowedWorkspaceRoots": [],
     "trustedSkills": [],
     "worktreeRetentionMs": 86400000,
+    "toolGrants": {
+      "scout": ["powershell"]
+    },
+    "observability": {
+      "expertWindow": "events",
+      "streamToHost": true,
+      "redactToolArgs": true
+    },
     "workspaceProvisioning": {
-      "mode": "none",
+      "mode": "auto",
+      "strategy": "auto",
+      "runtimeEnv": "isolated",
       "timeoutMs": 600000,
       "maxConcurrent": 1,
       "scrubEnv": true,

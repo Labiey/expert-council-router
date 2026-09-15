@@ -880,6 +880,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       escalationCount: escalations,
       attempts: Math.max(1, state.attempts),
       hostType: runtimeCapabilities.hostType,
+      ...(typeof result.executionMetadata?.interactionRounds === "number" ? { interactionRounds: result.executionMetadata.interactionRounds } : {}),
       ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
     });
     return result;

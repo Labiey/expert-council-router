@@ -17,8 +17,13 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.7.10) includes:
+The current version (0.8.0) includes:
 
+- **Interactive experts**: a running expert can pause on a major, hard-to-reverse, or ambiguous decision and present 2-4 recommended options (+ optional free text) to the Main Agent through `request_decision`; the host answers with `expert_respond` and the expert continues in the **same session**. Non-terminal — distinct from `report_and_stop`.
+- **Dynamic tool permissions**: preset role tools are a **seed, not a ceiling**. An expert requests a missing tool via `request_tool`; the host grants `once` (auto-revoked after one use), `persistent` (this session), or `reject`. `security.toolGrants` gives operator-defined persistent per-role grants. A read-only execution can never be escalated to a mutating/shell tool (isolation guarantee).
+- **Interaction discovery on a correctness channel**: an open interaction surfaces as `pendingInteraction` in `expert_status(view:"running")` and `expert_result(includeProgress)`, so headless hosts (Codex/MCP, no server-push) poll and answer; bounded per execution (default 3 rounds + wait timeout).
+- **Cross-language environments**: `provisionWorkspace` is no longer Node-only. A driver registry materializes node/pnpm/yarn/bun, python (uv/poetry/host venv), rust, go, jvm/maven, dotnet, ruby, php, elixir from each toolchain's already-global download cache. Environment-as-code backends (`flake.nix`, `.devcontainer/`) are detected and delegated, not re-implemented. New `security.workspaceProvisioning.strategy` (`auto`/`drivers`/`as-code`/`in-place`) and `runtimeEnv` (`isolated`/`host-env`); concurrent worktrees never share a recompiled target directory.
+- **Progress observability toggle**: `security.observability.expertWindow` (`off` default / `events` / `interactive`) surfaces bounded live progress in the running view.
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
 - Per-expert hard tool allowlists and installed-Skill filtering.
@@ -103,7 +108,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the ten semantic tools. To upgrade later:
+`pi list` should show `npm:@expert-council/pi-package` and its resolved directory; a newly started verbose Pi session should load `dist/extension.js`, the `expert-council` Skill, and the twelve semantic tools. To upgrade later:
 
 ```bash
 pi update npm:@expert-council/pi-package
@@ -114,7 +119,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.10 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -494,7 +499,7 @@ Common flags:
 
 ## MCP Server
 
-The MCP surface is deliberately limited to ten semantic tools:
+The MCP surface is deliberately limited to thirteen semantic tools:
 
 - `expert_inspect`
 - `expert_build`
@@ -506,6 +511,11 @@ The MCP surface is deliberately limited to ten semantic tools:
 - `expert_cleanup`
 - `expert_escalate`
 - `expert_status`
+- `expert_availability_reset`
+- `expert_verify`
+- `expert_respond`
+
+`expert_respond` answers a running expert's open `pendingInteraction` (a `request_decision` choice or a `request_tool` grant) so its session continues; a headless host discovers open interactions by polling `expert_status` with `view: "running"` or `expert_result` with `includeProgress`.
 
 `expert_inspect` and `expert_build` return compact host-facing views by default. Pass `detail: "full"` only when exact model metadata, alternatives, scores, tools, or Skills are genuinely required.
 
@@ -605,7 +615,7 @@ pi list
 pi --verbose
 ```
 
-`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the ten semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
+`pi list` should show the configured source and its resolved absolute package directory. A newly started verbose Pi session should list `dist/extension.js`, the `expert-council` Skill, and the twelve semantic tools without `expert_wait`. Running Pi processes do not hot-reload a rebuilt or removed package.
 
 Or load it for one run without persisting:
 
@@ -632,7 +642,7 @@ pi list
 
 If removal runs through Pi's Bash-compatible shell, use the forward-slash absolute path printed by `pi list`, for example `pi remove "C:/path/to/ExpertCouncil/packages/pi-package"`. Do not copy the indented relative source shown by `pi list` unless the command is resolved from the same settings-directory context.
 
-Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the ten semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
+Pi loads `dist/extension.js` and the synchronized `expert-council` Skill through the package manifest's `pi.extensions` and `pi.skills`. The extension registers the twelve semantic tools; because native Pi already provides completion `steer`/`followUp`, the MCP-only `expert_wait` is omitted. It contains no second routing implementation.
 
 Pi delegation is non-blocking; a single call can start up to eight independent background assignments before returning. When an expert finishes, the extension sends compact JSON containing the completed `executionId` and, only when supplied at dispatch, the `taskDescription`; it never carries feedback directly. Notifications use `steer` while the Main Agent is working and a `triggerTurn` `followUp` when it is idle. The Main Agent then calls `expert_result` for the structured feedback. Dispatch the entire ready batch before ending the turn, and avoid polling or silently waiting afterwards.
 
@@ -657,7 +667,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.7.10 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -683,7 +693,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.7.10 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.0 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -694,7 +704,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all ten `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.7.6` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.0` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 

@@ -915,7 +915,11 @@ export class PiExpertRuntime implements ExpertRuntime {
       if (workspace.limitations?.length) {
         result = { ...result, risks: [...workspace.limitations, ...(result.risks ?? [])].slice(0, 20) };
       }
-      result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
+      result.executionMetadata = {
+        ...result.executionMetadata,
+        durationMs: Date.now() - started,
+        ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),
+      };
       return result;
     } catch (error) {
       const evidence = await this.collectFailureEvidence(session, workspace);

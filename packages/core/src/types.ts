@@ -191,6 +191,8 @@ export interface ExpertResult {
     unavailableModels?: string[];
     /** True when the expert itself stopped via report_and_stop (task impossible with the assigned tools/workspace). */
     stoppedByExpert?: boolean;
+    /** Decision and tool-approval interactions raised by the expert during this execution. */
+    interactionRounds?: number;
     /** Outcome of runtime worktree provisioning for this attempt. */
     provisioning?: {
       status: "ready" | "skipped" | "failed";
@@ -625,6 +627,8 @@ export interface ExpertOutcome {
   verificationPassed?: boolean;
   escalationCount: number;
   attempts: number;
+  /** Decision/tool-approval interactions raised during the execution, for routing telemetry. */
+  interactionRounds?: number;
   hostType: string;
   approximateUsage?: {
     inputTokens?: number;

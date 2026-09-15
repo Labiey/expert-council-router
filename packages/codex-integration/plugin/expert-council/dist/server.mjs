@@ -312331,6 +312331,7 @@ var ExpertCouncilService = class {
       escalationCount: escalations,
       attempts: Math.max(1, state2.attempts),
       hostType: runtimeCapabilities.hostType,
+      ...typeof result.executionMetadata?.interactionRounds === "number" ? { interactionRounds: result.executionMetadata.interactionRounds } : {},
       ...approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}
     });
     return result;
@@ -319435,7 +319436,11 @@ ${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
       if (workspace.limitations?.length) {
         result = { ...result, risks: [...workspace.limitations, ...result.risks ?? []].slice(0, 20) };
       }
-      result.executionMetadata = { ...result.executionMetadata, durationMs: Date.now() - started };
+      result.executionMetadata = {
+        ...result.executionMetadata,
+        durationMs: Date.now() - started,
+        ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}
+      };
       return result;
     } catch (error61) {
       const evidence = await this.collectFailureEvidence(session, workspace);
@@ -320002,7 +320007,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.7.10" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.8.0" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

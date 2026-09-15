@@ -2,6 +2,42 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.0 - 2026-09-11
+
+### Added — Interactive experts, dynamic permissions, cross-language environments
+
+- **Real-time decision points.** Experts can pause mid-task on a genuinely major, hard-to-reverse, or ambiguous direction and present 2-4 recommended options (plus optional free text) to the Main Agent via a new `request_decision` tool; the Main Agent answers with the new `expert_respond` tool and the expert continues in the **same session** with its context and file work intact. Non-terminal by design — distinct from `report_and_stop` (task impossible).
+- **Dynamic tool permissions.** Preset role tools are now a starting **seed, not a ceiling**. An expert that needs a tool its role lacks calls `request_tool`; the Main Agent grants `once` (auto-revoked after a single use), `persistent` (for the rest of the session), or `reject`. `security.toolGrants` provides operator-defined persistent per-role grants applied at session start. A read-only execution can **never** be escalated to a mutating or shell tool — that would break the isolation guarantee, since read-only experts run in the main workspace.
+- **Expert interaction is surfaced on a correctness channel.** A running expert's open interaction appears in `expert_status(view:"running")` and `expert_result(includeProgress)` as `pendingInteraction`, so a headless host (Codex/MCP, which has no server-push) discovers it by polling and answers it. Interactions are bounded per execution (default 3 rounds, a wait timeout) and never wedge a run.
+- **Cross-language environments.** `provisionWorkspace` is no longer Node-only. A data-driven driver registry materializes mainstream ecosystems from each toolchain's already-global download cache (pnpm store, `~/.cargo`, `GOMODCACHE`, `~/.m2`, `~/.nuget`, pip/uv cache, bundler, composer, hex): node/pnpm/yarn/bun, python (uv/poetry/venv-host), rust, go, jvm/maven, dotnet, ruby, php, elixir. Environment-as-code backends (`flake.nix`, `.devcontainer/`) are detected and surfaced for delegation rather than re-implemented. `security.workspaceProvisioning` gains `strategy` (auto/drivers/as-code/in-place) and `runtimeEnv` (isolated/host-env). A worktree never shares a recompiled build/target directory across concurrent experts (cargo locks its target).
+- **Progress observability toggle.** `security.observability.expertWindow` (`off` default / `events` / `interactive`) surfaces bounded live progress (message count, last activity) in the running view; `events` mode adds it, the pending-interaction channel stays on regardless. `interactive` (RPC projection) is intentionally not implemented in 0.8.0.
+- **Telemetry** records `interactionRounds` per execution to inform routing.
+
+### Changed
+- `expert_status` running/summary views are async-enriched with live interaction and (when enabled) progress.
+- MCP / Pi-package / CLI all expose `expert_respond`; the CLI gains `respond`.
+
+### Notes
+- Built on verified Pi primitives: `session.steer/followUp/subscribe/setActiveToolsByName`, custom-tool resolve (same template as `report_and_stop`). The passive tool-call block (auto-raising approval on an un-granted built-in) degrades to the expert proactively calling `request_tool`, since it cannot invoke a tool that is not in its active set — documented rather than faked.
+
+## 0.8.0（中文）
+
+### 新增 — 交互式专家、动态权限、跨语言环境
+
+- **实时决策点**：专家可在真正重大、难以回退或方向含糊处暂停，通过新 `request_decision` 工具向主代理给出 2-4 个推荐选项（含可选自由文本）；主代理用新 `expert_respond` 回答，专家在**同一会话**带上下文与已改文件继续。设计上非终止，与 `report_and_stop`（任务不可完成）区分。
+- **动态工具权限**：预设角色工具现为起始**种子而非上限**。缺工具的专家调 `request_tool`，主代理授予 `once`（用一次后自动撤销）/`persistent`（会话内持久）/`reject`。`security.toolGrants` 提供运维侧持久按角色授予，会话起始并入。只读执行**永不**可升级为变更/shell 工具——那会破坏隔离保证（只读专家在主工作区运行）。
+- **交互经正确性通道浮现**：运行中专家的未决交互以 `pendingInteraction` 出现在 `expert_status(view:"running")` 与 `expert_result(includeProgress)`，无推送的无头宿主（Codex/MCP）可轮询发现并回答。每执行交互次数有界（默认 3 轮 + 等待超时），绝不卡死。
+- **跨语言环境**：`provisionWorkspace` 不再只支持 Node。数据驱动注册表从各工具链**已有的全局下载缓存**（pnpm store、`~/.cargo`、`GOMODCACHE`、`~/.m2`、`~/.nuget`、pip/uv 缓存、bundler、composer、hex）物化主流生态：node/pnpm/yarn/bun、python(uv/poetry/宿主venv)、rust、go、jvm/maven、dotnet、ruby、php、elixir。环境即代码后端（`flake.nix`、`.devcontainer/`）被检测并交还委托而非重造。`security.workspaceProvisioning` 新增 `strategy`（auto/drivers/as-code/in-place）与 `runtimeEnv`（isolated/host-env）。并发专家间绝不共享重编译 target 目录（cargo 对其持锁）。
+- **进度可观测开关**：`security.observability.expertWindow`（默认 `off` / `events` / `interactive`）在 running 视图浮现轻量进度（消息数、最近活动）；`events` 档开启之，未决交互通道则始终开启。`interactive`（RPC 投影）0.8.0 有意未实现。
+- **遥测**记录每执行 `interactionRounds` 供路由参考。
+
+### 变更
+- `expert_status` running/summary 视图异步富集实时交互与（开启时）进度。
+- MCP / Pi 包 / CLI 均提供 `expert_respond`；CLI 新增 `respond`。
+
+### 说明
+- 构建于已核实的 Pi 原语：`session.steer/followUp/subscribe/setActiveToolsByName`、custom-tool resolve（与 `report_and_stop` 同模板）。被动工具门（在未授权内建工具被调用时自动弹审批）降级为专家主动调 `request_tool`（未激活的工具本就无法被调用）——如实文档化而非假装。
+
 ## 0.7.10 - 2026-09-11
 
 ### Fixed
