@@ -512,6 +512,28 @@ export default function expertCouncilExtension(
     },
   });
 
+  pi.registerTool({
+    name: "expert_respond",
+    label: "Respond to an Expert Interaction",
+    description: "Answer a running expert's pending interaction so its blocked turn continues in the same session. Discover the open interaction via expert_status (view=running) or expert_result (includeProgress). For a decision set kind=decision and give choice (an option label shown to you) or otherText; for a tool approval set kind=tool_approval and scope=once|persistent|reject.",
+    parameters: Type.Object({
+      executionId: ExecutionIdentifier,
+      response: Type.Object({
+        kind: Type.Union([Type.Literal("decision"), Type.Literal("tool_approval")]),
+        choice: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+        otherText: Type.Optional(Type.String({ minLength: 1, maxLength: 4_000 })),
+        scope: Type.Optional(Type.Union([Type.Literal("once"), Type.Literal("persistent"), Type.Literal("reject")])),
+      }),
+    }),
+    async execute(_id, params, signal, _update, ctx) {
+      signal?.throwIfAborted();
+      return output(await (await getCouncil(ctx.cwd)).respondToInteraction({
+        executionId: params.executionId,
+        response: params.response,
+      }));
+    },
+  });
+
   // Expert sessions share the host session's lifetime by default
   // (security.expertLifetime: "host-bound"): when Pi tears this session down
   // (quit, or replacement by new/resume/fork), running experts are aborted so

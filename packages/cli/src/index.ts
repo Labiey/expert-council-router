@@ -57,7 +57,7 @@ function positional(args: string[]): string[] {
 
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
-  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
+  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -187,6 +187,33 @@ export async function runCli(
           ...(ws ? { workspace: ws } : {}),
           command: parsed as string[],
           ...(verifyTimeout ? { timeoutMs: verifyTimeout } : {}),
+        });
+        break;
+      }
+      case "respond": {
+        const executionId = values[0];
+        if (!executionId || !/^[a-zA-Z0-9_-]{1,200}$/.test(executionId)) throw new Error("respond requires a valid execution ID");
+        const kind = option(args, "--kind");
+        if (kind !== "decision" && kind !== "tool_approval") {
+          throw new Error("respond requires --kind decision|tool_approval");
+        }
+        const choice = option(args, "--choice");
+        const other = option(args, "--other");
+        const scope = option(args, "--scope");
+        if (kind === "decision" && !choice && !other) {
+          throw new Error("respond --kind decision requires --choice or --other");
+        }
+        if (kind === "tool_approval" && !["once", "persistent", "reject"].includes(scope ?? "")) {
+          throw new Error("respond --kind tool_approval requires --scope once|persistent|reject");
+        }
+        result = await service.respondToInteraction({
+          executionId,
+          response: {
+            kind,
+            ...(choice ? { choice: bounded(choice, "choice", 500) } : {}),
+            ...(other ? { otherText: bounded(other, "other", 4_000) } : {}),
+            ...(scope ? { scope: scope as "once" | "persistent" | "reject" } : {}),
+          },
         });
         break;
       }

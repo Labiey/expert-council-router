@@ -5,6 +5,8 @@ import type {
   ExpertExecutionRequest,
   ExpertResult,
   ExpertRuntime,
+  InteractionResponse,
+  RespondToInteractionResult,
   RuntimeCapabilities,
   SkillInfo,
 } from "../packages/core/src/index.js";
@@ -37,6 +39,9 @@ export class MockRuntime implements ExpertRuntime {
   readonly requests: ExpertExecutionRequest[] = [];
   readonly capabilityRequests: Array<string | undefined> = [];
   readonly abortCalls: Array<{ executionId: string; reason?: string }> = [];
+  readonly interactionCalls: Array<{ executionId: string; response: InteractionResponse }> = [];
+  /** Configurable canned result returned by respondToInteraction; defaults to resolved. */
+  respondToResult: RespondToInteractionResult = { executionId: "", status: "resolved", kind: "decision" };
 
   async abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult> {
     this.abortCalls.push({ executionId: request.executionId, ...(request.reason ? { reason: request.reason } : {}) });
@@ -77,5 +82,14 @@ export class MockRuntime implements ExpertRuntime {
   async getCapabilities(cwd?: string) {
     this.capabilityRequests.push(cwd);
     return this.runtimeCapabilities;
+  }
+
+  async inspectExecution(executionId: string) {
+    return undefined;
+  }
+
+  async respondToInteraction(executionId: string, response: InteractionResponse): Promise<RespondToInteractionResult> {
+    this.interactionCalls.push({ executionId, response });
+    return { ...this.respondToResult, executionId };
   }
 }

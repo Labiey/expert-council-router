@@ -12,12 +12,20 @@ export interface PiModelRuntimeLike {
 }
 
 export interface PiSessionLike {
-  prompt(text: string): Promise<void>;
+  prompt(text: string, options?: { streamingBehavior?: "steer" | "followUp" }): Promise<void>;
   waitForIdle?(): Promise<void>;
   abort?(): Promise<void>;
   dispose(): void;
   getAvailableThinkingLevels?(): string[];
   setThinkingLevel?(level: string): void;
+  /** Subscribe to the agent event stream; returns an unsubscribe function. */
+  subscribe?(listener: (event: unknown) => void): () => void;
+  /** Queue a steering message that interrupts the running turn. */
+  steer?(text: string): Promise<void>;
+  /** Queue a message delivered once the agent has no more tool/steering work. */
+  followUp?(text: string): Promise<void>;
+  /** Replace the active built-in/custom tool set at runtime (dynamic tool permissions). */
+  setActiveToolsByName?(toolNames: string[]): void;
   readonly messages?: readonly unknown[];
   readonly state?: { messages?: readonly unknown[] };
 }

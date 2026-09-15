@@ -312636,6 +312636,22 @@ var ExpertCouncilService = class {
     return void 0;
   }
   /**
+   * Resolve a running expert's pending interaction so its blocked turn continues.
+   * Delegates to the runtime; an unsupported runtime or finished execution is a
+   * structured result, never a thrown error, so a headless host polling the
+   * running view can safely attempt a response.
+   */
+  async respondToInteraction(request) {
+    if (!this.runtime.respondToInteraction) {
+      return { executionId: request.executionId, status: "not-found", message: "The runtime does not support interactive responses." };
+    }
+    return await this.runtime.respondToInteraction(request.executionId, request.response).catch((error61) => ({
+      executionId: request.executionId,
+      status: "not-found",
+      message: error61 instanceof Error ? error61.message : String(error61)
+    }));
+  }
+  /**
    * Bounded verification command passthrough to the runtime. Always resolves:
    * an unsupported runtime is a structured message, never a thrown error.
    */
@@ -312770,9 +312786,9 @@ var ExpertCouncilService = class {
     return decideEscalation(request, ranked.candidates, this.config.retry.correctedRetriesPerModel);
   }
   /** Bounded running-execution views shared by the summary and running status views. */
-  runningExecutionViews() {
+  async runningExecutionViews() {
     const now = Date.now();
-    return [...this.executions.values()].filter((execution2) => execution2.status === "running").map((execution2) => {
+    const base = [...this.executions.values()].filter((execution2) => execution2.status === "running").map((execution2) => {
       const elapsedMs = Math.max(0, now - Date.parse(execution2.startedAt));
       return {
         id: execution2.id,
@@ -312783,6 +312799,10 @@ var ExpertCouncilService = class {
         ...typeof execution2.timeoutMs === "number" ? { remainingMs: Math.max(0, execution2.timeoutMs - elapsedMs) } : {}
       };
     });
+    return await Promise.all(base.map(async (view) => {
+      const progress = await this.runtime.inspectExecution?.(view.id).catch(() => void 0);
+      return progress?.pendingInteraction ? { ...view, pendingInteraction: progress.pendingInteraction } : view;
+    }));
   }
   /**
    * Live provider concurrency slots for the summary view, from the same limits
@@ -312811,7 +312831,7 @@ var ExpertCouncilService = class {
   async getStatus(options) {
     const view = options?.view ?? "full";
     if (view === "running") {
-      return { running: this.runningExecutionViews() };
+      return { running: await this.runningExecutionViews() };
     }
     if (view === "summary") {
       const recentCompleted = [...this.executions.values()].filter((execution2) => execution2.finishedAt).sort((a, b2) => Date.parse(b2.finishedAt) - Date.parse(a.finishedAt)).slice(0, 20).map((execution2) => ({
@@ -312822,7 +312842,7 @@ var ExpertCouncilService = class {
         ...execution2.finishedAt ? { finishedAt: execution2.finishedAt } : {}
       }));
       return {
-        running: this.runningExecutionViews(),
+        running: await this.runningExecutionViews(),
         recentCompleted,
         providerSlots: await this.providerSlotViews()
       };
@@ -318949,6 +318969,7 @@ ${request.task}
 - Verify paths rather than guessing.
 - ${dependencyGuidance(provisioning)}
 - If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.
+- For a genuinely major, hard-to-reverse, or ambiguous direction the task did not settle, call request_decision with 2-4 recommended options (best first); the Main Agent will choose and you continue in this same session. Do NOT use it for routine choices you can decide yourself.
 - Diagnose a failed tool call before retrying with a changed approach.
 - Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.
 - Do not reveal or request chain-of-thought.
@@ -318963,6 +318984,8 @@ var PiExpertRuntime = class _PiExpertRuntime {
   packageName;
   boundary;
   activeSessions = /* @__PURE__ */ new Map();
+  /** Marks executions whose current interaction was answered by the host (vs. by the wait timeout). */
+  lastHostResponded = /* @__PURE__ */ new Map();
   skillDiscoveryWarning;
   constructor(sdk, models, options, packageName) {
     this.sdk = sdk;
@@ -319063,6 +319086,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       ...workspace.sourceWorkspaceDirty !== void 0 ? { sourceWorkspaceDirty: workspace.sourceWorkspaceDirty } : {},
       workspaceProvisioning: { mode: provisioningMode },
       supportedTools: process.platform === "win32" ? ["read", "grep", "find", "ls", "edit", "write", "powershell"] : ["read", "grep", "find", "ls", "edit", "write", "bash"],
+      realtimeInteraction: true,
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : [],
@@ -319149,12 +319173,49 @@ var PiExpertRuntime = class _PiExpertRuntime {
           };
         }
       };
+      const decisionTool = {
+        name: "request_decision",
+        description: "Ask the Main Agent to decide between approaches before you continue. Use it only for a major, hard-to-reverse, or genuinely ambiguous direction that the task did not resolve, or a hard blocker you cannot sensibly pick through. Do NOT use it for routine choices. Provide up to four recommended options; the Main Agent may also give free-text guidance. After the tool returns, continue the task with the decision applied.",
+        parameters: typebox_exports2.Object({
+          question: typebox_exports2.String({ description: "The decision you need, in one or two sentences." }),
+          options: typebox_exports2.Array(typebox_exports2.Object({
+            label: typebox_exports2.String({ description: "Short option name (1-5 words)." }),
+            description: typebox_exports2.Optional(typebox_exports2.String({ description: "Impact/tradeoff of choosing this option." }))
+          }), { minItems: 2, maxItems: 4, description: "Recommended options, best first." }),
+          allowOther: typebox_exports2.Optional(typebox_exports2.Boolean({ description: "Allow a free-text 'Others' answer. Defaults to true." })),
+          context: typebox_exports2.Optional(typebox_exports2.String({ description: "Concise context that makes the tradeoff legible to the Main Agent." }))
+        }),
+        execute: async (_toolCallId, params) => {
+          const options = Array.isArray(params.options) ? params.options.slice(0, 4).map((item) => {
+            const o = item ?? {};
+            const label = String(o.label ?? "").slice(0, 120).trim();
+            const description = typeof o.description === "string" ? o.description.slice(0, 500) : void 0;
+            return { label, ...description ? { description } : {} };
+          }).filter((o) => o.label.length > 0) : [];
+          const req = {
+            kind: "decision",
+            question: String(params.question ?? "").slice(0, 2e3),
+            options,
+            allowOther: params.allowOther !== false,
+            ...typeof params.context === "string" ? { context: params.context.slice(0, 4e3) } : {}
+          };
+          const { response: response2, hostAbsent } = await this.beginInteraction(executionKey, req);
+          const answer = response2.otherText ?? response2.choice ?? "Proceed with the most conservative reasonable option.";
+          const header = hostAbsent ? "No Main-Agent answer arrived (budget or wait limit reached)." : "Main Agent decision:";
+          return {
+            content: [{ type: "text", text: `${header} ${answer}
+
+Apply this decision and continue the assigned task now. If the decision changed scope, adjust your plan and note any new risks.` }],
+            details: {}
+          };
+        }
+      };
       const created = await this.sdk.createAgentSession({
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools: [...tools, "report_and_stop"],
-        customTools: [stopTool],
+        tools: [...tools, "report_and_stop", "request_decision"],
+        customTools: [stopTool, decisionTool],
         ...resourceLoader ? { resourceLoader } : {},
         ...this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}
       });
@@ -319303,6 +319364,70 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
       return void 0;
     return await this.inspectEntry(executionId2, entry);
   }
+  /**
+   * Raise a non-terminal interaction (decision point or tool approval) and block
+   * the expert's turn until the Main Agent answers through `respondToInteraction`
+   * or a conservative bound is reached. This mirrors the in-process
+   * `report_and_stop` template but does NOT end the execution: the awaiting tool
+   * returns the answer to the same live session so the expert continues.
+   *
+   * Guards: a per-execution round cap (beyond it the expert is told to decide
+   * autonomously) and a wait timeout (the expert continues on the most
+   * conservative path). Both cap the blast radius of a headless host that never
+   * polls, so a blocked tool can never wedge the execution.
+   */
+  async beginInteraction(executionKey, request) {
+    const entry = this.activeSessions.get(executionKey);
+    const maxRounds = this.options.maxInteractionRounds ?? 3;
+    const timeoutMs = this.options.interactionTimeoutMs ?? 9e5;
+    const autonomous = request.kind === "decision" ? { kind: "decision", otherText: "No answer available \u2014 choose the most conservative reasonable option yourself and note the assumption in your risks." } : { kind: "tool_approval", scope: "reject" };
+    if (!entry || (entry.interactionRounds ?? 0) >= maxRounds) {
+      return { response: { ...autonomous, otherText: autonomous.otherText ?? "Interaction budget exhausted; decide autonomously and note the assumption." }, hostAbsent: true, exhausted: true };
+    }
+    entry.interactionRounds = (entry.interactionRounds ?? 0) + 1;
+    const round = entry.interactionRounds;
+    const openedAt = (/* @__PURE__ */ new Date()).toISOString();
+    entry.pendingInteraction = { request, openedAt, round };
+    const answer = await new Promise((resolve17) => {
+      const finish = (response2) => {
+        if (settled)
+          return;
+        settled = true;
+        if (timer)
+          clearTimeout(timer);
+        entry.pendingInteraction = void 0;
+        entry.resolveInteraction = void 0;
+        resolve17(response2);
+      };
+      let settled = false;
+      entry.resolveInteraction = finish;
+      const timer = setTimeout(() => finish(autonomous), timeoutMs);
+      void timer;
+    });
+    const hostAbsent = !this.lastHostResponded.get(executionKey);
+    this.lastHostResponded.delete(executionKey);
+    return { response: answer, hostAbsent, exhausted: false };
+  }
+  async respondToInteraction(executionId2, response2) {
+    const entry = this.activeSessions.get(executionId2);
+    if (!entry)
+      return { executionId: executionId2, status: "not-found" };
+    const pending = entry.pendingInteraction;
+    if (!pending)
+      return { executionId: executionId2, status: "no-pending" };
+    if (response2.kind !== pending.request.kind) {
+      return { executionId: executionId2, status: "kind-mismatch", kind: pending.request.kind, message: `Pending interaction is a '${pending.request.kind}'; the response declared '${response2.kind}'.` };
+    }
+    if (response2.kind === "tool_approval" && !response2.scope) {
+      return { executionId: executionId2, status: "kind-mismatch", kind: pending.request.kind, message: "tool_approval responses must set scope to once, persistent, or reject." };
+    }
+    if (response2.kind === "decision" && !response2.choice && !response2.otherText) {
+      return { executionId: executionId2, status: "kind-mismatch", kind: pending.request.kind, message: "decision responses must set choice or otherText." };
+    }
+    this.lastHostResponded.set(executionId2, true);
+    entry.resolveInteraction?.(response2);
+    return { executionId: executionId2, status: "resolved", kind: response2.kind };
+  }
   async inspectEntry(executionId2, entry) {
     if (!entry.session) {
       return {
@@ -319334,6 +319459,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
       ...text ? { lastAssistantText: safeText(text, 2e3) } : {},
       workspace: entry.workspace.root,
       isolated: entry.workspace.isolated,
+      ...entry.pendingInteraction ? { pendingInteraction: entry.pendingInteraction } : {},
       ...filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}
     };
   }
@@ -319704,6 +319830,15 @@ var MCP_INPUT_SCHEMAS = {
     workspace: boundedText2(32768).optional(),
     command: external_exports.array(external_exports.string().min(1).max(500)).min(1).max(12),
     timeoutMs: external_exports.number().int().min(1e3).max(6e5).optional()
+  },
+  expert_respond: {
+    executionId: executionIdentifier,
+    response: external_exports.object({
+      kind: external_exports.enum(["decision", "tool_approval"]),
+      choice: boundedText2(500).optional().describe("For a decision: the chosen option label, exactly as offered to you."),
+      otherText: boundedText2(4e3).optional().describe("For a decision: free-text guidance when none of the options fit."),
+      scope: external_exports.enum(["once", "persistent", "reject"]).optional().describe("For a tool_approval: grant the tool once, for the rest of the session, or reject.")
+    })
   }
 };
 function response(value3) {
@@ -319933,6 +320068,18 @@ function createMcpServerWithProvider(councilProvider) {
       command: input2.command,
       ...input2.timeoutMs ? { timeoutMs: input2.timeoutMs } : {}
     }), Math.max(MCP_TOOL_TIMEOUT_MS, 6e4)));
+  });
+  server2.registerTool("expert_respond", {
+    title: "Respond to an Expert Interaction",
+    description: "Answer a running expert's pending interaction so its blocked turn continues in the same session. Headless hosts discover the open interaction by polling expert_status (view=running) or expert_result (includeProgress) and see a pendingInteraction. For a decision, set kind=decision and provide choice (an option label you were shown) or otherText. For a tool approval, set kind=tool_approval and scope=once|persistent|reject. Returns not-found/no-pending if the execution has no open interaction.",
+    inputSchema: MCP_INPUT_SCHEMAS.expert_respond,
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
+  }, async (input2, extra) => {
+    const council = await councilProvider(extra);
+    return response(await withMcpTimeout(council.respondToInteraction({
+      executionId: input2.executionId,
+      response: input2.response
+    })));
   });
   return server2;
 }

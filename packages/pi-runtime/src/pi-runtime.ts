@@ -14,6 +14,10 @@ import {
   type ExpertRuntime,
   type ExecutionProgress,
   type FailureType,
+  type InteractionRequest,
+  type InteractionResponse,
+  type PendingInteraction,
+  type RespondToInteractionResult,
   type RuntimeBillingDiscovery,
   type RuntimeCapabilities,
   type SkillInfo,
@@ -39,6 +43,10 @@ export interface PiExpertRuntimeOptions {
   sdk?: PiSdkLike;
   modelRuntime?: PiModelRuntimeLike;
   packageName?: string;
+  /** Max decision/tool-approval interactions per execution before the expert is told to decide autonomously. Default 3. */
+  maxInteractionRounds?: number;
+  /** How long an expert may block awaiting a host response before continuing autonomously. Default 900000ms. */
+  interactionTimeoutMs?: number;
 }
 
 class ExecutionTimeoutError extends Error {}
@@ -391,7 +399,7 @@ function executionPrompt(
   roleInstructions: string,
   provisioning?: WorkspaceProvisioningStatus,
 ): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- For a genuinely major, hard-to-reverse, or ambiguous direction the task did not settle, call request_decision with 2-4 recommended options (best first); the Main Agent will choose and you continue in this same session. Do NOT use it for routine choices you can decide yourself.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
 }
 
 /** Structured stop report submitted by the expert through `report_and_stop`. */
@@ -417,11 +425,19 @@ interface ActiveExpertSession {
   forceSettle?: () => void;
   /** Resolved by the report_and_stop tool with the expert's structured report. */
   forceStop?: (report: ExpertStopReport) => void;
+  /** Live interaction the expert is blocked on, surfaced to the host through inspectEntry. */
+  pendingInteraction?: PendingInteraction;
+  /** Resolves the currently-awaited interaction with the host's answer. */
+  resolveInteraction?: (response: InteractionResponse) => void;
+  /** Interaction rounds consumed so far by this execution. */
+  interactionRounds?: number;
 }
 
 export class PiExpertRuntime implements ExpertRuntime {
   private readonly boundary: WorkspaceBoundary;
   private readonly activeSessions = new Map<string, ActiveExpertSession>();
+  /** Marks executions whose current interaction was answered by the host (vs. by the wait timeout). */
+  private readonly lastHostResponded = new Map<string, boolean>();
   private skillDiscoveryWarning?: string;
 
   private constructor(
@@ -548,6 +564,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       supportedTools: process.platform === "win32"
         ? ["read", "grep", "find", "ls", "edit", "write", "powershell"]
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
+      realtimeInteraction: true,
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
@@ -658,12 +675,58 @@ export class PiExpertRuntime implements ExpertRuntime {
           };
         },
       };
+      // request_decision lets the expert pause on a major direction choice or a
+      // hard problem, present recommended options (+ optional free-text) to the
+      // Main Agent, and continue in the SAME session after an answer. It reuses
+      // the report_and_stop resolve template but is non-terminal.
+      const decisionTool = {
+        name: "request_decision",
+        description:
+          "Ask the Main Agent to decide between approaches before you continue. Use it only for a major, hard-to-reverse, or genuinely ambiguous direction " +
+          "that the task did not resolve, or a hard blocker you cannot sensibly pick through. Do NOT use it for routine choices. " +
+          "Provide up to four recommended options; the Main Agent may also give free-text guidance. After the tool returns, continue the task with the decision applied.",
+        parameters: Type.Object({
+          question: Type.String({ description: "The decision you need, in one or two sentences." }),
+          options: Type.Array(Type.Object({
+            label: Type.String({ description: "Short option name (1-5 words)." }),
+            description: Type.Optional(Type.String({ description: "Impact/tradeoff of choosing this option." })),
+          }), { minItems: 2, maxItems: 4, description: "Recommended options, best first." }),
+          allowOther: Type.Optional(Type.Boolean({ description: "Allow a free-text 'Others' answer. Defaults to true." })),
+          context: Type.Optional(Type.String({ description: "Concise context that makes the tradeoff legible to the Main Agent." })),
+        }),
+        execute: async (_toolCallId: string, params: { question?: unknown; options?: unknown; allowOther?: unknown; context?: unknown }) => {
+          const options = Array.isArray(params.options)
+            ? params.options.slice(0, 4).map((item) => {
+              const o = (item ?? {}) as Record<string, unknown>;
+              const label = String(o.label ?? "").slice(0, 120).trim();
+              const description = typeof o.description === "string" ? o.description.slice(0, 500) : undefined;
+              return { label, ...(description ? { description } : {}) };
+            }).filter((o) => o.label.length > 0)
+            : [];
+          const req: InteractionRequest = {
+            kind: "decision",
+            question: String(params.question ?? "").slice(0, 2_000),
+            options,
+            allowOther: params.allowOther !== false,
+            ...(typeof params.context === "string" ? { context: params.context.slice(0, 4_000) } : {}),
+          };
+          const { response, hostAbsent } = await this.beginInteraction(executionKey, req);
+          const answer = response.otherText ?? response.choice ?? "Proceed with the most conservative reasonable option.";
+          const header = hostAbsent
+            ? "No Main-Agent answer arrived (budget or wait limit reached)."
+            : "Main Agent decision:";
+          return {
+            content: [{ type: "text", text: `${header} ${answer}\n\nApply this decision and continue the assigned task now. If the decision changed scope, adjust your plan and note any new risks.` }],
+            details: {},
+          };
+        },
+      };
       const created = await this.sdk.createAgentSession({
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools: [...tools, "report_and_stop"],
-        customTools: [stopTool],
+        tools: [...tools, "report_and_stop", "request_decision"],
+        customTools: [stopTool, decisionTool],
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
       });
@@ -837,6 +900,74 @@ export class PiExpertRuntime implements ExpertRuntime {
     return await this.inspectEntry(executionId, entry);
   }
 
+  /**
+   * Raise a non-terminal interaction (decision point or tool approval) and block
+   * the expert's turn until the Main Agent answers through `respondToInteraction`
+   * or a conservative bound is reached. This mirrors the in-process
+   * `report_and_stop` template but does NOT end the execution: the awaiting tool
+   * returns the answer to the same live session so the expert continues.
+   *
+   * Guards: a per-execution round cap (beyond it the expert is told to decide
+   * autonomously) and a wait timeout (the expert continues on the most
+   * conservative path). Both cap the blast radius of a headless host that never
+   * polls, so a blocked tool can never wedge the execution.
+   */
+  async beginInteraction(executionKey: string, request: InteractionRequest): Promise<{
+    response: InteractionResponse;
+    hostAbsent: boolean;
+    exhausted: boolean;
+  }> {
+    const entry = this.activeSessions.get(executionKey);
+    const maxRounds = this.options.maxInteractionRounds ?? 3;
+    const timeoutMs = this.options.interactionTimeoutMs ?? 900_000;
+    const autonomous: InteractionResponse = request.kind === "decision"
+      ? { kind: "decision", otherText: "No answer available — choose the most conservative reasonable option yourself and note the assumption in your risks." }
+      : { kind: "tool_approval", scope: "reject" };
+    if (!entry || (entry.interactionRounds ?? 0) >= maxRounds) {
+      return { response: { ...autonomous, otherText: autonomous.otherText ?? "Interaction budget exhausted; decide autonomously and note the assumption." }, hostAbsent: true, exhausted: true };
+    }
+    entry.interactionRounds = (entry.interactionRounds ?? 0) + 1;
+    const round = entry.interactionRounds;
+    const openedAt = new Date().toISOString();
+    entry.pendingInteraction = { request, openedAt, round };
+    const answer = await new Promise<InteractionResponse>((resolve) => {
+      const finish = (response: InteractionResponse) => {
+        if (settled) return;
+        settled = true;
+        if (timer) clearTimeout(timer);
+        entry.pendingInteraction = undefined;
+        entry.resolveInteraction = undefined;
+        resolve(response);
+      };
+      let settled = false;
+      entry.resolveInteraction = finish;
+      const timer = setTimeout(() => finish(autonomous), timeoutMs);
+      void timer;
+    });
+    const hostAbsent = !this.lastHostResponded.get(executionKey);
+    this.lastHostResponded.delete(executionKey);
+    return { response: answer, hostAbsent, exhausted: false };
+  }
+
+  async respondToInteraction(executionId: string, response: InteractionResponse): Promise<RespondToInteractionResult> {
+    const entry = this.activeSessions.get(executionId);
+    if (!entry) return { executionId, status: "not-found" };
+    const pending = entry.pendingInteraction;
+    if (!pending) return { executionId, status: "no-pending" };
+    if (response.kind !== pending.request.kind) {
+      return { executionId, status: "kind-mismatch", kind: pending.request.kind, message: `Pending interaction is a '${pending.request.kind}'; the response declared '${response.kind}'.` };
+    }
+    if (response.kind === "tool_approval" && !response.scope) {
+      return { executionId, status: "kind-mismatch", kind: pending.request.kind, message: "tool_approval responses must set scope to once, persistent, or reject." };
+    }
+    if (response.kind === "decision" && !response.choice && !response.otherText) {
+      return { executionId, status: "kind-mismatch", kind: pending.request.kind, message: "decision responses must set choice or otherText." };
+    }
+    this.lastHostResponded.set(executionId, true);
+    entry.resolveInteraction?.(response);
+    return { executionId, status: "resolved", kind: response.kind };
+  }
+
   private async inspectEntry(executionId: string, entry: ActiveExpertSession): Promise<ExecutionProgress> {
     // A pre-registered entry has no session until workspace preparation and
     // provisioning finish; report an empty progress snapshot for that phase.
@@ -871,6 +1002,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       ...(text ? { lastAssistantText: safeText(text, 2_000) } : {}),
       workspace: entry.workspace.root,
       isolated: entry.workspace.isolated,
+      ...(entry.pendingInteraction ? { pendingInteraction: entry.pendingInteraction } : {}),
       ...(filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}),
     };
   }

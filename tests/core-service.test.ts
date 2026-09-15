@@ -175,6 +175,28 @@ describe("retry and escalation", () => {
     });
   });
 
+  it("respondToInteraction delegates to the runtime and reports unsupported when the runtime lacks it", async () => {
+    const runtime = new MockRuntime([model("cheap", "one")]);
+    runtime.respondToResult = { executionId: "ignored", status: "resolved", kind: "tool_approval" };
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+
+    const result = await service.respondToInteraction({
+      executionId: "exec_1",
+      response: { kind: "tool_approval", scope: "persistent" },
+    });
+    expect(result).toEqual({ executionId: "exec_1", status: "resolved", kind: "tool_approval" });
+    expect(runtime.interactionCalls).toEqual([
+      { executionId: "exec_1", response: { kind: "tool_approval", scope: "persistent" } },
+    ]);
+
+    // A runtime without interactive support resolves a structured result, never a throw.
+    const plain = new MockRuntime([model("cheap", "one")]);
+    (plain as { respondToInteraction?: unknown }).respondToInteraction = undefined;
+    const service2 = new ExpertCouncilService(plain, { profiles: { models: profiles } });
+    expect(await service2.respondToInteraction({ executionId: "exec_2", response: { kind: "decision", otherText: "go" } }))
+      .toMatchObject({ executionId: "exec_2", status: "not-found" });
+  });
+
   it("waits without polling until any requested background execution completes", async () => {
     type Completed = { status: "success"; role: "reviewer"; model: string; summary: string };
     const finishers: Array<(result: Completed) => void> = [];

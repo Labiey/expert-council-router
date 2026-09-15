@@ -86,6 +86,16 @@ function mockCouncil(): ExpertCouncil {
     cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     escalate: async () => ({ action: "stop", reason: "done" }),
     getStatus: async () => ({ plans: [], executions: [], telemetry: [] }),
+    inspectExecution: async (executionId) => ({
+      executionId,
+      status: "running" as const,
+      role: "scout" as const,
+      model: "p/m",
+      startedAt: "2026-09-11T00:00:00.000Z",
+      elapsedMs: 0,
+      messageCount: 0,
+    }),
+    respondToInteraction: async ({ executionId, response }) => ({ executionId, status: "resolved" as const, kind: response.kind }),
     recordOutcome: async () => {},
   };
 }
@@ -174,7 +184,11 @@ describe("MCP semantic surface", () => {
       "expert_status",
       "expert_availability_reset",
       "expert_verify",
+      "expert_respond",
     ]);
+    expect(MCP_INPUT_SCHEMAS.expert_respond.response.shape.kind.safeParse("decision").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_respond.response.shape.scope.safeParse("once").success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_respond.response.shape.scope.safeParse("maybe").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_build.task.safeParse("fix race").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_build.constraints.unwrap().shape.costPolicy.safeParse("speed").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_build.modelAssessment.safeParse({

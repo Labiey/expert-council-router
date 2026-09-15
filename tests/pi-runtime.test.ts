@@ -282,7 +282,7 @@ describe("Pi runtime adapter", () => {
       cacheWriteTokens: 2,
       estimatedCost: 0.02,
     });
-    expect(sessionOptions?.tools).toEqual(["read", "grep", "report_and_stop"]);
+    expect(sessionOptions?.tools).toEqual(["read", "grep", "report_and_stop", "request_decision"]);
     expect((sessionOptions?.customTools as Array<{ name: string }> | undefined)?.[0]?.name).toBe("report_and_stop");
     expect(sessionOptions?.model).toBe(nativeModel);
   });
@@ -345,6 +345,103 @@ describe("Pi runtime adapter", () => {
     expect(result.findings).toEqual(["src/entry.ts exports run()", "tests use vitest"]);
     expect(result.recommendedNextAction).toBe("Dispatch with workspace provisioning enabled or run outside the isolated worktree.");
     expect(result.executionMetadata).toMatchObject({ failureType: "missing_context", stoppedByExpert: true, attempts: 1 });
+  });
+
+  it("surfaces a request_decision interaction, applies the host answer, and continues the same session", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    let decisionTool: { execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> } | undefined;
+    let toolText = "";
+    const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        decisionTool = custom.find((tool) => tool.name === "request_decision");
+        expect(decisionTool).toBeDefined();
+        expect((options.tools as string[]).includes("request_decision")).toBe(true);
+        return {
+          session: {
+            prompt: async () => {
+              const response = await decisionTool!.execute("t1", {
+                question: "Retry in place or dispatch a fresh worker?",
+                options: [{ label: "Retry in place", description: "keeps context" }, { label: "Fresh worker", description: "cleaner state" }],
+              });
+              toolText = response.content[0]!.text;
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: toolText }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            state,
+          },
+        };
+      },
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({}),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    const executionId = "exec_decision_test";
+    const running = runtime.executeExpert({
+      executionId,
+      role: "implementation-worker",
+      task: "Decide and proceed",
+      model: "p/m",
+      tools: ["read", "bash"],
+      skills: [],
+      reasoningLevel: "low",
+      readOnly: false,
+      workspace: process.cwd(),
+      timeoutMs: 20_000,
+      attempt: 1,
+    });
+    // Poll until the expert has raised the interaction (bounded, no fixed sleep race).
+    let progress = await runtime.inspectExecution(executionId);
+    for (let i = 0; i < 50 && !progress?.pendingInteraction; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      progress = await runtime.inspectExecution(executionId);
+    }
+    expect(progress?.pendingInteraction?.request.kind).toBe("decision");
+    expect(progress?.pendingInteraction?.request.options?.map((o) => o.label)).toEqual(["Retry in place", "Fresh worker"]);
+    // A kind-mismatch is rejected without resolving.
+    expect((await runtime.respondToInteraction(executionId, { kind: "tool_approval", scope: "once" })).status).toBe("kind-mismatch");
+    const resolved = await runtime.respondToInteraction(executionId, { kind: "decision", choice: "Retry in place" });
+    expect(resolved).toMatchObject({ status: "resolved", kind: "decision" });
+    const result = await running;
+    expect(result.status).toBe("success");
+    expect(toolText).toContain("Main Agent decision: Retry in place");
+    expect(result.summary).toContain("Retry in place");
+    // The interaction is cleared once answered.
+    expect((await runtime.inspectExecution(executionId))?.pendingInteraction).toBeUndefined();
+  });
+
+  it("respondToInteraction reports not-found for an unknown execution without throwing", async () => {
+    const modelRuntime = {
+      getAvailable: async () => [],
+      getModel: () => undefined,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async () => ({ session: { prompt: async () => {}, dispose: () => {}, state: { messages: [] } } }),
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({}),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    expect((await runtime.respondToInteraction("exec_missing", { kind: "decision", otherText: "x" })).status).toBe("not-found");
   });
 
   it("keeps expert sessions alive under security.expertLifetime detached and aborts them by default (host-bound)", async () => {

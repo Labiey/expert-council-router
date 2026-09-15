@@ -30,6 +30,7 @@ export const MCP_TOOL_NAMES = [
   "expert_status",
   "expert_availability_reset",
   "expert_verify",
+  "expert_respond",
 ] as const;
 
 const role = z.enum([
@@ -149,6 +150,15 @@ export const MCP_INPUT_SCHEMAS = {
     workspace: boundedText(32_768).optional(),
     command: z.array(z.string().min(1).max(500)).min(1).max(12),
     timeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+  },
+  expert_respond: {
+    executionId: executionIdentifier,
+    response: z.object({
+      kind: z.enum(["decision", "tool_approval"]),
+      choice: boundedText(500).optional().describe("For a decision: the chosen option label, exactly as offered to you."),
+      otherText: boundedText(4_000).optional().describe("For a decision: free-text guidance when none of the options fit."),
+      scope: z.enum(["once", "persistent", "reject"]).optional().describe("For a tool_approval: grant the tool once, for the rest of the session, or reject."),
+    }),
   },
 } as const;
 
@@ -456,6 +466,22 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
         command: input.command,
         ...(input.timeoutMs ? { timeoutMs: input.timeoutMs } : {}),
       }), Math.max(MCP_TOOL_TIMEOUT_MS, 60_000)));
+    },
+  );
+  server.registerTool(
+    "expert_respond",
+    {
+      title: "Respond to an Expert Interaction",
+      description: "Answer a running expert's pending interaction so its blocked turn continues in the same session. Headless hosts discover the open interaction by polling expert_status (view=running) or expert_result (includeProgress) and see a pendingInteraction. For a decision, set kind=decision and provide choice (an option label you were shown) or otherText. For a tool approval, set kind=tool_approval and scope=once|persistent|reject. Returns not-found/no-pending if the execution has no open interaction.",
+      inputSchema: MCP_INPUT_SCHEMAS.expert_respond,
+      annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+    },
+    async (input, extra) => {
+      const council = await councilProvider(extra);
+      return response(await withMcpTimeout(council.respondToInteraction({
+        executionId: input.executionId,
+        response: input.response,
+      })));
     },
   );
   return server;

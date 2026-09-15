@@ -46,6 +46,9 @@ import type {
   ProviderSlotView,
   ResetAvailabilityRequest,
   ResetAvailabilityResult,
+  InteractionResponse,
+  RespondToInteractionRequest,
+  RespondToInteractionResult,
   RunningExecutionView,
   VerifyCommandRequest,
   VerifyCommandResult,
@@ -1238,6 +1241,23 @@ export class ExpertCouncilService implements ExpertCouncil {
   }
 
   /**
+   * Resolve a running expert's pending interaction so its blocked turn continues.
+   * Delegates to the runtime; an unsupported runtime or finished execution is a
+   * structured result, never a thrown error, so a headless host polling the
+   * running view can safely attempt a response.
+   */
+  async respondToInteraction(request: RespondToInteractionRequest): Promise<RespondToInteractionResult> {
+    if (!this.runtime.respondToInteraction) {
+      return { executionId: request.executionId, status: "not-found", message: "The runtime does not support interactive responses." };
+    }
+    return await this.runtime.respondToInteraction(request.executionId, request.response).catch((error: unknown) => ({
+      executionId: request.executionId,
+      status: "not-found" as const,
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  }
+
+  /**
    * Bounded verification command passthrough to the runtime. Always resolves:
    * an unsupported runtime is a structured message, never a thrown error.
    */
@@ -1391,9 +1411,9 @@ export class ExpertCouncilService implements ExpertCouncil {
   }
 
   /** Bounded running-execution views shared by the summary and running status views. */
-  private runningExecutionViews(): RunningExecutionView[] {
+  private async runningExecutionViews(): Promise<RunningExecutionView[]> {
     const now = Date.now();
-    return [...this.executions.values()]
+    const base = [...this.executions.values()]
       .filter((execution) => execution.status === "running")
       .map((execution) => {
         const elapsedMs = Math.max(0, now - Date.parse(execution.startedAt));
@@ -1406,6 +1426,13 @@ export class ExpertCouncilService implements ExpertCouncil {
           ...(typeof execution.timeoutMs === "number" ? { remainingMs: Math.max(0, execution.timeoutMs - elapsedMs) } : {}),
         };
       });
+    // Attach the live interaction the expert is blocked on, when any. This is a
+    // correctness channel (a headless host discovers pending work here), so it is
+    // surfaced regardless of the observability toggle and best-effort per execution.
+    return await Promise.all(base.map(async (view) => {
+      const progress = await this.runtime.inspectExecution?.(view.id).catch(() => undefined);
+      return progress?.pendingInteraction ? { ...view, pendingInteraction: progress.pendingInteraction } : view;
+    }));
   }
 
   /**
@@ -1435,7 +1462,7 @@ export class ExpertCouncilService implements ExpertCouncil {
   async getStatus<V extends CouncilStatusView = "full">(options?: { view?: V }): Promise<CouncilStatusViewResult<V>> {
     const view = options?.view ?? "full";
     if (view === "running") {
-      return { running: this.runningExecutionViews() } as CouncilStatusViewResult<V>;
+      return { running: await this.runningExecutionViews() } as CouncilStatusViewResult<V>;
     }
     if (view === "summary") {
       const recentCompleted = [...this.executions.values()]
@@ -1450,7 +1477,7 @@ export class ExpertCouncilService implements ExpertCouncil {
           ...(execution.finishedAt ? { finishedAt: execution.finishedAt } : {}),
         }));
       return {
-        running: this.runningExecutionViews(),
+        running: await this.runningExecutionViews(),
         recentCompleted,
         providerSlots: await this.providerSlotViews(),
       } as CouncilStatusViewResult<V>;

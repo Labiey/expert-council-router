@@ -99,6 +99,10 @@ export interface RuntimeCapabilities {
   workspaceProvisioning?: { mode: string };
   supportedTools: string[];
   limitations: string[];
+  /** Runtime can raise/await a decision or tool-approval interaction mid-turn. */
+  realtimeInteraction?: boolean;
+  /** Runtime can change an expert's active tools after approval. */
+  dynamicToolPermissions?: boolean;
 }
 
 export interface ExpertExecutionRequest {
@@ -199,6 +203,8 @@ export interface ExpertRuntime {
   abortExecution?(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
   /** Bounded progress snapshot of a running expert execution. */
   inspectExecution?(executionId: string): Promise<ExecutionProgress | undefined>;
+  /** Resolve a running expert's pending interaction (decision or tool approval) so its turn continues. */
+  respondToInteraction?(executionId: string, response: InteractionResponse): Promise<RespondToInteractionResult>;
   cleanupExecution?(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">>;
 }
 
@@ -222,6 +228,74 @@ export interface ExecutionProgress {
   workspace?: string;
   isolated?: boolean;
   filesChangedSoFar?: string[];
+  /** A live interaction the blocked expert is waiting on the Main Agent to resolve. */
+  pendingInteraction?: PendingInteraction;
+}
+
+/** One selectable answer for a decision point. */
+export interface DecisionOption {
+  label: string;
+  /** Short impact/tradeoff explanation shown to the Main Agent. */
+  description?: string;
+}
+
+export type InteractionKind = "decision" | "tool_approval";
+
+/**
+ * A non-terminal interaction raised by a running expert for the Main Agent to
+ * resolve. `decision` is "this is doable but the direction is yours to pick";
+ * `tool_approval` is "I need a tool my role does not grant by default". Both
+ * pause the expert's turn in place without ending the execution (unlike the
+ * terminal `report_and_stop`).
+ */
+export interface InteractionRequest {
+  kind: InteractionKind;
+  /** For decisions: the question posed to the Main Agent. */
+  question?: string;
+  /** For decisions: up to four recommended options; the host may also answer with free text. */
+  options?: DecisionOption[];
+  /** For decisions: whether an "Others" free-text answer is allowed (default true). */
+  allowOther?: boolean;
+  /** Optional bounded context explaining why the expert is asking. */
+  context?: string;
+  /** For tool approvals: the tool the expert wants to use. */
+  tool?: string;
+  /** Bounded reason / argument summary for the approval request. */
+  reason?: string;
+}
+
+/** How the host answered a tool-approval request. */
+export type ToolGrantScope = "once" | "persistent" | "reject";
+
+export interface InteractionResponse {
+  kind: InteractionKind;
+  /** For decisions: the chosen option label (must be one of the offered options). */
+  choice?: string;
+  /** For decisions: free-text answer when `allowOther` and the host chose "Others". */
+  otherText?: string;
+  /** For tool approvals: grant once, grant for the rest of the session, or reject. */
+  scope?: ToolGrantScope;
+}
+
+/** A live, unresolved interaction attached to a running execution snapshot. */
+export interface PendingInteraction {
+  request: InteractionRequest;
+  /** ISO time the expert raised the interaction. */
+  openedAt: string;
+  /** 1-based interaction number within this execution, for round-cap display. */
+  round: number;
+}
+
+export interface RespondToInteractionRequest {
+  executionId: string;
+  response: InteractionResponse;
+}
+
+export interface RespondToInteractionResult {
+  executionId: string;
+  status: "resolved" | "no-pending" | "not-found" | "kind-mismatch";
+  kind?: InteractionKind;
+  message?: string;
 }
 
 export interface AbortExecutionRequest {
@@ -757,6 +831,8 @@ export interface RunningExecutionView {
   elapsedMs: number;
   /** Remaining budget before the current attempt's timeoutMs, when known. */
   remainingMs?: number;
+  /** A live interaction the expert is blocked on, when one is open. */
+  pendingInteraction?: PendingInteraction;
 }
 
 /** One finished execution in the summary status view. */
@@ -878,6 +954,13 @@ export interface ExpertCouncil {
   getResult(executionId: string): Promise<ExpertResultLookup>;
   /** Bounded progress snapshot of a running expert execution; the material for verification or handoff. */
   inspectExecution(executionId: string): Promise<ExecutionProgress | undefined>;
+  /**
+   * Resolve a running expert's pending interaction (decision point or tool
+   * approval) so its blocked turn continues in the same session. Headless hosts
+   * discover the open interaction by polling `getStatus({view:"running"})` or
+   * `inspectExecution` and answer through this method.
+   */
+  respondToInteraction(request: RespondToInteractionRequest): Promise<RespondToInteractionResult>;
   /** Deliberately stop a running expert execution while preserving its progress; never retried or escalated. */
   abortExecution(request: AbortExecutionRequest): Promise<AbortExecutionResult>;
   /**
