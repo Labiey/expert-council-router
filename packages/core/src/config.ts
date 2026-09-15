@@ -233,6 +233,8 @@ export const councilConfigSchema = z.object({
       workspaceProvisioning: z
         .object({
           mode: z.enum(["auto", "none", "custom"]).default("none"),
+          strategy: z.enum(["auto", "drivers", "as-code", "in-place"]).default("auto"),
+          runtimeEnv: z.enum(["isolated", "host-env"]).default("isolated"),
           timeoutMs: z.number().int().min(30_000).max(1_800_000).default(600_000),
           maxConcurrent: z.number().int().min(1).max(4).default(1),
           command: z.array(z.string().min(1).max(500)).max(12).optional(),
@@ -242,6 +244,8 @@ export const councilConfigSchema = z.object({
         })
         .default({
           mode: "none",
+          strategy: "auto",
+          runtimeEnv: "isolated",
           timeoutMs: 600_000,
           maxConcurrent: 1,
           scrubEnv: true,
@@ -258,6 +262,8 @@ export const councilConfigSchema = z.object({
       expertLifetime: "host-bound",
       workspaceProvisioning: {
         mode: "none",
+        strategy: "auto",
+        runtimeEnv: "isolated",
         timeoutMs: 600_000,
         maxConcurrent: 1,
         scrubEnv: true,

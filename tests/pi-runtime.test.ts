@@ -1059,6 +1059,54 @@ describe("worktree provisioning", () => {
     }
   });
 
+  it("materializes mainstream non-node ecosystems from their global caches and delegates as-code backends", async () => {
+    const auto = await provisioningConfig({ mode: "auto" });
+    const asCode = await provisioningConfig({ mode: "auto", strategy: "as-code" });
+    const inPlace = await provisioningConfig({ mode: "auto", strategy: "in-place" });
+    const cases: Array<{ file: string; packageManager: string; cmd0: string }> = [
+      { file: "Cargo.toml", packageManager: "cargo", cmd0: "cargo" },
+      { file: "go.mod", packageManager: "go", cmd0: "go" },
+      { file: "pom.xml", packageManager: "maven", cmd0: "mvn" },
+      { file: "Gemfile.lock", packageManager: "bundler", cmd0: "bundle" },
+      { file: "composer.lock", packageManager: "composer", cmd0: "composer" },
+      { file: "mix.lock", packageManager: "mix", cmd0: "mix" },
+      { file: "yarn.lock", packageManager: "yarn", cmd0: "yarn" },
+      { file: "poetry.lock", packageManager: "poetry", cmd0: "poetry" },
+    ];
+    for (const c of cases) {
+      const root = await mkdtemp(path.join(tmpdir(), "ec-provision-lang-"));
+      try {
+        await writeFile(path.join(root, c.file), "x\n", "utf8");
+        const plan = await detectProvisioningPlan(root, auto);
+        expect(plan.packageManager).toBe(c.packageManager);
+        expect(plan.argv?.[0]).toBe(c.cmd0);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+    // as-code backend: nix is surfaced (not materialized) when strategy=as-code, before any driver.
+    const nixRoot = await mkdtemp(path.join(tmpdir(), "ec-provision-nix-"));
+    try {
+      await writeFile(path.join(nixRoot, "flake.nix"), "{}\n", "utf8");
+      await expect(detectProvisioningPlan(nixRoot, asCode)).resolves.toMatchObject({ packageManager: "nix" });
+      // devcontainer surfaced only as a fallback when no driver matches.
+      await rm(path.join(nixRoot, "flake.nix"));
+      await mkdir(path.join(nixRoot, ".devcontainer"));
+      await writeFile(path.join(nixRoot, ".devcontainer", "devcontainer.json"), "{}\n", "utf8");
+      await expect(detectProvisioningPlan(nixRoot, auto)).resolves.toMatchObject({ packageManager: "devcontainer" });
+    } finally {
+      await rm(nixRoot, { recursive: true, force: true });
+    }
+    // in-place strategy never materializes.
+    const nodeRoot = await mkdtemp(path.join(tmpdir(), "ec-provision-inplace-"));
+    try {
+      await writeFile(path.join(nodeRoot, "pnpm-lock.yaml"), "lockfileVersion: 9\n", "utf8");
+      await expect(detectProvisioningPlan(nodeRoot, inPlace)).resolves.toMatchObject({ detail: expect.stringContaining("in-place") });
+    } finally {
+      await rm(nodeRoot, { recursive: true, force: true });
+    }
+  });
+
   it("uses a custom argv verbatim and reports unsupported ecosystems as skipped", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ec-provision-custom-"));
     try {

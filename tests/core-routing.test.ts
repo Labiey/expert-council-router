@@ -369,6 +369,8 @@ describe("configuration", () => {
   it("defaults worktree provisioning to inert in both default sites", () => {
     const defaults = {
       mode: "none",
+      strategy: "auto",
+      runtimeEnv: "isolated",
       timeoutMs: 600_000,
       maxConcurrent: 1,
       scrubEnv: true,

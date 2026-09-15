@@ -78,6 +78,23 @@ export interface WorkspaceProvisioningConfig {
   maxConcurrent: number;
   /** Explicit argv used verbatim when mode is "custom". */
   command?: string[];
+  /**
+   * How to materialize a worktree's dependencies. "auto" runs the detected
+   * ecosystem driver; "as-code" additionally prefers a detected Nix/devcontainer
+   * backend; "in-place" skips installs and relies on read-only execution against
+   * the host workspace; "drivers" is an alias for per-ecosystem standard installs.
+   * The default "auto" never shares a recompiled build/target directory across
+   * concurrent worktrees (cargo locks it); each worktree materializes its own
+   * project-local dir from the ecosystem's already-global download cache.
+   */
+  strategy?: "auto" | "drivers" | "as-code" | "in-place";
+  /**
+   * Whether provisioning/verification children inherit host environment. "isolated"
+   * (default) uses the scrubbed allowlist; "host-env" additionally passes through
+   * toolchain and cache-location variables (PATH, HOME, *CACHE*, *TARGET_DIR*, JAVA_HOME,
+   * GOPATH, CARGO_HOME, NUGET_PACKAGES, ...) so global caches resolve to one place.
+   */
+  runtimeEnv?: "isolated" | "host-env";
   /** Explicit verification argv; when omitted the runtime runs typecheck then tests. */
   verifyCommand?: string[];
   /** Restrict the child environment to a fixed allowlist. */

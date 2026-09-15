@@ -310120,6 +310120,8 @@ var councilConfigSchema = external_exports.object({
     expertLifetime: external_exports.enum(["host-bound", "detached"]).default("host-bound"),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
+      strategy: external_exports.enum(["auto", "drivers", "as-code", "in-place"]).default("auto"),
+      runtimeEnv: external_exports.enum(["isolated", "host-env"]).default("isolated"),
       timeoutMs: external_exports.number().int().min(3e4).max(18e5).default(6e5),
       maxConcurrent: external_exports.number().int().min(1).max(4).default(1),
       command: external_exports.array(external_exports.string().min(1).max(500)).max(12).optional(),
@@ -310128,6 +310130,8 @@ var councilConfigSchema = external_exports.object({
       removalTimeoutMs: external_exports.number().int().min(3e4).max(18e5).default(3e5)
     }).default({
       mode: "none",
+      strategy: "auto",
+      runtimeEnv: "isolated",
       timeoutMs: 6e5,
       maxConcurrent: 1,
       scrubEnv: true,
@@ -310143,6 +310147,8 @@ var councilConfigSchema = external_exports.object({
     expertLifetime: "host-bound",
     workspaceProvisioning: {
       mode: "none",
+      strategy: "auto",
+      runtimeEnv: "isolated",
       timeoutMs: 6e5,
       maxConcurrent: 1,
       scrubEnv: true,
@@ -318194,6 +318200,47 @@ async function pathExists2(target) {
     return false;
   }
 }
+async function existsAny(root, files) {
+  for (const file2 of files) {
+    if (await pathExists2(path25.join(root, file2)))
+      return true;
+  }
+  return false;
+}
+var PROVISIONING_DRIVERS = [
+  { packageManager: "pnpm", markers: ["pnpm-lock.yaml"], argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]) },
+  { packageManager: "npm", markers: ["package-lock.json"], argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]) },
+  { packageManager: "bun", markers: ["bun.lock", "bun.lockb"], argv: ["bun", "install", "--frozen-lockfile"] },
+  { packageManager: "yarn", markers: ["yarn.lock"], argv: ["yarn", "install", "--frozen-lockfile"] },
+  { packageManager: "uv", markers: ["uv.lock"], argv: ["uv", "sync", "--frozen"] },
+  { packageManager: "poetry", markers: ["poetry.lock"], argv: ["poetry", "install", "--no-interaction"] },
+  { packageManager: "cargo", markers: ["Cargo.lock", "Cargo.toml"], argv: ["cargo", "build", "--locked"] },
+  { packageManager: "go", markers: ["go.mod"], argv: ["go", "mod", "download"] },
+  { packageManager: "maven", markers: ["pom.xml"], argv: ["mvn", "-q", "-B", "-DskipTests", "dependency:go-offline"] },
+  { packageManager: "dotnet", markers: ["global.json", "Directory.Build.props"], argv: ["dotnet", "restore"] },
+  { packageManager: "bundler", markers: ["Gemfile.lock"], argv: ["bundle", "install"] },
+  { packageManager: "composer", markers: ["composer.lock"], argv: ["composer", "install", "--no-interaction", "--prefer-dist"] },
+  { packageManager: "mix", markers: ["mix.lock"], argv: ["mix", "deps.get"] }
+];
+var AS_CODE_BACKENDS = [
+  {
+    packageManager: "nix",
+    markers: ["flake.nix", "shell.nix"],
+    detail: "Nix detected; run expert commands via `nix develop` / `nix build`. Expert Council does not materialize Nix environments \u2014 use security.workspaceProvisioning.strategy=in-place or run the expert inside the Nix shell."
+  },
+  {
+    packageManager: "devcontainer",
+    markers: [".devcontainer/devcontainer.json"],
+    detail: "Dev Container detected; the environment is containerized. Run the expert inside the container or use in-place read-execution; Expert Council does not build container images."
+  }
+];
+async function pythonEcosystemPlan(root, hostWorkspace) {
+  const hostInterpreter = await findHostPythonInterpreter(hostWorkspace);
+  if (hostInterpreter) {
+    return { detail: `Python ecosystem detected; venv provisioning is unsupported \u2014 invoke the host workspace interpreter directly by absolute path: ${hostInterpreter}` };
+  }
+  return { detail: "Python ecosystem detected but no host .venv interpreter was found; create one in the host workspace first." };
+}
 async function detectProvisioningPlan(root, config2, hostWorkspace) {
   if (config2.mode === "custom") {
     if (!config2.command?.length) {
@@ -318201,36 +318248,39 @@ async function detectProvisioningPlan(root, config2, hostWorkspace) {
     }
     return { packageManager: config2.command[0], argv: [...config2.command] };
   }
-  if (await pathExists2(path25.join(root, "pnpm-lock.yaml"))) {
-    return {
-      packageManager: "pnpm",
-      argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"])
-    };
+  if (config2.strategy === "in-place") {
+    return { detail: "strategy=in-place: dependencies are resolved by read-only execution against the host workspace, not materialized in the worktree." };
   }
-  if (await pathExists2(path25.join(root, "package-lock.json"))) {
-    return {
-      packageManager: "npm",
-      argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"])
-    };
+  if (config2.strategy === "as-code") {
+    for (const backend of AS_CODE_BACKENDS) {
+      if (await existsAny(root, backend.markers))
+        return { packageManager: backend.packageManager, detail: backend.detail };
+    }
   }
-  if (await pathExists2(path25.join(root, "bun.lock")) || await pathExists2(path25.join(root, "bun.lockb"))) {
-    return { packageManager: "bun", argv: ["bun", "install", "--frozen-lockfile"] };
-  }
-  if (await pathExists2(path25.join(root, "uv.lock"))) {
-    return { packageManager: "uv", argv: ["uv", "sync", "--frozen"] };
-  }
-  const pythonEcosystem = await pathExists2(path25.join(root, "pyproject.toml")) || await pathExists2(path25.join(root, "requirements.txt")) || await pathExists2(path25.join(root, "uv.lock")) || await pathExists2(path25.join(root, "setup.py")) || await pathExists2(path25.join(root, "Pipfile"));
-  if (pythonEcosystem) {
-    const hostInterpreter = await findHostPythonInterpreter(hostWorkspace);
-    if (hostInterpreter) {
+  for (const driver of PROVISIONING_DRIVERS) {
+    if (await existsAny(root, driver.markers)) {
       return {
-        detail: `Python ecosystem detected; venv provisioning is unsupported \u2014 invoke the host workspace interpreter directly by absolute path: ${hostInterpreter}`
+        packageManager: driver.packageManager,
+        ...driver.argv ? { argv: driver.argv } : {},
+        ...driver.detail ? { detail: driver.detail } : {}
       };
     }
-    return { detail: "Python ecosystem detected but no host .venv interpreter was found; create one in the host workspace first." };
   }
-  if (await pathExists2(path25.join(root, "Cargo.toml")) || await pathExists2(path25.join(root, "go.mod"))) {
-    return { detail: "no supported provisioning for this ecosystem (Rust/Go toolchains are not provisioned)" };
+  if (await existsAny(root, ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"])) {
+    return await pythonEcosystemPlan(root, hostWorkspace);
+  }
+  for (const backend of AS_CODE_BACKENDS) {
+    if (await existsAny(root, backend.markers))
+      return { packageManager: backend.packageManager, detail: backend.detail };
+  }
+  if (await existsAny(root, ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"])) {
+    return { packageManager: "gradle", detail: "Gradle detected; no cache-only materialization runs automatically. Use in-place read-execution or a custom provisioning command." };
+  }
+  if (await existsAny(root, ["composer.json", "Gemfile", "mix.exs"])) {
+    return { detail: "Ruby/PHP/Elixir detected without a committed lockfile; add one for deterministic provisioning or use in-place read-execution." };
+  }
+  if (await existsAny(root, ["CMakeLists.txt", "meson.build", "configure", "Makefile"])) {
+    return { detail: "C/C++ build system detected; toolchain assumed present on PATH. Use in-place read-execution or a custom provisioning command." };
   }
   return { detail: "no supported provisioning for this ecosystem" };
 }
@@ -318303,7 +318353,7 @@ async function provisionWorkspace(root, config2, options = {}) {
     };
   }
   const runner = options.runner ?? runBoundedCommand;
-  const env2 = config2.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  const env2 = config2.runtimeEnv === "host-env" ? { ...process.env } : config2.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
   const semaphore = provisioningSemaphore(config2.maxConcurrent);
   await semaphore.acquire();
   let outcome;
