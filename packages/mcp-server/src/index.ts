@@ -102,10 +102,10 @@ export const MCP_INPUT_SCHEMAS = {
     workspace: workspacePath.optional(),
     model: modelKey.optional()
       .describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
-    timeoutMs: z.number().int().min(1_000).max(3_600_000)
-      .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
-    reasoningLevel: z.string().min(1).max(40)
-      .describe("Required reasoning level for the expert session (e.g. low/medium/high), chosen from the task and model; a composition entry that pins one for the selected model overrides this"),
+    timeoutMs: z.number().int().min(1_000).max(3_600_000).optional()
+      .describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline"),
+    reasoningLevel: z.string().min(1).max(40).optional()
+      .describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own level. A composition entry that pins a level for the selected model overrides this"),
     assignments: z.array(delegationAssignment).min(1).max(8).optional()
       .describe("Use for two or more independent assignments so all are dispatched before the host turn ends"),
   },
@@ -278,8 +278,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
       if (input.assignments && (input.role || input.task)) {
         throw new Error("expert_delegate accepts either role/task or assignments, not both");
       }
-      if (!input.assignments && (!input.role || !input.task)) {
-        throw new Error("expert_delegate requires role/task or a non-empty assignments array");
+      if (!input.assignments && (input.role === undefined || input.task === undefined || input.timeoutMs === undefined || input.reasoningLevel === undefined)) {
+        throw new Error("expert_delegate needs role, task, timeoutMs and reasoningLevel for one assignment, or an assignments array where each entry carries its own timeoutMs and reasoningLevel");
       }
       const inventory = await withMcpTimeout(council.inspectResources({ sessionKey: sessionKeyOf(extra) }));
       const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
@@ -305,7 +305,8 @@ function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServe
           ...(input.councilId ? { councilId: input.councilId } : {}),
           ...(input.workspace ? { workspace: input.workspace } : {}),
           ...(input.model ? { model: input.model } : {}),
-          timeoutMs: input.timeoutMs,
+          timeoutMs: input.timeoutMs!,
+          reasoningLevel: input.reasoningLevel!,
         }]).map((assignment) => ({
           ...assignment,
           sessionKey: sessionKeyOf(extra),

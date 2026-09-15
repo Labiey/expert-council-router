@@ -12,16 +12,19 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **Cross-language environments.** `provisionWorkspace` is no longer Node-only. A data-driven driver registry materializes mainstream ecosystems from each toolchain's already-global download cache (pnpm store, `~/.cargo`, `GOMODCACHE`, `~/.m2`, `~/.nuget`, pip/uv cache, bundler, composer, hex): node/pnpm/yarn/bun, python (uv/poetry/venv-host), rust, go, jvm/maven, dotnet, ruby, php, elixir. Environment-as-code backends (`flake.nix`, `.devcontainer/`) are detected and surfaced for delegation rather than re-implemented. `security.workspaceProvisioning` gains `strategy` (auto/drivers/as-code/in-place) and `runtimeEnv` (isolated/host-env). A worktree never shares a recompiled build/target directory across concurrent experts (cargo locks its target).
 - **Progress observability toggle.** `security.observability.expertWindow` (`off` default / `events` / `interactive`) surfaces bounded live progress (message count, last activity) in the running view; `events` mode adds it, the pending-interaction channel stays on regardless. `interactive` (RPC projection) is intentionally not implemented in 0.8.0.
 - **Telemetry** records `interactionRounds` per execution to inform routing.
+- **Native Pi wakes the host for interactions.** While dispatched executions are live, the Pi package polls the bounded running view and sends an `expert-council-interaction` notice the moment an expert opens a decision or tool request, deduplicated per round and delivered over the same steer/followUp path as completion notices. Observation is best-effort: if a notice cannot be delivered, the interaction is still discoverable through `expert_status` and `expert_result`.
 
 ### Changed
 - `expert_status` running/summary views are async-enriched with live interaction and (when enabled) progress.
 - MCP / Pi-package / CLI all expose `expert_respond`; the CLI gains `respond`.
+- `expert_delegate` no longer demands top-level `timeoutMs`/`reasoningLevel` when an `assignments` array is used — each entry carries its own, so batch dispatches stopped paying for a redundant pair of arguments. A single assignment must still state both, and both hosts now say so with an actionable error (Pi does not validate tool input schemas, so the native path checks it in code).
 - New administrative input `EXPERT_COUNCIL_WORKTREES` redirects the parent of the private expert worktree base (the per-user private subdirectory and all validation stay in force). The automated test suite now routes its expert worktrees into a throwaway directory and prunes them, instead of accumulating registered worktrees in the live per-user namespace.
 
 ### Fixed
 - A read-only expert no longer reports the Main Agent's own uncommitted files as `filesChanged`. Read-only runs share the main workspace, so the git-dirty set belonged to the host; attributing it to the expert fabricated authorship and could make a host try to integrate or clean up its own in-progress edits. This also applies to live progress (`filesChangedSoFar`) and failure artifacts, matching what the failure-evidence contract already promised.
 - `expert_cleanup` on a read-only execution now returns `not-required` with an explanation instead of `not-found`, which previously made a valid ID look lost or mistyped; `not-found` still means a real missing worktree for an isolated run.
 - `expert_inspect` now forwards `realtimeInteraction` and `dynamicToolPermissions` in `runtimeCapabilities`; the presentation layer dropped them, so hosts could not discover that the 0.8.0 interaction and grant features exist.
+- On the MCP path, a single-assignment `expert_delegate` call dropped its `reasoningLevel` before reaching the runtime: the argument was schema-required but never forwarded, so a host-chosen effort level (for example from Codex) was silently ignored and the expert ran at the composition or default level. Batch calls forwarded it correctly, so only single delegations were affected.
 
 ### Notes
 - Built on verified Pi primitives: `session.steer/followUp/subscribe/setActiveToolsByName`, custom-tool resolve (same template as `report_and_stop`). Live validation against a real model confirmed the two non-obvious ones: `setActiveToolsByName` genuinely restricts the model's visible tools (so a role seed stays the default even though mutation-capable executions register a wider built-in set to make grants possible), and a granted tool really executes. Verified live end-to-end: an expert raised `request_decision` with two options, the host answer let it finish in the same session applying the choice; another expert requested `powershell`, was granted it, and returned a correct command result. The passive tool-call block (auto-raising approval on an un-granted built-in) degrades to the expert proactively calling `request_tool`, since it cannot invoke a tool that is not in its active set — documented rather than faked.
@@ -36,16 +39,19 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **跨语言环境**：`provisionWorkspace` 不再只支持 Node。数据驱动注册表从各工具链**已有的全局下载缓存**（pnpm store、`~/.cargo`、`GOMODCACHE`、`~/.m2`、`~/.nuget`、pip/uv 缓存、bundler、composer、hex）物化主流生态：node/pnpm/yarn/bun、python(uv/poetry/宿主venv)、rust、go、jvm/maven、dotnet、ruby、php、elixir。环境即代码后端（`flake.nix`、`.devcontainer/`）被检测并交还委托而非重造。`security.workspaceProvisioning` 新增 `strategy`（auto/drivers/as-code/in-place）与 `runtimeEnv`（isolated/host-env）。并发专家间绝不共享重编译 target 目录（cargo 对其持锁）。
 - **进度可观测开关**：`security.observability.expertWindow`（默认 `off` / `events` / `interactive`）在 running 视图浮现轻量进度（消息数、最近活动）；`events` 档开启之，未决交互通道则始终开启。`interactive`（RPC 投影）0.8.0 有意未实现。
 - **遥测**记录每执行 `interactionRounds` 供路由参考。
+- **原生 Pi 会为交互唤醒宿主**。已派发执行仍存活期间，Pi 包轮询有界的 running 视图，专家一打开决策或工具请求就发送 `expert-council-interaction` 通知，按轮次去重，并复用完成通知的 steer/followUp 通道。观测属尽力而为：通知投递失败时，交互仍可经 `expert_status` 与 `expert_result` 发现。
 
 ### 变更
 - `expert_status` running/summary 视图异步富集实时交互与（开启时）进度。
 - MCP / Pi 包 / CLI 均提供 `expert_respond`；CLI 新增 `respond`。
+- 使用 `assignments` 数组时，`expert_delegate` 不再要求顶层 `timeoutMs`/`reasoningLevel`——每项已自带超时与推理档位，批量派发不必再多供一对冗余参数。单次委派仍须明确两者，两个宿主现在都会给出可照着改的错误说明（Pi 不校验工具入参 schema，所以原生路径在代码里检查）。
 - 新增管理型输入 `EXPERT_COUNCIL_WORKTREES`，可重定向私有专家 worktree 基目录的父目录（按用户隔离的私有子目录与全部校验仍然生效）。自动化测试现将专家 worktree 路由到一次性目录并自行清理，不再在实时按用户命名空间里堆积注册项。
 
 ### 修复
 - 只读专家不再把主代理自己的未提交文件报成 `filesChanged`。只读执行共用主工作区，那份 git 脏集合属于宿主；归给专家等于伪造作者身份，并可能诱导宿主去集成或清理自己正在进行的编辑。实时进度（`filesChangedSoFar`）与失败工件同样修正，与失败证据契约原本的承诺一致。
 - 对只读执行调用 `expert_cleanup` 现返回带解释的 `not-required`，不再返回 `not-found`（此前会让合法 ID 看起来像写错或丢失）；隔离执行的 worktree 确实缺失时仍报 `not-found`。
 - `expert_inspect` 现在会在 `runtimeCapabilities` 中转发 `realtimeInteraction` 与 `dynamicToolPermissions`：呈现层此前将其丢弃，导致宿主无法发现 0.8.0 的交互与授权能力存在。
+- MCP 路径上，单次委派的 `expert_delegate` 会在抵达运行时前丢掉 `reasoningLevel`：该参数被 schema 强制要求却从未转发，因此宿主（例如 Codex）精心选的推理档位被无声忽略，专家按编排或默认档位运行。批量调用转发正确，故仅单次委派受影响。
 
 ### 说明
 - 构建于已核实的 Pi 原语：`session.steer/followUp/subscribe/setActiveToolsByName`、custom-tool resolve（与 `report_and_stop` 同模板）。针对真实模型的实机验证确认了两处非常显然的行为：`setActiveToolsByName` 确实会限制模型可见工具（因此即便为让授权成为可能而向变更型执行注册更宽的内建集，角色种子仍是默认），且被授予的工具能真正执行。端到端实测通过：一个专家提出含两个选项的 `request_decision`，宿主答复后其在同一会话按所选继续完成；另一个专家申请 `powershell` 获授后返回了正确命令结果。被动工具门（在未授权内建工具被调用时自动弹审批）降级为专家主动调 `request_tool`（未激活的工具本就无法被调用）——如实文档化而非假装。

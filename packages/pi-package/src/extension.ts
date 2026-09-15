@@ -12,6 +12,7 @@ import {
   type ModelAssessmentSnapshot,
 } from "@expert-council/core";
 import { createExpertCouncil, defaultCouncilStoragePaths, loadCouncilConfig } from "@expert-council/pi-runtime";
+import { watchForInteractions } from "./interaction-watch.js";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type, type Static, type TSchema } from "typebox";
 
@@ -275,8 +276,12 @@ export default function expertCouncilExtension(
         pattern: "^[^/]+/[^/]+$",
         description: "Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch.",
       })),
-      timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
-      reasoningLevel: Type.String({ minLength: 1, maxLength: 40 }),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000, description: "Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline." })),
+      reasoningLevel: Type.Optional(Type.String({
+        minLength: 1,
+        maxLength: 40,
+        description: "Required for a single assignment; omit when assignments is provided, because every entry carries its own level. A composition entry that pins a level for the selected model overrides this.",
+      })),
       assignments: Type.Optional(Type.Array(DelegationAssignment, { minItems: 1, maxItems: 8 })),
     }, { additionalProperties: false }),
     prepareArguments(args) {
@@ -294,11 +299,23 @@ export default function expertCouncilExtension(
         throw new Error("expert_delegate assignments must be a JSON array, not a string or object.");
       }
       const batch = Array.isArray(rawAssignments);
+      if (batch) {
+        // Pi does not enforce tool input schemas, so per-entry requirements are
+        // checked here to keep the native path identical to the MCP contract.
+        for (const entry of rawAssignments as DelegationAssignmentInput[]) {
+          if (!entry?.role || !entry.task || entry.timeoutMs === undefined || entry.reasoningLevel === undefined) {
+            throw new Error("every expert_delegate assignment needs role, task, timeoutMs and reasoningLevel.");
+          }
+        }
+      }
       if (batch && (params.role !== undefined || params.task !== undefined)) {
         throw new Error("expert_delegate accepts either assignments or a single role/task pair, not both.");
       }
-      if (!batch && (!params.role || !params.task)) {
-        throw new Error("expert_delegate requires a non-empty assignments array or both role and task for one assignment.");
+      if (!batch && (!params.role || !params.task || params.timeoutMs === undefined || params.reasoningLevel === undefined)) {
+        // Pi does not enforce tool schemas, so the requirement is checked here:
+        // a single delegation must state its own budget and reasoning level, while
+        // a batch carries both per entry.
+        throw new Error("expert_delegate needs role, task, timeoutMs and reasoningLevel for one assignment, or an assignments array where each entry carries its own timeoutMs and reasoningLevel.");
       }
       const inventory = await council.inspectResources({ sessionKey: sessionKeyOf(ctx) });
       const assessmentStatus = evaluateModelAssessment(inventory.models, inventory.modelAssessment);
@@ -319,8 +336,8 @@ export default function expertCouncilExtension(
         ...(params.councilId ? { councilId: params.councilId } : {}),
         ...(params.workspace ? { workspace: params.workspace } : {}),
         ...(params.model ? { model: params.model } : {}),
-        reasoningLevel: params.reasoningLevel,
-        timeoutMs: params.timeoutMs,
+        reasoningLevel: params.reasoningLevel!,
+        timeoutMs: params.timeoutMs!,
       }];
       const assignments = requestedAssignments.map((assignment): DelegationRequest => ({
         role: assignment.role as ExpertRole,
@@ -333,22 +350,17 @@ export default function expertCouncilExtension(
         ...(assignment.model ? { model: assignment.model } : {}),
         timeoutMs: assignment.timeoutMs,
       }));
-      const receipts = assignments.map((assignment) => {
-        const handle = council.startDelegation(assignment);
-        void handle.result.then(async () => {
-          const notification = {
-            executionId: handle.executionId,
-            ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
-          };
-          // The idle/streaming state can flip between the check and the send, and
-          // a session mid-transition can reject the first attempt; retry briefly so
-          // a completion notification is not silently lost. On final failure the
-          // result still remains available through expert_result.
+      // Shared host delivery: the idle/streaming state can flip between the check
+      // and the send, and a session mid-transition can reject the first attempt, so
+      // retry briefly. On final failure the information is still reachable through
+      // expert_status and expert_result, so no run ever depends on a notice.
+      const deliver = (customType: string, notification: Record<string, unknown>) => {
+        void (async () => {
           for (let attempt = 0; attempt < 3; attempt += 1) {
             try {
               const delivery = ctx.isIdle() ? "followUp" : "steer";
               pi.sendMessage({
-                customType: "expert-council-completed",
+                customType,
                 content: JSON.stringify(notification),
                 display: true,
                 details: notification,
@@ -358,6 +370,15 @@ export default function expertCouncilExtension(
               if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 250));
             }
           }
+        })();
+      };
+      const receipts = assignments.map((assignment) => {
+        const handle = council.startDelegation(assignment);
+        void handle.result.then(() => {
+          deliver("expert-council-completed", {
+            executionId: handle.executionId,
+            ...(assignment.taskDescription ? { taskDescription: assignment.taskDescription } : {}),
+          });
         });
         return {
           executionId: handle.executionId,
@@ -366,6 +387,19 @@ export default function expertCouncilExtension(
           status: "running" as const,
         };
       });
+      // Surface open decision points and tool requests as soon as they appear. The
+      // expert session runs inside this process and cannot push into the host's own
+      // turn, so poll the bounded running view while these executions are live; this
+      // costs no model tokens unless a notice actually wakes the host.
+      if (receipts.length) {
+        void watchForInteractions({
+          listRunning: async () => (await council.getStatus({ view: "running" })).running,
+          executionIds: receipts.map((receipt) => receipt.executionId),
+          labels: Object.fromEntries(receipts.map((receipt) => [receipt.executionId, receipt.taskDescription])),
+          deadlineMs: Math.max(...assignments.map((assignment) => assignment.timeoutMs)) + 60_000,
+          send: (notification) => deliver("expert-council-interaction", notification),
+        }).catch(() => undefined);
+      }
       return output(batch
         ? { status: "running", executions: receipts }
         : { executionId: receipts[0]!.executionId, status: "running" });

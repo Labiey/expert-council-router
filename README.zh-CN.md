@@ -22,7 +22,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 - **交互式专家**：运行中专家可在重大、难回退或方向含糊处暂停，通过 `request_decision` 向主代理给出 2-4 个推荐选项（含可选自由文本）；宿主用 `expert_respond` 回答，专家在**同一会话**继续。非终止——与 `report_and_stop` 区分。
 - **动态工具权限**：预设角色工具是**种子而非上限**。专家用 `request_tool` 申请缺失工具；宿主授予 `once`（用一次后自动撤销）/`persistent`（本会话）/`reject`。`security.toolGrants` 提供运维侧持久按角色授予。只读执行永不升级为变更/shell 工具（隔离保证）。
-- **交互经正确性通道发现**：未决交互以 `pendingInteraction` 出现在 `expert_status(view:"running")` 与 `expert_result(includeProgress)`，无推送的无头宿主（Codex/MCP）可轮询发现并回答；每执行有界（默认 3 轮 + 等待超时）。
+- **交互经正确性通道发现**：未决交互以 `pendingInteraction` 出现在 `expert_status(view:"running")` 与 `expert_result(includeProgress)`；原生 Pi 包还会在交互一打开时用 `expert-council-interaction` 通知唤醒宿主；无法接收推送的无头宿主（Codex/MCP）继续轮询。每执行有界（默认 3 轮 + 等待超时）。
 - **跨语言环境**：`provisionWorkspace` 不再只支持 Node。驱动注册表从各工具链已有的全局下载缓存物化 node/pnpm/yarn/bun、python(uv/poetry/宿主 venv)、rust、go、jvm/maven、dotnet、ruby、php、elixir。环境即代码后端（`flake.nix`、`.devcontainer/`）被检测并交还委托而非重造。新增 `security.workspaceProvisioning.strategy`（auto/drivers/as-code/in-place）与 `runtimeEnv`（isolated/host-env）；并发 worktree 绝不共享重编译 target 目录。
 - **进度可观测开关**：`security.observability.expertWindow`（默认 `off` / `events` / `interactive`）在 running 视图浮现轻量进度。
 - 与宿主无关的 Core：配置校验、模型归一化、按模型/供应商计费倍率、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
@@ -38,7 +38,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - **`expert_verify`**：插件侧在保留 worktree 或受校验工作区运行有界命令并返回真实退出码与输出尾部；`tests[]` 现携带退出码、计数、耗时与输出尾部。
 - **`expert_status` 视图**：默认的有界 `summary`（运行中含剩余预算、近期完成、供应商并发槽）、`running`、以及旧全量 `full`，大幅降低观测上下文开销。
 - **完成通知可靠性**：Pi 扩展在 idle/streaming 竞态时短暂重试完成消息，不再静默丢弃。
-- `timeoutMs` 与 `reasoningLevel` 均为必填派遣参数：主代理必须按任务与模型显式选择；组合名单可按角色/模型钉定思考档位并覆盖派遣参数。
+- `timeoutMs` 与 `reasoningLevel` 均为必填派遣参数：主代理必须按任务与模型显式选择；批量派遣时每一项自带这一对参数，仅单次委派从顶层读取；组合名单可按角色/模型钉定思考档位并覆盖派遣参数。
 - 专家 fail-fast 纪律：发现工具或环境不可能完成任务时立即以结构化 `missing_context`/`permission_error` 终止并实时回传，委派循环不做无谓重试。
 - 持久化理事会组合：`council-compositions.json` 命名名单（角色可配多模型与思考档位）、首问组合菜单、会话绑定、`model` 钉定与同角色并发派遣。
 - 供应商限额与并发：`route-policy.json` 按供应商设置日/周加权 token 上限（`usage-ledger.json` 按 `costMultiplier` 记账）与并发上限，超限候选自动排除并给出原因。

@@ -222,9 +222,13 @@ describe("MCP semantic surface", () => {
     expect(MCP_INPUT_SCHEMAS.expert_wait.executionIds.safeParse(["exec_one", "exec_one"]).success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_wait.timeoutMs.safeParse(999).success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_wait.timeoutMs.safeParse(120_000).success).toBe(true);
-    // timeoutMs is now required on every expert_delegate assignment.
-    expect(MCP_INPUT_SCHEMAS.expert_delegate.timeoutMs.safeParse(undefined).success).toBe(false);
+    // Each assignment carries its own timeoutMs/reasoningLevel; the top level is
+    // optional because a batch supplies them per entry, and the handler enforces
+    // them whenever a single role/task delegation is requested.
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.timeoutMs.safeParse(undefined).success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.timeoutMs.safeParse(600_000).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.reasoningLevel.safeParse(undefined).success).toBe(true);
+    expect(MCP_INPUT_SCHEMAS.expert_delegate.reasoningLevel.safeParse("high").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.assignments.safeParse([
       { role: "scout", task: "map files" },
     ]).success).toBe(false);
@@ -445,6 +449,60 @@ describe("expert_abort tool", () => {
       });
       expect(result.isError).not.toBe(true);
       expect(JSON.stringify(result.content)).toContain("already-finished");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+});
+
+describe("MCP delegation contract", () => {
+  it("forwards the host's reasoning level on a single delegation and validates the batch form", async () => {
+    const received: Array<Record<string, unknown>> = [];
+    let nextId = 0;
+    const council: ExpertCouncil = {
+      ...mockCouncil(),
+      startDelegation: (request) => {
+        received.push(request as unknown as Record<string, unknown>);
+        nextId += 1;
+        return { executionId: `exec_fwd_${nextId}`, result: new Promise(() => {}) };
+      },
+    };
+    const server = createClientRootMcpServer({ cwd: process.cwd() }, async () => council);
+    const client = new Client({ name: "forwarding-test", version: "0.1.0" });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      const single = await client.callTool({
+        name: "expert_delegate",
+        arguments: { role: "scout", task: "Inspect a tiny file", reasoningLevel: "high", timeoutMs: 60_000 },
+      });
+      expect(single.isError).not.toBe(true);
+      // Regression: the single-assignment branch used to drop reasoningLevel, so a
+      // host-chosen effort level was silently ignored on the MCP path only.
+      expect(received.at(-1)).toMatchObject({ role: "scout", reasoningLevel: "high", timeoutMs: 60_000 });
+
+      // A batch carries both per entry, so the top level may stay empty.
+      const batch = await client.callTool({
+        name: "expert_delegate",
+        arguments: {
+          assignments: [
+            { role: "scout", task: "Inspect file A", reasoningLevel: "low", timeoutMs: 60_000 },
+            { role: "reviewer", task: "Review file B", reasoningLevel: "medium", timeoutMs: 90_000 },
+          ],
+        },
+      });
+      expect(batch.isError).not.toBe(true);
+      expect(received.slice(-2).map((request) => request.reasoningLevel)).toEqual(["low", "medium"]);
+
+      const incomplete = await client.callTool({
+        name: "expert_delegate",
+        arguments: { role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 },
+      });
+      expect(incomplete.isError).toBe(true);
+      expect(JSON.stringify(incomplete.content)).toContain("reasoningLevel");
     } finally {
       await client.close();
       await server.close();
@@ -779,12 +837,13 @@ describe("Pi adapter registration", () => {
 
     await tools.get("expert_delegate")!.execute(
       "call",
-      { role: "scout", task: "map files", timeoutMs: 60_000, model: "p/m" },
+      { role: "scout", task: "map files", reasoningLevel: "low", timeoutMs: 60_000, model: "p/m" },
       undefined,
       undefined,
       { cwd: ".", isIdle: () => false },
     );
     expect(received?.model).toBe("p/m");
+    expect(received?.reasoningLevel).toBe("low");
   });
 
   it("dispatches a complete independent batch before returning", async () => {
@@ -812,8 +871,8 @@ describe("Pi adapter registration", () => {
     const delegated = await tools.get("expert_delegate")!.execute(
       "call",
       { assignments: [
-        { role: "scout", task: "map files", taskDescription: "repository map", timeoutMs: 60_000 },
-        { role: "reviewer", task: "review findings", timeoutMs: 60_000 },
+        { role: "scout", task: "map files", taskDescription: "repository map", reasoningLevel: "low", timeoutMs: 60_000 },
+        { role: "reviewer", task: "review findings", reasoningLevel: "medium", timeoutMs: 60_000 },
       ] },
       undefined,
       undefined,
