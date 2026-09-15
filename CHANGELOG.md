@@ -2,10 +2,23 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
-## Unreleased
+## 0.8.1 - 2026-09-15
 
 ### Fixed
-- Read-only experts are told that handing back the requested content, analysis, or replacement text in their report **is** completion, and must not report `partial`/`permission_error` merely because their role cannot write files. Observed live: a scout that produced exactly the condensed text its host asked for still self-labelled `permission_error`, which taught telemetry to punish a model for a correctly finished run. Hosts are also guided (shared Skill item 9) to ask read-only experts to *return* rather than *apply*.
+- Read-only experts are told that handing back the requested content, analysis, or replacement text inside their report **is** completion, and must not report `partial` with `failureType: permission_error` merely because their role cannot write files; that failure type is reserved for runs that could not produce the requested result at all. Observed live: a scout produced exactly the condensed sentence its host asked for and then self-labelled a permission error, which taught local telemetry to record a correctly finished run as a failure and would have degraded that model's future routing scores. Fail-fast semantics are unchanged — `permission_error` still terminates the delegation loop without retry or escalation.
+- The shared Skill now guides hosts to ask a read-only expert to *return* text or findings rather than to *apply* or *fix* them, so the assignment matches the role's capability; applying a change stays an implementation-worker or debugger job.
+
+### Notes
+- 0.8.0 was re-verified against the artifacts npm actually served: published tarballs matched the registry shasum, every 0.8.0 feature marker was present in the installed `dist`, thirteen MCP tools and twelve Pi-package tools registered, and the interaction path was exercised live twice more — the native Pi notice woke the host with zero polling, and the previously untested `allowOther` free-text branch was honoured verbatim (the expert applied a host answer that was neither offered option).
+
+## 0.8.1（中文）
+
+### 修复
+- 明确告知只读专家：把所需内容、分析或替换文本写进报告**就是完成**，不得仅因角色不能写文件而返回 `partial` 并标 `failureType: permission_error`；该失败类型只用于“根本产不出要求结果”的情形。实机观测到：某 scout 已精确产出宿主要求的压缩句，却自标权限错误，导致本地遥测把一次正确完成的运行记成失败，并会拉低该模型后续的路由评分。fail-fast 语义不变——`permission_error` 仍然终止委托循环，不重试也不升级。
+- 共享 Skill 新增宿主侧指引：让只读专家 *返回* 文本或结论，而不是让它 *应用* 或 *修复*，以匹配角色的能力边界；落地修改仍由 implementation-worker 或 debugger 负责。
+
+### 说明
+- 对 npm 实际分发的 0.8.0 产物做了复验：发布 tarball 与 registry shasum 一致、已安装 `dist` 含全部 0.8.0 特性标记、MCP 注册 13 个工具且 Pi 包注册 12 个；交互链路又实机跑了两次——原生 Pi 通知在零轮询下唤醒宿主，且此前未验证的 `allowOther` 自由文本分支被逐字执行（专家采用了两个备选项之外的宿主答复）。
 
 ## 0.8.0 - 2026-09-11
 
