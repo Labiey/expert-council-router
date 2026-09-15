@@ -310111,6 +310111,12 @@ var councilConfigSchema = external_exports.object({
     allowedWorkspaceRoots: external_exports.array(external_exports.string().min(1)).default([]),
     trustedSkills: external_exports.array(external_exports.string().min(1)).default([]),
     worktreeRetentionMs: external_exports.number().int().min(6e4).max(30 * 24 * 60 * 6e4).default(24 * 60 * 6e4),
+    /**
+     * Persistent per-role tool grants applied on top of a role's default tool
+     * seed at session start. Empty by default (grants stay session-scoped). A
+     * read-only role still cannot receive mutating/shell tools through here.
+     */
+    toolGrants: external_exports.partialRecord(expertRoleSchema, external_exports.array(external_exports.string().min(1).max(60)).max(20)).default({}),
     expertLifetime: external_exports.enum(["host-bound", "detached"]).default("host-bound"),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
@@ -310133,6 +310139,7 @@ var councilConfigSchema = external_exports.object({
     allowedWorkspaceRoots: [],
     trustedSkills: [],
     worktreeRetentionMs: 24 * 60 * 6e4,
+    toolGrants: {},
     expertLifetime: "host-bound",
     workspaceProvisioning: {
       mode: "none",
@@ -318970,6 +318977,7 @@ ${request.task}
 - ${dependencyGuidance(provisioning)}
 - If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.
 - For a genuinely major, hard-to-reverse, or ambiguous direction the task did not settle, call request_decision with 2-4 recommended options (best first); the Main Agent will choose and you continue in this same session. Do NOT use it for routine choices you can decide yourself.
+- If you genuinely need a tool your role does not grant, call request_tool with the tool name and a concrete reason; the Main Agent may approve once or persistently. Do not request tools you do not need, and mutating/shell tools cannot be granted to read-only roles.
 - Diagnose a failed tool call before retrying with a changed approach.
 - Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.
 - Do not reveal or request chain-of-thought.
@@ -319087,6 +319095,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       workspaceProvisioning: { mode: provisioningMode },
       supportedTools: process.platform === "win32" ? ["read", "grep", "find", "ls", "edit", "write", "powershell"] : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       realtimeInteraction: true,
+      dynamicToolPermissions: true,
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : [],
@@ -319128,6 +319137,10 @@ var PiExpertRuntime = class _PiExpertRuntime {
       const capabilities = await this.getCapabilities();
       const mutationTools = /* @__PURE__ */ new Set(["edit", "write", "bash", "powershell"]);
       const tools = request.tools.filter((tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)));
+      for (const granted of this.options.config.security.toolGrants[request.role] ?? []) {
+        if (capabilities.supportedTools.includes(granted) && (!effectiveReadOnly || !mutationTools.has(granted)) && !tools.includes(granted))
+          tools.push(granted);
+      }
       const resourceLoader = await this.createSafeResourceLoader(workspace.cwd, request.skills);
       if (!resourceLoader) {
         throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
@@ -319210,17 +319223,61 @@ Apply this decision and continue the assigned task now. If the decision changed 
           };
         }
       };
+      const mutationToolSet = /* @__PURE__ */ new Set(["edit", "write", "bash", "powershell"]);
+      const grantable = /* @__PURE__ */ new Set([...capabilities.supportedTools]);
+      const requestTool = {
+        name: "request_tool",
+        description: "Ask the Main Agent to grant you a tool your role does not currently have, then continue if approved. Use it when a genuinely needed capability is missing (for example a read-only scout needing to run a build or a shell command). You may only request tools the runtime supports; mutating/shell tools cannot be granted to a read-only execution.",
+        parameters: typebox_exports2.Object({
+          tool: typebox_exports2.String({ description: "The tool name you need, e.g. bash, powershell, edit, write, read, grep, find, or ls." }),
+          reason: typebox_exports2.String({ description: "Why this specific tool is required to complete the bounded task." })
+        }),
+        execute: async (_toolCallId, params) => {
+          const tool = String(params.tool ?? "").trim().slice(0, 60);
+          const reason = String(params.reason ?? "").slice(0, 2e3);
+          if (!tool || !grantable.has(tool)) {
+            return { content: [{ type: "text", text: `"${tool}" is not a grantable tool on this runtime. Available: ${[...grantable].join(", ")}. Continue without it or call report_and_stop.` }], details: {} };
+          }
+          if (effectiveReadOnly && mutationToolSet.has(tool)) {
+            return { content: [{ type: "text", text: `Cannot grant the mutating/shell tool "${tool}" to a read-only execution (isolation boundary). Re-dispatch as an implementation-worker if mutation is truly required, or call report_and_stop.` }], details: {} };
+          }
+          if (entry.activeToolNames?.includes(tool)) {
+            return { content: [{ type: "text", text: `You already have "${tool}" available. Use it.` }], details: {} };
+          }
+          const { response: response2, hostAbsent } = await this.beginInteraction(executionKey, { kind: "tool_approval", tool, reason });
+          if (response2.scope === "reject") {
+            const note = hostAbsent ? " (no answer from the Main Agent)" : "";
+            return { content: [{ type: "text", text: `The Main Agent rejected granting "${tool}"${note}. Continue without it, or call report_and_stop with the blocker.` }], details: {} };
+          }
+          const granted = this.activateTool(entry, tool);
+          if (!granted) {
+            return { content: [{ type: "text", text: `Approval granted but the runtime could not activate "${tool}" (dynamic tools unsupported). Call report_and_stop.` }], details: {} };
+          }
+          if (response2.scope === "once")
+            entry.onceTools?.add(tool);
+          return { content: [{ type: "text", text: `The Main Agent granted "${tool}" (${response2.scope}). Use it now to continue the task.` }], details: {} };
+        }
+      };
       const created = await this.sdk.createAgentSession({
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools: [...tools, "report_and_stop", "request_decision"],
-        customTools: [stopTool, decisionTool],
+        tools: [...tools, "report_and_stop", "request_decision", "request_tool"],
+        customTools: [stopTool, decisionTool, requestTool],
         ...resourceLoader ? { resourceLoader } : {},
         ...this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}
       });
       session = validatePiSession(created.session, `${this.packageName} createAgentSession result`);
       Object.assign(entry, { session, workspace });
+      entry.activeToolNames = [...tools, "report_and_stop", "request_decision", "request_tool"];
+      entry.onceTools = /* @__PURE__ */ new Set();
+      entry.unsubscribe = session.subscribe?.((event) => {
+        const e2 = event;
+        if (e2?.type === "tool_execution_end" && e2.toolName && entry.onceTools?.has(e2.toolName)) {
+          entry.onceTools.delete(e2.toolName);
+          this.deactivateTool(entry, e2.toolName);
+        }
+      }) ?? void 0;
       if (entry.abortRequested) {
         return await this.buildAbortedResult(entry, request, started);
       }
@@ -319337,6 +319394,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
         }
       };
     } finally {
+      entry?.unsubscribe?.();
       this.activeSessions.delete(executionKey);
       session?.dispose();
     }
@@ -319427,6 +319485,25 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     this.lastHostResponded.set(executionId2, true);
     entry.resolveInteraction?.(response2);
     return { executionId: executionId2, status: "resolved", kind: response2.kind };
+  }
+  /** Activate a tool on a live session for dynamic permission grants; false if unsupported or unknown. */
+  activateTool(entry, tool) {
+    if (!entry.session?.setActiveToolsByName || !entry.activeToolNames)
+      return false;
+    if (entry.activeToolNames.includes(tool))
+      return true;
+    entry.activeToolNames = [...entry.activeToolNames, tool];
+    entry.session.setActiveToolsByName(entry.activeToolNames);
+    return true;
+  }
+  /** Deactivate a previously once-granted tool after its single use. */
+  deactivateTool(entry, tool) {
+    if (!entry.session?.setActiveToolsByName || !entry.activeToolNames)
+      return;
+    if (!entry.activeToolNames.includes(tool))
+      return;
+    entry.activeToolNames = entry.activeToolNames.filter((name) => name !== tool);
+    entry.session.setActiveToolsByName(entry.activeToolNames);
   }
   async inspectEntry(executionId2, entry) {
     if (!entry.session) {

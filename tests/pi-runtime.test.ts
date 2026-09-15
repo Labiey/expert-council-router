@@ -282,7 +282,7 @@ describe("Pi runtime adapter", () => {
       cacheWriteTokens: 2,
       estimatedCost: 0.02,
     });
-    expect(sessionOptions?.tools).toEqual(["read", "grep", "report_and_stop", "request_decision"]);
+    expect(sessionOptions?.tools).toEqual(["read", "grep", "report_and_stop", "request_decision", "request_tool"]);
     expect((sessionOptions?.customTools as Array<{ name: string }> | undefined)?.[0]?.name).toBe("report_and_stop");
     expect(sessionOptions?.model).toBe(nativeModel);
   });
@@ -442,6 +442,105 @@ describe("Pi runtime adapter", () => {
       roleDirectory,
     });
     expect((await runtime.respondToInteraction("exec_missing", { kind: "decision", otherText: "x" })).status).toBe("not-found");
+  });
+
+  it("grants a requested tool once, activates it, and auto-revokes after its first use", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    let requestTool: { execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> } | undefined;
+    let fireEvent: ((event: unknown) => void) | undefined;
+    let lastActive: string[] = [];
+    let grantText = "";
+    const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        requestTool = custom.find((tool) => tool.name === "request_tool");
+        expect(requestTool).toBeDefined();
+        return {
+          session: {
+            prompt: async () => {
+              const res = await requestTool!.execute("t1", { tool: "grep", reason: "need to search the tree" });
+              grantText = res.content[0]!.text;
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: grantText }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            subscribe: (listener: (event: unknown) => void) => { fireEvent = listener; return () => {}; },
+            setActiveToolsByName: (names: string[]) => { lastActive = [...names]; },
+            state,
+          },
+        };
+      },
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const executionId = "exec_tool_once";
+    const running = runtime.executeExpert({
+      executionId, role: "implementation-worker", task: "Build it", model: "p/m",
+      tools: ["read", "edit", "write"], skills: [], readOnly: false, workspace: process.cwd(), timeoutMs: 20_000, attempt: 1,
+    });
+    let progress = await runtime.inspectExecution(executionId);
+    for (let i = 0; i < 50 && !progress?.pendingInteraction; i += 1) {
+      await new Promise((r) => setTimeout(r, 20));
+      progress = await runtime.inspectExecution(executionId);
+    }
+    expect(progress?.pendingInteraction?.request).toMatchObject({ kind: "tool_approval", tool: "grep" });
+    expect((await runtime.respondToInteraction(executionId, { kind: "tool_approval", scope: "once" })).status).toBe("resolved");
+    const result = await running;
+    expect(result.status).toBe("success");
+    expect(grantText).toContain("granted \"grep\" (once)");
+    expect(lastActive).toContain("grep");
+    // Simulate the tool completing once; the pump must deactivate it.
+    fireEvent?.({ type: "tool_execution_end", toolName: "grep" });
+    expect(lastActive).not.toContain("grep");
+  });
+
+  it("refuses to escalate a mutating tool to a read-only execution without raising an interaction", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    let requestTool: { execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> } | undefined;
+    let boundaryText = "";
+    const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        requestTool = custom.find((tool) => tool.name === "request_tool");
+        return {
+          session: {
+            prompt: async () => {
+              const res = await requestTool!.execute("t1", { tool: "edit", reason: "want to write files" });
+              boundaryText = res.content[0]!.text;
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "done" }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            subscribe: () => () => {},
+            setActiveToolsByName: () => {},
+            state,
+          },
+        };
+      },
+    };
+    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    // A scout is a read-only role; requesting edit must be refused at the boundary, no pending interaction.
+    const result = await runtime.executeExpert({
+      executionId: "exec_ro_boundary", role: "scout", task: "Explore", model: "p/m",
+      tools: ["read", "grep"], skills: [], readOnly: true, workspace: process.cwd(), timeoutMs: 20_000, attempt: 1,
+    });
+    expect(result.status).toBe("success");
+    expect(boundaryText).toContain("read-only execution");
   });
 
   it("keeps expert sessions alive under security.expertLifetime detached and aborts them by default (host-bound)", async () => {

@@ -399,7 +399,7 @@ function executionPrompt(
   roleInstructions: string,
   provisioning?: WorkspaceProvisioningStatus,
 ): string {
-  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- For a genuinely major, hard-to-reverse, or ambiguous direction the task did not settle, call request_decision with 2-4 recommended options (best first); the Main Agent will choose and you continue in this same session. Do NOT use it for routine choices you can decide yourself.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
+  return `${roleInstructions}\n\n## Bounded assignment\n${request.task}\n\n## Execution constraints\n- Do not delegate to another agent.\n- Use only the provided tools and workspace.\n- Never modify an existing file before inspecting the relevant content.\n- Prefer targeted edits over rewriting whole files.\n- Verify paths rather than guessing.\n- ${dependencyGuidance(provisioning)}\n- If the task cannot be completed with the assigned tools and workspace (missing tool, absent environment, permission denied), or you determine continued work cannot reach the goal, call the report_and_stop tool immediately with the exact blocker, useful findings, risks, and a recommendedNextAction; then end your turn. Do not burn the budget on silent workarounds.\n- For a genuinely major, hard-to-reverse, or ambiguous direction the task did not settle, call request_decision with 2-4 recommended options (best first); the Main Agent will choose and you continue in this same session. Do NOT use it for routine choices you can decide yourself.\n- If you genuinely need a tool your role does not grant, call request_tool with the tool name and a concrete reason; the Main Agent may approve once or persistently. Do not request tools you do not need, and mutating/shell tools cannot be granted to read-only roles.\n- Diagnose a failed tool call before retrying with a changed approach.\n- Use finite, non-interactive test commands and set an explicit command timeout based on expected difficulty whenever the shell tool supports it.\n- Do not reveal or request chain-of-thought.\n${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${request.priorFailure.summary}\n` : ""}\nReturn only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
 }
 
 /** Structured stop report submitted by the expert through `report_and_stop`. */
@@ -431,6 +431,12 @@ interface ActiveExpertSession {
   resolveInteraction?: (response: InteractionResponse) => void;
   /** Interaction rounds consumed so far by this execution. */
   interactionRounds?: number;
+  /** Tool names currently active for the session, tracked for dynamic grants. */
+  activeToolNames?: string[];
+  /** Tools granted "once" that must deactivate after their first use. */
+  onceTools?: Set<string>;
+  /** Unsubscribe for the progress/revoke event pump. */
+  unsubscribe?: () => void;
 }
 
 export class PiExpertRuntime implements ExpertRuntime {
@@ -565,6 +571,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         ? ["read", "grep", "find", "ls", "edit", "write", "powershell"]
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       realtimeInteraction: true,
+      dynamicToolPermissions: true,
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
@@ -616,6 +623,15 @@ export class PiExpertRuntime implements ExpertRuntime {
       const tools = request.tools.filter(
         (tool) => capabilities.supportedTools.includes(tool) && (!effectiveReadOnly || !mutationTools.has(tool)),
       );
+      // Apply persistent per-role grants from config as an additional seed. The
+      // read-only boundary still forbids mutating/shell tools for a read-only role.
+      for (const granted of this.options.config.security.toolGrants[request.role] ?? []) {
+        if (
+          capabilities.supportedTools.includes(granted) &&
+          (!effectiveReadOnly || !mutationTools.has(granted)) &&
+          !tools.includes(granted)
+        ) tools.push(granted);
+      }
       const resourceLoader = await this.createSafeResourceLoader(workspace.cwd, request.skills);
       if (!resourceLoader) {
         throw new Error("Pi resource isolation is unavailable; refusing to create an expert session.");
@@ -721,12 +737,54 @@ export class PiExpertRuntime implements ExpertRuntime {
           };
         },
       };
+      // request_tool lets the expert ask for a tool its role does not grant by
+      // default. Preset role tools are a starting seed, not a ceiling; the Main
+      // Agent may grant more (once or persistent). A read-only execution can
+      // never be escalated to a mutating/shell tool — that would break the
+      // isolation guarantee, since read-only experts run in the MAIN workspace.
+      const mutationToolSet = new Set(["edit", "write", "bash", "powershell"]);
+      const grantable = new Set<string>([...capabilities.supportedTools]);
+      const requestTool = {
+        name: "request_tool",
+        description:
+          "Ask the Main Agent to grant you a tool your role does not currently have, then continue if approved. " +
+          "Use it when a genuinely needed capability is missing (for example a read-only scout needing to run a build or a shell command). " +
+          "You may only request tools the runtime supports; mutating/shell tools cannot be granted to a read-only execution.",
+        parameters: Type.Object({
+          tool: Type.String({ description: "The tool name you need, e.g. bash, powershell, edit, write, read, grep, find, or ls." }),
+          reason: Type.String({ description: "Why this specific tool is required to complete the bounded task." }),
+        }),
+        execute: async (_toolCallId: string, params: { tool?: unknown; reason?: unknown }) => {
+          const tool = String(params.tool ?? "").trim().slice(0, 60);
+          const reason = String(params.reason ?? "").slice(0, 2_000);
+          if (!tool || !grantable.has(tool)) {
+            return { content: [{ type: "text", text: `"${tool}" is not a grantable tool on this runtime. Available: ${[...grantable].join(", ")}. Continue without it or call report_and_stop.` }], details: {} };
+          }
+          if (effectiveReadOnly && mutationToolSet.has(tool)) {
+            return { content: [{ type: "text", text: `Cannot grant the mutating/shell tool "${tool}" to a read-only execution (isolation boundary). Re-dispatch as an implementation-worker if mutation is truly required, or call report_and_stop.` }], details: {} };
+          }
+          if (entry!.activeToolNames?.includes(tool)) {
+            return { content: [{ type: "text", text: `You already have "${tool}" available. Use it.` }], details: {} };
+          }
+          const { response, hostAbsent } = await this.beginInteraction(executionKey, { kind: "tool_approval", tool, reason });
+          if (response.scope === "reject") {
+            const note = hostAbsent ? " (no answer from the Main Agent)" : "";
+            return { content: [{ type: "text", text: `The Main Agent rejected granting "${tool}"${note}. Continue without it, or call report_and_stop with the blocker.` }], details: {} };
+          }
+          const granted = this.activateTool(entry!, tool);
+          if (!granted) {
+            return { content: [{ type: "text", text: `Approval granted but the runtime could not activate "${tool}" (dynamic tools unsupported). Call report_and_stop.` }], details: {} };
+          }
+          if (response.scope === "once") entry!.onceTools?.add(tool);
+          return { content: [{ type: "text", text: `The Main Agent granted "${tool}" (${response.scope}). Use it now to continue the task.` }], details: {} };
+        },
+      };
       const created = await this.sdk.createAgentSession({
         cwd: workspace.cwd,
         model: nativeModel,
         modelRuntime: this.models,
-        tools: [...tools, "report_and_stop", "request_decision"],
-        customTools: [stopTool, decisionTool],
+        tools: [...tools, "report_and_stop", "request_decision", "request_tool"],
+        customTools: [stopTool, decisionTool, requestTool],
         ...(resourceLoader ? { resourceLoader } : {}),
         ...(this.sdk.SessionManager ? { sessionManager: this.sdk.SessionManager.inMemory(workspace.cwd) } : {}),
       });
@@ -734,6 +792,19 @@ export class PiExpertRuntime implements ExpertRuntime {
       // Fill the pre-registered entry in place: abortExecution may hold this
       // exact object reference and setting a fresh one could drop its flag.
       Object.assign(entry, { session, workspace });
+      // Dynamic tool permissions: track the active set so a granted tool can be
+      // added at runtime, and observe tool completions to auto-revoke "once" grants
+      // after a single use. Best-effort: a session without these hooks degrades to
+      // session-scoped grants (never a crash).
+      entry.activeToolNames = [...tools, "report_and_stop", "request_decision", "request_tool"];
+      entry.onceTools = new Set<string>();
+      entry.unsubscribe = session.subscribe?.((event) => {
+        const e = event as { type?: string; toolName?: string };
+        if (e?.type === "tool_execution_end" && e.toolName && entry!.onceTools?.has(e.toolName)) {
+          entry!.onceTools!.delete(e.toolName);
+          this.deactivateTool(entry!, e.toolName);
+        }
+      }) ?? undefined;
       // The abort may have arrived while preparing/provisioning the workspace.
       if (entry.abortRequested) {
         return await this.buildAbortedResult(entry, request, started);
@@ -867,6 +938,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         },
       };
     } finally {
+      entry?.unsubscribe?.();
       this.activeSessions.delete(executionKey);
       session?.dispose();
     }
@@ -966,6 +1038,23 @@ export class PiExpertRuntime implements ExpertRuntime {
     this.lastHostResponded.set(executionId, true);
     entry.resolveInteraction?.(response);
     return { executionId, status: "resolved", kind: response.kind };
+  }
+
+  /** Activate a tool on a live session for dynamic permission grants; false if unsupported or unknown. */
+  private activateTool(entry: ActiveExpertSession, tool: string): boolean {
+    if (!entry.session?.setActiveToolsByName || !entry.activeToolNames) return false;
+    if (entry.activeToolNames.includes(tool)) return true;
+    entry.activeToolNames = [...entry.activeToolNames, tool];
+    entry.session.setActiveToolsByName(entry.activeToolNames);
+    return true;
+  }
+
+  /** Deactivate a previously once-granted tool after its single use. */
+  private deactivateTool(entry: ActiveExpertSession, tool: string): void {
+    if (!entry.session?.setActiveToolsByName || !entry.activeToolNames) return;
+    if (!entry.activeToolNames.includes(tool)) return;
+    entry.activeToolNames = entry.activeToolNames.filter((name) => name !== tool);
+    entry.session.setActiveToolsByName(entry.activeToolNames);
   }
 
   private async inspectEntry(executionId: string, entry: ActiveExpertSession): Promise<ExecutionProgress> {

@@ -223,6 +223,12 @@ export const councilConfigSchema = z.object({
       allowedWorkspaceRoots: z.array(z.string().min(1)).default([]),
       trustedSkills: z.array(z.string().min(1)).default([]),
       worktreeRetentionMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).default(24 * 60 * 60_000),
+      /**
+       * Persistent per-role tool grants applied on top of a role's default tool
+       * seed at session start. Empty by default (grants stay session-scoped). A
+       * read-only role still cannot receive mutating/shell tools through here.
+       */
+      toolGrants: z.partialRecord(expertRoleSchema, z.array(z.string().min(1).max(60)).max(20)).default({}),
       expertLifetime: z.enum(["host-bound", "detached"]).default("host-bound"),
       workspaceProvisioning: z
         .object({
@@ -248,6 +254,7 @@ export const councilConfigSchema = z.object({
       allowedWorkspaceRoots: [],
       trustedSkills: [],
       worktreeRetentionMs: 24 * 60 * 60_000,
+      toolGrants: {},
       expertLifetime: "host-bound",
       workspaceProvisioning: {
         mode: "none",

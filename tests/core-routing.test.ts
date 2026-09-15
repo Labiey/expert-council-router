@@ -383,6 +383,14 @@ describe("configuration", () => {
     expect(optedIn.security.workspaceProvisioning).toMatchObject({ mode: "auto", maxConcurrent: 2, scrubEnv: false });
     expect(() => parseCouncilConfig({ security: { workspaceProvisioning: { timeoutMs: 1_000 } } })).toThrow(ConfigValidationError);
   });
+
+  it("parses and validates security.toolGrants as a partial per-role tool list", () => {
+    expect(parseCouncilConfig({}).security.toolGrants).toEqual({});
+    const granted = parseCouncilConfig({ security: { toolGrants: { scout: ["bash"], "implementation-worker": ["powershell"] } } });
+    expect(granted.security.toolGrants).toEqual({ scout: ["bash"], "implementation-worker": ["powershell"] });
+    // Unknown role rejected (partialRecord keys are validated).
+    expect(() => parseCouncilConfig({ security: { toolGrants: { "not-a-role": ["bash"] } } })).toThrow(ConfigValidationError);
+  });
 });
 
 describe("runtime availability markers", () => {
