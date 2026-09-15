@@ -58,11 +58,14 @@
     "trustedSkills": [],
     "worktreeRetentionMs": 86400000,
     "toolGrants": {
-      "scout": ["powershell"]
+      "scout": [
+        "powershell"
+      ]
     },
     "observability": {
-      "expertWindow": "events",
-      "streamToHost": true
+      "expertWindow": "interactive",
+      "streamToHost": true,
+      "redactToolArgs": true
     },
     "workspaceProvisioning": {
       "mode": "auto",

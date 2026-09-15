@@ -118,6 +118,51 @@ export interface ObservabilityConfig {
    * not an observability one.
    */
   streamToHost: boolean;
+  /**
+   * Only meaningful with `expertWindow: "interactive"`, which writes a live event
+   * stream to the data directory for another terminal to follow. When true (the
+   * default) tool invocations are recorded by name only; when false a bounded
+   * argument summary is written too, which can contain file paths and shell
+   * commands. The event file is local-only, like telemetry.
+   */
+  redactToolArgs: boolean;
+}
+
+/** One observed moment in an expert's live event stream. */
+export type ExpertEventKind =
+  | "started"
+  | "tool_started"
+  | "tool_finished"
+  | "assistant_text"
+  | "interaction_opened"
+  | "interaction_answered"
+  | "stopped"
+  | "completed"
+  | "failed"
+  | "stream_truncated";
+
+/**
+ * A single line of the cross-process observability stream written when
+ * `security.observability.expertWindow` is `"interactive"`. Bounded by construction:
+ * no chain of thought, no tool output, and no tool arguments unless the operator
+ * explicitly turned `redactToolArgs` off.
+ */
+export interface ExpertObservabilityEvent {
+  /** Wall-clock ISO timestamp of when the runtime observed the event. */
+  t: string;
+  executionId: string;
+  role: string;
+  model?: string;
+  kind: ExpertEventKind;
+  tool?: string;
+  ok?: boolean;
+  /** Bounded expert-authored text, or an interaction/terminal detail. */
+  text?: string;
+  /** Bounded argument summary; present only when redactToolArgs is false. */
+  argsSummary?: string;
+  status?: string;
+  failureType?: string;
+  durationMs?: number;
 }
 
 export interface RuntimeCapabilities {
@@ -131,6 +176,12 @@ export interface RuntimeCapabilities {
   sourceWorkspaceDirty?: boolean;
   /** Active worktree provisioning mode, surfaced so hosts can warn before delegation. */
   workspaceProvisioning?: { mode: string };
+  /**
+   * Live cross-process event stream availability, i.e. what `expertWindow:
+   * "interactive"` + `expert-council watch` can observe. Absent when the runtime
+   * cannot write one, so a host never promises a window it cannot open.
+   */
+  eventStream?: { enabled: boolean; dir?: string; redactToolArgs?: boolean };
   supportedTools: string[];
   limitations: string[];
   /** Runtime can raise/await a decision or tool-approval interaction mid-turn. */
@@ -694,7 +745,7 @@ export interface ResourceInventory {
     path?: string;
     provisioningMode: string;
     /** Effective progress-visibility settings, so a host can see what the toggle actually does. */
-    observability?: { expertWindow: string; streamToHost: boolean };
+    observability?: { expertWindow: string; streamToHost: boolean; redactToolArgs: boolean };
   };
   /** Per-provider caps, weighted usage, and in-flight counts; omitted when caps are unwired. */
   providerLimits?: ProviderLimitsView[];

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -197,6 +197,9 @@ describe("Pi runtime adapter", () => {
     expect(other.workspaceRoot).not.toBe(first.workspaceRoot);
     expect(other.modelAssessmentPath).toBe(first.modelAssessmentPath);
     expect(other.telemetryPath).toBe(first.telemetryPath);
+    // The interactive expert window must live under the operator's data root, never
+    // inside the checked-out project an expert happens to work on.
+    expect(first.observabilityDir).toBe(path.join(dataRoot, "observability"));
   });
 
   it("selects a writable per-user data root on Windows, macOS, and Linux", () => {
@@ -583,6 +586,152 @@ describe("Pi runtime adapter", () => {
     // The interaction is cleared once answered.
     expect((await runtime.inspectExecution(executionId))?.pendingInteraction).toBeUndefined();
   });
+
+  it("writes an interactive event stream another terminal can follow, redacted by default", async () => {
+    const root = await mkdtemp(path.join(tmpdir(), "ec-observability-"));
+    const streamDir = path.join(root, "observability");
+    const SECRET = "npm publish --token=super-secret-value";
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+
+    const runWith = async (redactToolArgs: boolean, executionId: string): Promise<string> => {
+      let emit: ((event: Record<string, unknown>) => void) | undefined;
+      const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+      const sdk: PiSdkLike = {
+        ...safeResourceApis,
+        ModelRuntime: { create: async () => modelRuntime },
+        SessionManager: { inMemory: () => ({}) },
+        createAgentSession: async () => ({
+          session: {
+            subscribe: (listener: (event: Record<string, unknown>) => void) => {
+              emit = listener;
+              return () => { emit = undefined; };
+            },
+            prompt: async () => {
+              emit!({ type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: SECRET } });
+              emit!({ type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "checking\tthe\tbuild\nthen the tests" }] } });
+              emit!({ type: "tool_execution_end", toolCallId: "c1", toolName: "bash", result: {}, isError: true });
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "streamed" }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            state,
+          },
+        }),
+      };
+      const runtime = await PiExpertRuntime.create({
+        cwd: process.cwd(),
+        config: parseCouncilConfig({ security: { observability: { expertWindow: "interactive", redactToolArgs } } }),
+        sdk,
+        modelRuntime,
+        roleDirectory,
+        observabilityDir: streamDir,
+      });
+      await runtime.executeExpert({
+        executionId,
+        role: "implementation-worker",
+        task: "Produce a stream",
+        model: "p/m",
+        tools: ["read", "bash"],
+        skills: [],
+        reasoningLevel: "low",
+        readOnly: false,
+        workspace: process.cwd(),
+        timeoutMs: 30_000,
+        attempt: 1,
+      });
+      // closeObservabilityStream awaits the write chain, so no poll is needed here.
+      return await readFile(path.join(streamDir, `${executionId}.jsonl`), "utf8");
+    };
+
+    try {
+      const redacted = (await runWith(true, "exec_stream_redacted")).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(redacted.map((line) => line.kind)).toEqual(["started", "tool_started", "assistant_text", "tool_finished", "completed"]);
+      expect(redacted[1]).toMatchObject({ tool: "bash" });
+      expect(redacted[1]).not.toHaveProperty("argsSummary");
+      expect(redacted[3]).toMatchObject({ tool: "bash", ok: false });
+      // Narration is collapsed onto one bounded line so the stream stays one event per line.
+      expect(String(redacted[2]!.text)).toBe("checking the build then the tests");
+      expect(JSON.stringify(redacted)).not.toContain(SECRET);
+
+      const open = (await runWith(false, "exec_stream_open")).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(String(open[1]!.argsSummary)).toContain("npm publish");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  }, 90_000);
+
+  it("bounces a stop report that carries no real findings and accepts a substantive one", async () => {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+      getModel: () => nativeModel,
+    };
+    let stopTool: { execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> } | undefined;
+    let bounceText = "";
+    let acceptText = "";
+    const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime },
+      SessionManager: { inMemory: () => ({}) },
+      createAgentSession: async (options) => {
+        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        stopTool = custom.find((tool) => tool.name === "report_and_stop");
+        return {
+          session: {
+            prompt: async () => {
+              // A "no blocker" stop with filler findings must not be credited as delivery.
+              bounceText = (await stopTool!.execute("s1", {
+                reason: "No blocker for the assigned inventory - the report is complete.",
+                findings: ["placeholders", "   "],
+                recommendedNextAction: "nothing",
+              })).content[0]!.text;
+              acceptText = (await stopTool!.execute("s2", {
+                reason: "Cannot run the suite: this role has no shell tool.",
+                findings: ["read tests/pi-runtime.test.ts", "TBD"],
+                risks: ["counts are static, not executed"],
+                recommendedNextAction: "dispatch an implementation worker to run vitest",
+              })).content[0]!.text;
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "ignored, the stop report wins" }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            state,
+          },
+        };
+      },
+    };
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({}),
+      sdk,
+      modelRuntime,
+      roleDirectory,
+    });
+    const result = await runtime.executeExpert({
+      executionId: "exec_stop_bounce",
+      role: "scout",
+      task: "Inventory then stop honestly",
+      model: "p/m",
+      tools: ["read"],
+      skills: [],
+      reasoningLevel: "low",
+      readOnly: true,
+      workspace: process.cwd(),
+      timeoutMs: 30_000,
+      attempt: 1,
+    });
+    expect(bounceText).toContain("Stop report rejected");
+    expect(acceptText).toContain("Stop report recorded");
+    expect(result.status).toBe("partial");
+    expect(result.executionMetadata).toMatchObject({ stoppedByExpert: true, failureType: "missing_context" });
+    // Filler entries are stripped from the accepted report too.
+    expect(result.findings).toEqual(["read tests/pi-runtime.test.ts"]);
+  }, 60_000);
 
   it("refuses a concurrent second interaction instead of orphaning the open one", async () => {
     const nativeModel = { provider: "p", id: "m" };

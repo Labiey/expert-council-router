@@ -24,7 +24,7 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 - **动态工具权限**：预设角色工具是**种子而非上限**。专家用 `request_tool` 申请缺失工具；宿主授予 `once`（用一次后自动撤销）/`persistent`（本会话）/`reject`。`security.toolGrants` 提供运维侧持久按角色授予。只读执行永不升级为变更/shell 工具（隔离保证）。
 - **交互经正确性通道发现**：未决交互以 `pendingInteraction` 出现在 `expert_status(view:"running")` 与 `expert_result(includeProgress)`；原生 Pi 包还会在交互一打开时用 `expert-council-interaction` 通知唤醒宿主；无法接收推送的无头宿主（Codex/MCP）继续轮询。每执行有界（默认 3 轮 + 等待超时）。
 - **跨语言环境**：`provisionWorkspace` 不再只支持 Node。驱动注册表从各工具链已有的全局下载缓存物化 node/pnpm/yarn/bun、python(uv/poetry/宿主 venv)、rust、go、jvm/maven、dotnet、ruby、php、elixir。环境即代码后端（`flake.nix`、`.devcontainer/`）被检测并交还委托而非重造。新增 `security.workspaceProvisioning.strategy`（auto/drivers/as-code/in-place）与 `runtimeEnv`（isolated/host-env）；并发 worktree 绝不共享重编译 target 目录。
-- **进度可观测开关**：`security.observability.expertWindow`（默认 `off` / `events`）在 running 视图浮现轻量进度（`messageCount` 与最后一条助手输出），`security.observability.streamToHost` 可关闭该数据流。`interactive` 为前向兼容保留，在 RPC 投影实现前与 `events` 行为一致，配置了它 `expert_inspect` 会给出告警。两者都不约束 `pendingInteraction` 正确性通道，也不约束宿主显式索取的 `expert_result(includeProgress)`。
+- **进度可观测开关**：`security.observability.expertWindow` 决定能看到专家实时工作的多少——`off`（默认，不环境播报）、`events`（running 视图浮现轻量进度），或 `interactive`：此外写入一份**可让运维者在另一个终端跟随的实时事件流**，用 `expert-council watch --exec ID --follow` 查看，**完全不占用主代理上下文**。`security.observability.streamToHost` 可关流，`redactToolArgs`（默认 `true`）决定工具调用是否只按名称记录。三者都不约束 `pendingInteraction` 正确性通道，也不约束宿主显式索取的 `expert_result(includeProgress)` 快照。
 - 与宿主无关的 Core：配置校验、模型归一化、按模型/供应商计费倍率、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
@@ -327,6 +327,41 @@ subscription  metered  quota  free  unknown
 
 供给完成后验证门自动运行仓库的 typecheck 与测试命令；门失败会把本已成功的结果降级为 `partial`（`failureType: "test_failure"`），从而触发既有修正重试路径。
 
+### 可观测性与专家窗口
+
+`security.observability` 决定能看到专家实时工作的多少。它与 `pendingInteraction` 通道有意分开：后者是正确性面，永远上报。
+
+```json
+{
+  "security": {
+    "observability": {
+      "expertWindow": "interactive",
+      "streamToHost": true,
+      "redactToolArgs": true
+    }
+  }
+}
+```
+
+| `expertWindow` | 得到什么 |
+| --- | --- |
+| `off`（默认） | 无环境播报：running 视图只有已用/剩余预算。 |
+| `events` | 在此基础上，`expert_status` running 视图多出有界的实时进度块（`messageCount` 与最后一条助手输出），需 `streamToHost` 为 true。 |
+| `interactive` | 在此之上再写入一份事件流，运维者可在**另一个终端**跟随，且不花费主代理任何上下文。 |
+
+事件流位于 `<数据目录>/observability/<executionId>.jsonl`，一行一个 JSON 对象：`started`、`tool_started`、`tool_finished`、`assistant_text`、`interaction_opened`、`interaction_answered`，最后恰好一个 `stopped` / `completed` / `failed`。跟随方式：
+
+```bash
+expert-council watch --exec exec_abc123 --follow
+```
+
+- `--follow` **一定会退出**：遇到终止事件、超过 `--timeout-ms`（默认 300000）、或文件消失。它按字节偏移量追读，绝不输出未写完的半行。`--json` 输出原始对象。
+- 专家叙述被压成每事件一行的有界文本；磁盘上不会有工具输出，也不会有思考链。
+- `redactToolArgs`（默认 `true`）只记录工具名；设为 `false` 会额外写入有界的入参摘要，内容是专家传了什么——包括文件路径与完整命令行。仅在本地文件里留下这些值也可接受的场合才关闭。
+- 事件流文件 7 天后自动清理。
+- 事件流由**运行专家的那个进程**写入。同一数据目录下的 `watch` 才能看到它；换一个无关仓库去跟是看不到的。
+- `expert_inspect` 会报 `runtimeCapabilities.eventStream`，主代理由此能判断所请求的档位是否真可用；写入能力缺失时 `interactive` 降级为 `events`，并在 `warnings` 里说明。
+
 ### 能力画像
 
 模型可以在以下维度获得 0 到 10 分的用户评分：
@@ -484,6 +519,7 @@ expert-council delegate <role> <task>
 expert-council feedback <execution-id> --verification passed|failed
 expert-council cleanup <execution-id>
 expert-council status
+expert-council watch --exec <execution-id> [--follow]
 ```
 
 常用参数：
@@ -494,6 +530,7 @@ expert-council status
 - `--telemetry`：自定义本地遥测路径。
 - `--state`：自定义持久化计划、执行和结果状态路径。
 - `--timeout-ms`：专家执行超时。
+- `watch` 额外接受 `--dir`（事件流目录）、`--interval-ms`（轮询间隔，默认 1000）与 `--timeout-ms`（最长跟随时间，默认 300000）；它需要 `security.observability.expertWindow: "interactive"` 正在产生事件流。
 
 ## MCP Server
 
@@ -845,6 +882,7 @@ npm run smoke:live:pi
 - Worktree 修改只返回给主代理审查，不会自动合并或应用；验收或拒绝后应调用 `expert_cleanup`，否则将在保留期结束后自动清理。
 - 非 Git 工作区的写入需要显式原地修改授权。
 - 正在进行的模型调用不会在 Server 重启后续跑；持久化状态会把它关闭为明确的中断失败，同时保留计划和已完成结果。
+- 交互式专家窗口是尽力而为的可观测性，不是审计日志：事件文件有上限、异步写入、I/O 故障时可能丢事件，且 7 天后会被清理。它们只能从“运行专家那个宿主进程”所在的数据目录里跟随，换一个检出目录或不同的 `EXPERT_COUNCIL_DATA_DIR` 什么都看不到。
 - Codex 自身的沙箱不会自动包含外部 Pi Runtime，因此 Expert Council 使用单独的允许根目录和 worktree 边界。
 - Expert Council 不包含任意第三方包自动安装、递归专家树、图形界面、远程控制平面或远程遥测。
 

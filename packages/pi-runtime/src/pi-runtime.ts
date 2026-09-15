@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat, unlink } from "node:fs/promises";
 import { Type } from "typebox";
 import path from "node:path";
 import {
@@ -10,6 +10,8 @@ import {
   type AvailableModel,
   type CouncilConfig,
   type ExpertExecutionRequest,
+  type ExpertEventKind,
+  type ExpertObservabilityEvent,
   type ExpertResult,
   type ExpertRuntime,
   type ExecutionProgress,
@@ -47,9 +49,53 @@ export interface PiExpertRuntimeOptions {
   maxInteractionRounds?: number;
   /** How long an expert may block awaiting a host response before continuing autonomously. Default 900000ms. */
   interactionTimeoutMs?: number;
+  /**
+   * Directory for the cross-process observability event stream, written only when
+   * `security.observability.expertWindow` is `"interactive"`. Without it the tier
+   * degrades to `"events"` and `getCapabilities` says so.
+   */
+  observabilityDir?: string;
+}
+
+/** Filler that must never be credited as delivered work in a stop report. */
+function isPlaceholderText(value: string): boolean {
+  const normalized = value.trim().toLowerCase().replace(/[.!]+$/, "");
+  if (normalized.length < 4) return true;
+  return /^(placeholder|placeholders|tbd|todo|n\/a|na|none|nothing|xxx+|\?+|\.+|\u2026)$/.test(normalized);
+}
+
+/** One terminal event per execution, so a watcher can stop on its own. */
+function terminalKindFor(result: ExpertResult): ExpertEventKind {
+  if (result.executionMetadata?.stoppedByExpert) return "stopped";
+  return result.status === "failed" ? "failed" : "completed";
 }
 
 class ExecutionTimeoutError extends Error {}
+
+/** Hard caps on one execution's event stream; the file is an operator convenience, not a log service. */
+const OBSERVABILITY_MAX_EVENTS = 2_000;
+const OBSERVABILITY_MAX_BYTES = 256 * 1024;
+const OBSERVABILITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+
+interface ObservabilityStreamState {
+  file: string;
+  events: number;
+  bytes: number;
+  truncated?: boolean;
+  /** Serializes appends so events cannot interleave or be lost. */
+  chain: Promise<void>;
+}
+
+/** Collapse a value to one bounded line: no control characters, no multi-line sprawl on disk. */
+function boundedText(value: string, max = 400): string {
+  const oneLine = value.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}\u2026` : oneLine;
+}
+
+/** Execution ids are generated internally, but a path component is never trusted to stay sane. */
+function streamFileName(executionId: string): string {
+  return `${executionId.replace(/[^A-Za-z0-9_-]/g, "_")}.jsonl`;
+}
 
 export function inferPiProviderBilling(
   provider: string,
@@ -420,6 +466,8 @@ interface ActiveExpertSession {
   timedOut: boolean;
   /** Set when the expert itself reported the task impossible via report_and_stop. */
   stopRequested: boolean;
+  /** Bounces already spent on a contentless stop report (at most one, never a loop). */
+  stopRejections?: number;
   reason?: string;
   /** Resolved by abortExecution to force the execution race to settle. */
   forceSettle?: () => void;
@@ -444,8 +492,10 @@ export class PiExpertRuntime implements ExpertRuntime {
   private readonly activeSessions = new Map<string, ActiveExpertSession>();
   /** Cached capability probe for Pi's runtime tool-set narrowing API. */
   private canNarrowTools: boolean | undefined;
-  /** Marks executions whose current interaction was answered by the host (vs. by the wait timeout). */
+  /** Execution ids whose current interaction was answered by the host (vs. by the wait timeout). */
   private readonly lastHostResponded = new Map<string, boolean>();
+  /** Per-execution state for the interactive observability event stream. */
+  private readonly observabilityStreams = new Map<string, ObservabilityStreamState>();
   private skillDiscoveryWarning?: string;
 
   private constructor(
@@ -464,7 +514,162 @@ export class PiExpertRuntime implements ExpertRuntime {
       options.modelRuntime ?? (await sdk.ModelRuntime.create({ allowModelNetwork: false })),
       `${loaded.packageName} ModelRuntime`,
     );
-    return new PiExpertRuntime(sdk, modelRuntime, options, loaded.packageName);
+    const runtime = new PiExpertRuntime(sdk, modelRuntime, options, loaded.packageName);
+    // Stream files are an operator convenience: sweep expired ones so the directory
+    // cannot grow without bound across many runs.
+    await runtime.pruneObservabilityStreams();
+    return runtime;
+  }
+
+  /**
+   * Public entry point. Wraps the execution so that however a run ends - success,
+   * partial, failure, expert stop, or a thrown error - its observability stream is
+   * closed with exactly one terminal event and flushed before returning.
+   */
+  async executeExpert(input: ExpertExecutionRequest): Promise<ExpertResult> {
+    // The stream is keyed by execution id, so a delegation that arrives without one
+    // is given a stable id at this boundary, before any event is written and before
+    // the inner execution reads it: both must agree or the file cannot be followed.
+    const request: ExpertExecutionRequest = input.executionId ? input : { ...input, executionId: `exec-${Date.now()}` };
+    this.openObservabilityStream(request);
+    let result: ExpertResult;
+    try {
+      result = await this.executeExpertInner(request);
+    } catch (error) {
+      this.emitObservability(request.executionId, request.role, request.model, "failed", {
+        status: "failed",
+        text: boundedText(error instanceof Error ? error.message : String(error)),
+      });
+      await this.closeObservabilityStream(request.executionId);
+      throw error;
+    }
+    this.emitObservability(request.executionId, request.role, request.model ?? result.model, terminalKindFor(result), {
+      status: result.status,
+      ...(result.executionMetadata?.failureType ? { failureType: String(result.executionMetadata.failureType) } : {}),
+      ...(typeof result.executionMetadata?.durationMs === "number" ? { durationMs: result.executionMetadata.durationMs } : {}),
+    });
+    await this.closeObservabilityStream(request.executionId);
+    return result;
+  }
+
+  /** Whether an interactive stream is open for this execution (cheap check, never creates one). */
+  private observabilityActive(executionId: string | undefined): boolean {
+    return executionId !== undefined && this.observabilityStreams.has(executionId);
+  }
+
+  private observabilityState(executionId: string | undefined): ObservabilityStreamState | undefined {
+    // An execution without an id cannot be correlated to a file, so it gets no stream.
+    if (executionId === undefined) return undefined;
+    if (this.options.config.security.observability.expertWindow !== "interactive" || !this.options.observabilityDir) return undefined;
+    const existing = this.observabilityStreams.get(executionId);
+    if (existing) return existing;
+    const created: ObservabilityStreamState = {
+      file: path.join(this.options.observabilityDir, streamFileName(executionId)),
+      events: 0,
+      bytes: 0,
+      chain: Promise.resolve(),
+    };
+    this.observabilityStreams.set(executionId, created);
+    return created;
+  }
+
+  private openObservabilityStream(request: ExpertExecutionRequest): void {
+    const state = this.observabilityState(request.executionId);
+    if (!state || request.executionId === undefined) return;
+    this.appendObservability(state, {
+      t: new Date().toISOString(),
+      executionId: request.executionId,
+      role: request.role,
+      ...(request.model ? { model: request.model } : {}),
+      kind: "started",
+    });
+  }
+
+  private emitObservability(
+    executionId: string | undefined,
+    role: string,
+    model: string | undefined,
+    kind: ExpertEventKind,
+    fields: Partial<ExpertObservabilityEvent> = {},
+  ): void {
+    const state = this.observabilityState(executionId);
+    if (!state || executionId === undefined) return;
+    if (state.events >= OBSERVABILITY_MAX_EVENTS || state.bytes >= OBSERVABILITY_MAX_BYTES) {
+      if (!state.truncated) {
+        state.truncated = true;
+        this.appendObservability(state, {
+          t: new Date().toISOString(),
+          executionId,
+          role,
+          kind: "stream_truncated",
+          text: `${OBSERVABILITY_MAX_EVENTS} events / ${OBSERVABILITY_MAX_BYTES} bytes reached; further events dropped.`,
+        });
+      }
+      return;
+    }
+    this.appendObservability(state, {
+      t: new Date().toISOString(),
+      executionId,
+      role,
+      ...(model ? { model } : {}),
+      kind,
+      ...fields,
+    });
+  }
+
+  /** Best-effort by design: an observability write must never break an expert run. */
+  private appendObservability(state: ObservabilityStreamState, event: ExpertObservabilityEvent): void {
+    const line = `${JSON.stringify(event)}\n`;
+    state.events += 1;
+    state.bytes += Buffer.byteLength(line);
+    state.chain = state.chain
+      .then(async () => {
+        await mkdir(path.dirname(state.file), { recursive: true });
+        await appendFile(state.file, line, { encoding: "utf8" });
+      })
+      .catch(() => undefined);
+  }
+
+  private async closeObservabilityStream(executionId: string | undefined): Promise<void> {
+    if (executionId === undefined) return;
+    const state = this.observabilityStreams.get(executionId);
+    if (!state) return;
+    await state.chain;
+    this.observabilityStreams.delete(executionId);
+  }
+
+  /** Tool arguments reach the stream only when the operator turned redaction off. */
+  private toolArgumentSummary(args: unknown): string | undefined {
+    if (this.options.config.security.observability.redactToolArgs) return undefined;
+    if (!args || typeof args !== "object") return undefined;
+    const record = args as Record<string, unknown>;
+    for (const key of ["command", "script", "path", "file", "filePath", "dir", "pattern", "query", "url"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.trim()) return boundedText(value, 160);
+    }
+    return undefined;
+  }
+
+  /** Remove event streams left behind by earlier sessions; never fatal. */
+  private async pruneObservabilityStreams(): Promise<void> {
+    const dir = this.options.observabilityDir;
+    if (!dir) return;
+    let names: string[];
+    try {
+      names = await readdir(dir);
+    } catch {
+      return; // no stream directory has been created yet
+    }
+    const cutoff = Date.now() - OBSERVABILITY_RETENTION_MS;
+    for (const name of names.filter((item) => item.endsWith(".jsonl"))) {
+      const file = path.join(dir, name);
+      try {
+        const info = await stat(file);
+        if (info.mtimeMs < cutoff) await unlink(file);
+      } catch {
+        // A raced deletion or an unreadable entry is not worth failing startup over.
+      }
+    }
   }
 
   async listAvailableModels(): Promise<AvailableModel[]> {
@@ -574,6 +779,11 @@ export class PiExpertRuntime implements ExpertRuntime {
         : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       realtimeInteraction: true,
       dynamicToolPermissions: true,
+      eventStream: {
+        enabled: this.options.config.security.observability.expertWindow === "interactive" && !!this.options.observabilityDir,
+        ...(this.options.observabilityDir ? { dir: this.options.observabilityDir } : {}),
+        redactToolArgs: this.options.config.security.observability.redactToolArgs,
+      },
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
@@ -588,7 +798,7 @@ export class PiExpertRuntime implements ExpertRuntime {
     };
   }
 
-  async executeExpert(request: ExpertExecutionRequest): Promise<ExpertResult> {
+  async executeExpertInner(request: ExpertExecutionRequest): Promise<ExpertResult> {
     const started = Date.now();
     const executionKey = request.executionId ?? `exec-${Date.now()}`;
     let workspace: PreparedWorkspace | undefined;
@@ -687,18 +897,39 @@ export class PiExpertRuntime implements ExpertRuntime {
           }),
         }),
         execute: async (_toolCallId: string, params: { reason?: unknown; findings?: unknown; risks?: unknown; recommendedNextAction?: unknown }) => {
-          entry!.stopRequested = true;
           const text = (value: unknown, limit: number): string => String(value ?? "").slice(0, limit);
           const lines = (value: unknown): string[] | undefined =>
             Array.isArray(value)
               ? value.map((item) => String(item).slice(0, 500)).filter((item) => item.length > 0).slice(0, 20)
               : undefined;
+          const realLines = (value: unknown): string[] | undefined => {
+            const kept = (lines(value) ?? []).filter((item) => !isPlaceholderText(item));
+            return kept.length ? kept : undefined;
+          };
+          const reason = text(params.reason, 4_000);
+          const findings = realLines(params.findings);
+          const risks = realLines(params.risks);
+          // A stop report is terminal evidence, and it is the only case where an expert
+          // is believed without running anything. An expert that stops while claiming
+          // "no blocker" and submits filler instead of findings must be bounced once and
+          // made to produce the real content, never quietly credited with a delivery.
+          if (!isPlaceholderText(reason) && !findings && !risks && !entry!.stopRejections) {
+            entry!.stopRejections = 1;
+            return {
+              content: [{
+                type: "text",
+                text: "Stop report rejected: it carries no actual findings or risks. If you really are blocked, submit report_and_stop again with the exact blocker in reason and at least one concrete finding (paths, symbols, commands, or the missing capability). If the work is in fact done, do not stop - return your normal JSON result with status success and the content inside it.",
+              }],
+              details: {},
+            };
+          }
+          entry!.stopRequested = true;
           settleStop?.({
-            reason: text(params.reason, 4_000) || "Expert reported the task cannot be completed.",
-            ...(lines(params.findings) ? { findings: lines(params.findings) } : {}),
-            ...(lines(params.risks) ? { risks: lines(params.risks) } : {}),
-            ...(text(params.recommendedNextAction, 1_000)
-              ? { recommendedNextAction: text(params.recommendedNextAction, 1_000) }
+            reason: reason || "Expert reported the task cannot be completed.",
+            ...(findings ? { findings } : {}),
+            ...(risks ? { risks } : {}),
+            ...(realLines([text(params.recommendedNextAction, 1_000)])?.[0]
+              ? { recommendedNextAction: realLines([text(params.recommendedNextAction, 1_000)])![0] }
               : {}),
           });
           return {
@@ -821,10 +1052,36 @@ export class PiExpertRuntime implements ExpertRuntime {
       if (canNarrow) session.setActiveToolsByName!(entry.activeToolNames);
       entry.onceTools = new Set<string>();
       entry.unsubscribe = session.subscribe?.((event) => {
-        const e = event as { type?: string; toolName?: string };
+        const e = event as {
+          type?: string;
+          toolName?: string;
+          args?: unknown;
+          isError?: boolean;
+          message?: { role?: string; content?: unknown };
+        };
         if (e?.type === "tool_execution_end" && e.toolName && entry!.onceTools?.has(e.toolName)) {
           entry!.onceTools!.delete(e.toolName);
           this.deactivateTool(entry!, e.toolName);
+        }
+        // The interactive expert window: mirror activity into a bounded event file a
+        // second terminal can follow. Read-only with respect to the run - it cannot
+        // change tool behavior, and every write failure is swallowed by the chain.
+        if (this.observabilityActive(request.executionId)) {
+          if (e?.type === "tool_execution_start" && e.toolName) {
+            const summary = this.toolArgumentSummary(e.args);
+            this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
+              tool: e.toolName,
+              ...(summary ? { argsSummary: summary } : {}),
+            });
+          } else if (e?.type === "tool_execution_end" && e.toolName) {
+            this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
+              tool: e.toolName,
+              ok: e.isError !== true,
+            });
+          } else if (e?.type === "message_end" && e.message?.role === "assistant") {
+            const narration = boundedText(textFromContent(e.message.content));
+            if (narration) this.emitObservability(request.executionId, request.role, request.model, "assistant_text", { text: narration });
+          }
         }
       }) ?? undefined;
       // The abort may have arrived while preparing/provisioning the workspace.
@@ -1022,6 +1279,9 @@ export class PiExpertRuntime implements ExpertRuntime {
       ? { kind: "decision", otherText: "No answer available — choose the most conservative reasonable option yourself and note the assumption in your risks." }
       : { kind: "tool_approval", scope: "reject" };
     if (!entry || (entry.interactionRounds ?? 0) >= maxRounds) {
+      this.emitObservability(executionKey, entry?.role ?? "unknown", entry?.model, "interaction_answered", {
+        text: boundedText("no interaction budget left; the expert decides alone"),
+      });
       return { response: { ...autonomous, otherText: autonomous.otherText ?? "Interaction budget exhausted; decide autonomously and note the assumption." }, hostAbsent: true, exhausted: true };
     }
     // Exactly one interaction may be open per execution. The host answers the single
@@ -1032,6 +1292,10 @@ export class PiExpertRuntime implements ExpertRuntime {
     // charge the refusal against the round budget - the expert did get a real answer
     // path for the interaction that is open.
     if (entry.pendingInteraction) {
+      this.emitObservability(executionKey, entry.role, entry.model, "interaction_answered", {
+        tool: request.kind === "tool_approval" ? request.tool : undefined,
+        text: boundedText("refused: another interaction is already open for this execution"),
+      });
       return {
         response: request.kind === "decision"
           ? { kind: "decision", otherText: "An interaction is already awaiting the Main Agent for this execution, so this one was not asked. Choose the most conservative reasonable option yourself, note the assumption in your risks, and do not ask again while one is open." }
@@ -1044,6 +1308,14 @@ export class PiExpertRuntime implements ExpertRuntime {
     const round = entry.interactionRounds;
     const openedAt = new Date().toISOString();
     entry.pendingInteraction = { request, openedAt, round };
+    this.emitObservability(executionKey, entry.role, entry.model, "interaction_opened", {
+      tool: request.kind === "tool_approval" ? request.tool : undefined,
+      text: boundedText(
+        request.kind === "decision"
+          ? `round ${round}: ${request.question ?? "decision"}${request.options?.length ? ` [${request.options.map((option) => option.label).join(" | ")}]` : ""}`
+          : `round ${round}: needs approval for ${request.tool ?? "a tool"}`,
+      ),
+    });
     const answer = await new Promise<InteractionResponse>((resolve) => {
       const finish = (response: InteractionResponse) => {
         if (settled) return;
@@ -1051,6 +1323,12 @@ export class PiExpertRuntime implements ExpertRuntime {
         if (timer) clearTimeout(timer);
         entry.pendingInteraction = undefined;
         entry.resolveInteraction = undefined;
+        this.emitObservability(executionKey, entry.role, entry.model, "interaction_answered", {
+          tool: response.kind === "tool_approval" ? request.tool : undefined,
+          text: boundedText(String(response.kind === "decision"
+            ? response.choice ?? response.otherText ?? "answered"
+            : response.scope ?? "answered")),
+        });
         resolve(response);
       };
       let settled = false;

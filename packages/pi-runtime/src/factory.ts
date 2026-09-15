@@ -25,6 +25,12 @@ export interface CreateCouncilOptions {
   usageLedgerPath?: string;
   compositionsPath?: string;
   roleDirectory?: string;
+  /**
+   * Where the interactive expert window writes its event stream. Defaults to
+   * `<dataRoot>/observability`; only used when `security.observability.expertWindow`
+   * is `"interactive"`.
+   */
+  observabilityDir?: string;
   /** Host-provided SDK used by self-contained distributions such as the Codex plugin. */
   sdk?: PiSdkLike;
   sdkPackageName?: string;
@@ -73,6 +79,7 @@ export function defaultCouncilStoragePaths(cwd: string, dataRoot = defaultCounci
     usageLedgerPath: path.join(path.resolve(dataRoot), "usage-ledger.json"),
     councilCompositionsPath: path.join(path.resolve(dataRoot), "council-compositions.json"),
     councilConfigPath: path.join(path.resolve(dataRoot), "council-config.json"),
+    observabilityDir: path.join(path.resolve(dataRoot), "observability"),
   };
 }
 
@@ -102,6 +109,7 @@ export async function createExpertCouncil(options: CreateCouncilOptions = {}): P
   const runtime = await PiExpertRuntime.create({
     cwd,
     config,
+    observabilityDir: options.observabilityDir ?? defaults.observabilityDir,
     ...(roleDirectory ? { roleDirectory } : {}),
     ...(options.sdk ? { sdk: options.sdk } : {}),
     ...(options.sdkPackageName ? { packageName: options.sdkPackageName } : {}),

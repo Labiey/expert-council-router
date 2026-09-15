@@ -70,15 +70,15 @@ var require_windows = __commonJS({
       }
       return false;
     }
-    function checkStat(stat11, path29, options) {
-      if (!stat11.isSymbolicLink() && !stat11.isFile()) {
+    function checkStat(stat12, path29, options) {
+      if (!stat12.isSymbolicLink() && !stat12.isFile()) {
         return false;
       }
       return checkPathExt(path29, options);
     }
     function isexe(path29, options, cb) {
-      fs15.stat(path29, function(er, stat11) {
-        cb(er, er ? false : checkStat(stat11, path29, options));
+      fs15.stat(path29, function(er, stat12) {
+        cb(er, er ? false : checkStat(stat12, path29, options));
       });
     }
     function sync(path29, options) {
@@ -94,20 +94,20 @@ var require_mode = __commonJS({
     isexe.sync = sync;
     var fs15 = __require("fs");
     function isexe(path29, options, cb) {
-      fs15.stat(path29, function(er, stat11) {
-        cb(er, er ? false : checkStat(stat11, options));
+      fs15.stat(path29, function(er, stat12) {
+        cb(er, er ? false : checkStat(stat12, options));
       });
     }
     function sync(path29, options) {
       return checkStat(fs15.statSync(path29), options);
     }
-    function checkStat(stat11, options) {
-      return stat11.isFile() && checkMode(stat11, options);
+    function checkStat(stat12, options) {
+      return stat12.isFile() && checkMode(stat12, options);
     }
-    function checkMode(stat11, options) {
-      var mod = stat11.mode;
-      var uid = stat11.uid;
-      var gid = stat11.gid;
+    function checkMode(stat12, options) {
+      var mod = stat12.mode;
+      var uid = stat12.uid;
+      var gid = stat12.gid;
       var myUid = options.uid !== void 0 ? options.uid : process.getuid && process.getuid();
       var myGid = options.gid !== void 0 ? options.gid : process.getgid && process.getgid();
       var u = parseInt("100", 8);
@@ -9500,8 +9500,8 @@ async function runWalkGrep(pattern, root, signal) {
     hits.push(line);
     return true;
   };
-  const stat11 = await fs4.stat(root).catch(() => null);
-  if (stat11?.isFile()) {
+  const stat12 = await fs4.stat(root).catch(() => null);
+  if (stat12?.isFile()) {
     await grepFile(root, re, push);
   } else {
     await walk2(root, "", (rel) => grepFile(path3.join(root, rel), re, push), signal);
@@ -38658,21 +38658,21 @@ var init_from = __esm({
     init_fetch_blob();
     ({ stat: stat2 } = fs5);
     blobFromSync = (path29, type) => fromBlob(statSync2(path29), path29, type);
-    blobFrom = (path29, type) => stat2(path29).then((stat11) => fromBlob(stat11, path29, type));
-    fileFrom = (path29, type) => stat2(path29).then((stat11) => fromFile(stat11, path29, type));
+    blobFrom = (path29, type) => stat2(path29).then((stat12) => fromBlob(stat12, path29, type));
+    fileFrom = (path29, type) => stat2(path29).then((stat12) => fromFile(stat12, path29, type));
     fileFromSync = (path29, type) => fromFile(statSync2(path29), path29, type);
-    fromBlob = (stat11, path29, type = "") => new fetch_blob_default([new BlobDataItem({
+    fromBlob = (stat12, path29, type = "") => new fetch_blob_default([new BlobDataItem({
       path: path29,
-      size: stat11.size,
-      lastModified: stat11.mtimeMs,
+      size: stat12.size,
+      lastModified: stat12.mtimeMs,
       start: 0
     })], { type });
-    fromFile = (stat11, path29, type = "") => new file_default([new BlobDataItem({
+    fromFile = (stat12, path29, type = "") => new file_default([new BlobDataItem({
       path: path29,
-      size: stat11.size,
-      lastModified: stat11.mtimeMs,
+      size: stat12.size,
+      lastModified: stat12.mtimeMs,
       start: 0
-    })], basename2(path29), { type, lastModified: stat11.mtimeMs });
+    })], basename2(path29), { type, lastModified: stat12.mtimeMs });
     BlobDataItem = class _BlobDataItem {
       #path;
       #start;
@@ -154295,8 +154295,8 @@ var require_graceful_fs = __commonJS({
       }
       var fs$appendFile = fs16.appendFile;
       if (fs$appendFile)
-        fs16.appendFile = appendFile;
-      function appendFile(path29, data, options, cb) {
+        fs16.appendFile = appendFile2;
+      function appendFile2(path29, data, options, cb) {
         if (typeof options === "function")
           cb = options, options = null;
         return go$appendFile(path29, data, options, cb);
@@ -154332,9 +154332,9 @@ var require_graceful_fs = __commonJS({
         }
       }
       var fs$readdir = fs16.readdir;
-      fs16.readdir = readdir3;
+      fs16.readdir = readdir4;
       var noReaddirOptionVersions = /^v[0-5]\./;
-      function readdir3(path29, options, cb) {
+      function readdir4(path29, options, cb) {
         if (typeof options === "function")
           cb = options, options = null;
         var go$readdir = noReaddirOptionVersions.test(process.version) ? function go$readdir2(path30, options2, cb2, startTime) {
@@ -154973,11 +154973,11 @@ var require_mtime_precision = __commonJS({
     function probe(file2, fs15, callback) {
       const cachedPrecision = fs15[cacheSymbol];
       if (cachedPrecision) {
-        return fs15.stat(file2, (err2, stat11) => {
+        return fs15.stat(file2, (err2, stat12) => {
           if (err2) {
             return callback(err2);
           }
-          callback(null, stat11.mtime, cachedPrecision);
+          callback(null, stat12.mtime, cachedPrecision);
         });
       }
       const mtime = new Date(Math.ceil(Date.now() / 1e3) * 1e3 + 5);
@@ -154985,13 +154985,13 @@ var require_mtime_precision = __commonJS({
         if (err2) {
           return callback(err2);
         }
-        fs15.stat(file2, (err3, stat11) => {
+        fs15.stat(file2, (err3, stat12) => {
           if (err3) {
             return callback(err3);
           }
-          const precision = stat11.mtime.getTime() % 1e3 === 0 ? "s" : "ms";
+          const precision = stat12.mtime.getTime() % 1e3 === 0 ? "s" : "ms";
           Object.defineProperty(fs15, cacheSymbol, { value: precision });
-          callback(null, stat11.mtime, precision);
+          callback(null, stat12.mtime, precision);
         });
       });
     }
@@ -155045,14 +155045,14 @@ var require_lockfile = __commonJS({
         if (options.stale <= 0) {
           return callback(Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED", file: file2 }));
         }
-        options.fs.stat(lockfilePath, (err3, stat11) => {
+        options.fs.stat(lockfilePath, (err3, stat12) => {
           if (err3) {
             if (err3.code === "ENOENT") {
               return acquireLock(file2, { ...options, stale: 0 }, callback);
             }
             return callback(err3);
           }
-          if (!isLockStale(stat11, options)) {
+          if (!isLockStale(stat12, options)) {
             return callback(Object.assign(new Error("Lock file is already being held"), { code: "ELOCKED", file: file2 }));
           }
           removeLock(file2, options, (err4) => {
@@ -155064,8 +155064,8 @@ var require_lockfile = __commonJS({
         });
       });
     }
-    function isLockStale(stat11, options) {
-      return stat11.mtime.getTime() < Date.now() - options.stale;
+    function isLockStale(stat12, options) {
+      return stat12.mtime.getTime() < Date.now() - options.stale;
     }
     function removeLock(file2, options, callback) {
       options.fs.rmdir(getLockFile(file2, options), (err2) => {
@@ -155083,7 +155083,7 @@ var require_lockfile = __commonJS({
       lock2.updateDelay = lock2.updateDelay || options.update;
       lock2.updateTimeout = setTimeout(() => {
         lock2.updateTimeout = null;
-        options.fs.stat(lock2.lockfilePath, (err2, stat11) => {
+        options.fs.stat(lock2.lockfilePath, (err2, stat12) => {
           const isOverThreshold = lock2.lastUpdate + options.stale < Date.now();
           if (err2) {
             if (err2.code === "ENOENT" || isOverThreshold) {
@@ -155092,7 +155092,7 @@ var require_lockfile = __commonJS({
             lock2.updateDelay = 1e3;
             return updateLock(file2, options);
           }
-          const isMtimeOurs = lock2.mtime.getTime() === stat11.mtime.getTime();
+          const isMtimeOurs = lock2.mtime.getTime() === stat12.mtime.getTime();
           if (!isMtimeOurs) {
             return setLockAsCompromised(
               file2,
@@ -155217,11 +155217,11 @@ var require_lockfile = __commonJS({
         if (err2) {
           return callback(err2);
         }
-        options.fs.stat(getLockFile(file3, options), (err3, stat11) => {
+        options.fs.stat(getLockFile(file3, options), (err3, stat12) => {
           if (err3) {
             return err3.code === "ENOENT" ? callback(null, false) : callback(err3);
           }
-          return callback(null, !isLockStale(stat11, options));
+          return callback(null, !isLockStale(stat12, options));
         });
       });
     }
@@ -172910,7 +172910,7 @@ var require_snapshot_utils = __commonJS({
 var require_snapshot_recorder = __commonJS({
   "node_modules/@earendil-works/pi-coding-agent/node_modules/undici/lib/mock/snapshot-recorder.js"(exports, module) {
     "use strict";
-    var { writeFile: writeFile6, readFile: readFile16, mkdir: mkdir5 } = __require("node:fs/promises");
+    var { writeFile: writeFile6, readFile: readFile16, mkdir: mkdir6 } = __require("node:fs/promises");
     var { dirname: dirname26, resolve: resolve17 } = __require("node:path");
     var { setTimeout: setTimeout2, clearTimeout: clearTimeout2 } = __require("node:timers");
     var { InvalidArgumentError, UndiciError } = require_errors2();
@@ -173157,7 +173157,7 @@ var require_snapshot_recorder = __commonJS({
           throw new InvalidArgumentError("Snapshot path is required");
         }
         const resolvedPath = resolve17(path29);
-        await mkdir5(dirname26(resolvedPath), { recursive: true });
+        await mkdir6(dirname26(resolvedPath), { recursive: true });
         const data = Array.from(this.#snapshots.entries()).map(([hash2, snapshot]) => ({
           hash: hash2,
           snapshot
@@ -246668,8 +246668,8 @@ function createLsToolDefinition(cwd, options) {
               reject(new Error(`Path not found: ${dirPath}`));
               return;
             }
-            const stat11 = await ops.stat(dirPath);
-            if (!stat11.isDirectory()) {
+            const stat12 = await ops.stat(dirPath);
+            if (!stat12.isDirectory()) {
               reject(new Error(`Not a directory: ${dirPath}`));
               return;
             }
@@ -256027,8 +256027,8 @@ function findGitPaths(cwd) {
     const gitPath = join25(dir, ".git");
     if (existsSync13(gitPath)) {
       try {
-        const stat11 = statSync10(gitPath);
-        if (stat11.isFile()) {
+        const stat12 = statSync10(gitPath);
+        if (stat12.isFile()) {
           const content = readFileSync10(gitPath, "utf8").trim();
           if (content.startsWith("gitdir: ")) {
             const gitDir = resolve9(dir, content.slice(8).trim());
@@ -256039,7 +256039,7 @@ function findGitPaths(cwd) {
             const commonGitDir = existsSync13(commonDirPath) ? resolve9(gitDir, readFileSync10(commonDirPath, "utf8").trim()) : gitDir;
             return { repoDir: dir, commonGitDir, headPath };
           }
-        } else if (stat11.isDirectory()) {
+        } else if (stat12.isDirectory()) {
           const headPath = join25(gitPath, "HEAD");
           if (!existsSync13(headPath))
             return null;
@@ -261455,7 +261455,7 @@ var LlamaClient = class {
   }
   async loadAndWait(model, onProgress, signal) {
     const watcher = new AbortController();
-    const unlink2 = linkSignal(signal, watcher);
+    const unlink3 = linkSignal(signal, watcher);
     let eventLoaded = false;
     let eventError;
     void this.watch((event) => {
@@ -261490,13 +261490,13 @@ var LlamaClient = class {
         await sleep8(250, signal);
       }
     } finally {
-      unlink2();
+      unlink3();
       watcher.abort();
     }
   }
   async downloadAndWait(model, onProgress, signal) {
     const watcher = new AbortController();
-    const unlink2 = linkSignal(signal, watcher);
+    const unlink3 = linkSignal(signal, watcher);
     let finished2 = false;
     let failure;
     let sawDownloading = false;
@@ -261538,7 +261538,7 @@ var LlamaClient = class {
         await sleep8(500, signal);
       }
     } finally {
-      unlink2();
+      unlink3();
       watcher.abort();
     }
   }
@@ -310124,10 +310124,16 @@ var councilConfigSchema = external_exports.object({
      * (correctness channel); this governs the optional live progress block.
      * No tool arguments are ever surfaced, so there is nothing to redact here.
      */
+    /**
+     * Expert progress visibility. `pendingInteraction` is always surfaced
+     * (correctness channel); this governs the optional live progress block and,
+     * for "interactive", the on-disk event stream another terminal can follow.
+     */
     observability: external_exports.object({
       expertWindow: external_exports.enum(["off", "events", "interactive"]).default("off"),
-      streamToHost: external_exports.boolean().default(true)
-    }).default({ expertWindow: "off", streamToHost: true }),
+      streamToHost: external_exports.boolean().default(true),
+      redactToolArgs: external_exports.boolean().default(true)
+    }).default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
       strategy: external_exports.enum(["auto", "drivers", "as-code", "in-place"]).default("auto"),
@@ -310155,7 +310161,7 @@ var councilConfigSchema = external_exports.object({
     worktreeRetentionMs: 24 * 60 * 6e4,
     toolGrants: {},
     expertLifetime: "host-bound",
-    observability: { expertWindow: "off", streamToHost: true },
+    observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
     workspaceProvisioning: {
       mode: "none",
       strategy: "auto",
@@ -310541,7 +310547,7 @@ var DEFAULT_ROLES = {
     tools: readOnlyTools,
     skills: ["testing"],
     minimumToolReliability: 4,
-    weights: { toolReliability: 0.3, bashReliability: 0.25, autonomousExecution: 0.15, debugging: 0.1, speed: 0.1, costEfficiency: 0.1 }
+    weights: { toolReliability: 0.3, review: 0.2, longContext: 0.15, autonomousExecution: 0.1, debugging: 0.1, speed: 0.1, costEfficiency: 0.05 }
   }
 };
 function getRole(role2) {
@@ -311378,6 +311384,7 @@ function presentResourceInventory(inventory, detail2 = "compact") {
       workspaceIsolation: inventory.runtimeCapabilities.workspaceIsolation,
       ...inventory.runtimeCapabilities.sourceWorkspaceDirty !== void 0 ? { sourceWorkspaceDirty: inventory.runtimeCapabilities.sourceWorkspaceDirty } : {},
       ...inventory.runtimeCapabilities.workspaceProvisioning ? { workspaceProvisioning: inventory.runtimeCapabilities.workspaceProvisioning } : {},
+      ...inventory.runtimeCapabilities.eventStream ? { eventStream: inventory.runtimeCapabilities.eventStream } : {},
       limitations: inventory.runtimeCapabilities.limitations
     },
     modelAssessment: inventory.modelAssessmentStatus?.status === "required" ? {
@@ -311909,14 +311916,15 @@ var ExpertCouncilService = class {
         provisioningMode: this.config.security.workspaceProvisioning.mode,
         observability: {
           expertWindow: this.config.security.observability.expertWindow,
-          streamToHost: this.config.security.observability.streamToHost
+          streamToHost: this.config.security.observability.streamToHost,
+          redactToolArgs: this.config.security.observability.redactToolArgs
         }
       },
       warnings: [
         ...this.routePolicyWarning ? [this.routePolicyWarning] : [],
         ...this.compositionsWarning ? [this.compositionsWarning] : [],
-        ...this.config.security.observability.expertWindow === "interactive" ? [
-          'security.observability.expertWindow = "interactive" has no distinct behavior yet (no RPC projection) and acts as "events".'
+        ...this.config.security.observability.expertWindow === "interactive" && !runtimeCapabilities.eventStream?.enabled ? [
+          'security.observability.expertWindow = "interactive" was requested, but this runtime cannot write a live event stream, so progress behaves as "events".'
         ] : [],
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
         ...assessedUnavailable.map((key) => `Audited model ${key} is not currently available and was ignored.`),
@@ -313553,7 +313561,7 @@ var SplitCouncilStateStore = class {
 };
 
 // packages/pi-runtime/dist/pi-runtime.js
-import { readFile as readFile15 } from "node:fs/promises";
+import { appendFile, mkdir as mkdir5, readFile as readFile15, readdir as readdir3, stat as stat11, unlink as unlink2 } from "node:fs/promises";
 
 // node_modules/typebox/build/system/memory/memory.mjs
 var memory_exports2 = {};
@@ -318784,8 +318792,29 @@ var WorkspaceBoundary = class {
 };
 
 // packages/pi-runtime/dist/pi-runtime.js
+function isPlaceholderText(value3) {
+  const normalized = value3.trim().toLowerCase().replace(/[.!]+$/, "");
+  if (normalized.length < 4)
+    return true;
+  return /^(placeholder|placeholders|tbd|todo|n\/a|na|none|nothing|xxx+|\?+|\.+|\u2026)$/.test(normalized);
+}
+function terminalKindFor(result) {
+  if (result.executionMetadata?.stoppedByExpert)
+    return "stopped";
+  return result.status === "failed" ? "failed" : "completed";
+}
 var ExecutionTimeoutError = class extends Error {
 };
+var OBSERVABILITY_MAX_EVENTS = 2e3;
+var OBSERVABILITY_MAX_BYTES = 256 * 1024;
+var OBSERVABILITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+function boundedText2(value3, max = 400) {
+  const oneLine = value3.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  return oneLine.length > max ? `${oneLine.slice(0, max - 1)}\u2026` : oneLine;
+}
+function streamFileName(executionId2) {
+  return `${executionId2.replace(/[^A-Za-z0-9_-]/g, "_")}.jsonl`;
+}
 function inferPiProviderBilling(provider, runtimeSubscription = false, hasPublishedMeteredPrice = false) {
   if (runtimeSubscription) {
     return {
@@ -319087,8 +319116,10 @@ var PiExpertRuntime = class _PiExpertRuntime {
   activeSessions = /* @__PURE__ */ new Map();
   /** Cached capability probe for Pi's runtime tool-set narrowing API. */
   canNarrowTools;
-  /** Marks executions whose current interaction was answered by the host (vs. by the wait timeout). */
+  /** Execution ids whose current interaction was answered by the host (vs. by the wait timeout). */
   lastHostResponded = /* @__PURE__ */ new Map();
+  /** Per-execution state for the interactive observability event stream. */
+  observabilityStreams = /* @__PURE__ */ new Map();
   skillDiscoveryWarning;
   constructor(sdk, models, options, packageName) {
     this.sdk = sdk;
@@ -319101,7 +319132,151 @@ var PiExpertRuntime = class _PiExpertRuntime {
     const loaded = options.sdk ? { sdk: options.sdk, packageName: options.packageName ?? "injected-pi-sdk" } : await loadPiSdk();
     const sdk = validatePiSdk(loaded.sdk, loaded.packageName);
     const modelRuntime = validatePiModelRuntime(options.modelRuntime ?? await sdk.ModelRuntime.create({ allowModelNetwork: false }), `${loaded.packageName} ModelRuntime`);
-    return new _PiExpertRuntime(sdk, modelRuntime, options, loaded.packageName);
+    const runtime = new _PiExpertRuntime(sdk, modelRuntime, options, loaded.packageName);
+    await runtime.pruneObservabilityStreams();
+    return runtime;
+  }
+  /**
+   * Public entry point. Wraps the execution so that however a run ends - success,
+   * partial, failure, expert stop, or a thrown error - its observability stream is
+   * closed with exactly one terminal event and flushed before returning.
+   */
+  async executeExpert(input2) {
+    const request = input2.executionId ? input2 : { ...input2, executionId: `exec-${Date.now()}` };
+    this.openObservabilityStream(request);
+    let result;
+    try {
+      result = await this.executeExpertInner(request);
+    } catch (error61) {
+      this.emitObservability(request.executionId, request.role, request.model, "failed", {
+        status: "failed",
+        text: boundedText2(error61 instanceof Error ? error61.message : String(error61))
+      });
+      await this.closeObservabilityStream(request.executionId);
+      throw error61;
+    }
+    this.emitObservability(request.executionId, request.role, request.model ?? result.model, terminalKindFor(result), {
+      status: result.status,
+      ...result.executionMetadata?.failureType ? { failureType: String(result.executionMetadata.failureType) } : {},
+      ...typeof result.executionMetadata?.durationMs === "number" ? { durationMs: result.executionMetadata.durationMs } : {}
+    });
+    await this.closeObservabilityStream(request.executionId);
+    return result;
+  }
+  /** Whether an interactive stream is open for this execution (cheap check, never creates one). */
+  observabilityActive(executionId2) {
+    return executionId2 !== void 0 && this.observabilityStreams.has(executionId2);
+  }
+  observabilityState(executionId2) {
+    if (executionId2 === void 0)
+      return void 0;
+    if (this.options.config.security.observability.expertWindow !== "interactive" || !this.options.observabilityDir)
+      return void 0;
+    const existing = this.observabilityStreams.get(executionId2);
+    if (existing)
+      return existing;
+    const created = {
+      file: path26.join(this.options.observabilityDir, streamFileName(executionId2)),
+      events: 0,
+      bytes: 0,
+      chain: Promise.resolve()
+    };
+    this.observabilityStreams.set(executionId2, created);
+    return created;
+  }
+  openObservabilityStream(request) {
+    const state2 = this.observabilityState(request.executionId);
+    if (!state2 || request.executionId === void 0)
+      return;
+    this.appendObservability(state2, {
+      t: (/* @__PURE__ */ new Date()).toISOString(),
+      executionId: request.executionId,
+      role: request.role,
+      ...request.model ? { model: request.model } : {},
+      kind: "started"
+    });
+  }
+  emitObservability(executionId2, role2, model, kind, fields = {}) {
+    const state2 = this.observabilityState(executionId2);
+    if (!state2 || executionId2 === void 0)
+      return;
+    if (state2.events >= OBSERVABILITY_MAX_EVENTS || state2.bytes >= OBSERVABILITY_MAX_BYTES) {
+      if (!state2.truncated) {
+        state2.truncated = true;
+        this.appendObservability(state2, {
+          t: (/* @__PURE__ */ new Date()).toISOString(),
+          executionId: executionId2,
+          role: role2,
+          kind: "stream_truncated",
+          text: `${OBSERVABILITY_MAX_EVENTS} events / ${OBSERVABILITY_MAX_BYTES} bytes reached; further events dropped.`
+        });
+      }
+      return;
+    }
+    this.appendObservability(state2, {
+      t: (/* @__PURE__ */ new Date()).toISOString(),
+      executionId: executionId2,
+      role: role2,
+      ...model ? { model } : {},
+      kind,
+      ...fields
+    });
+  }
+  /** Best-effort by design: an observability write must never break an expert run. */
+  appendObservability(state2, event) {
+    const line = `${JSON.stringify(event)}
+`;
+    state2.events += 1;
+    state2.bytes += Buffer.byteLength(line);
+    state2.chain = state2.chain.then(async () => {
+      await mkdir5(path26.dirname(state2.file), { recursive: true });
+      await appendFile(state2.file, line, { encoding: "utf8" });
+    }).catch(() => void 0);
+  }
+  async closeObservabilityStream(executionId2) {
+    if (executionId2 === void 0)
+      return;
+    const state2 = this.observabilityStreams.get(executionId2);
+    if (!state2)
+      return;
+    await state2.chain;
+    this.observabilityStreams.delete(executionId2);
+  }
+  /** Tool arguments reach the stream only when the operator turned redaction off. */
+  toolArgumentSummary(args) {
+    if (this.options.config.security.observability.redactToolArgs)
+      return void 0;
+    if (!args || typeof args !== "object")
+      return void 0;
+    const record4 = args;
+    for (const key of ["command", "script", "path", "file", "filePath", "dir", "pattern", "query", "url"]) {
+      const value3 = record4[key];
+      if (typeof value3 === "string" && value3.trim())
+        return boundedText2(value3, 160);
+    }
+    return void 0;
+  }
+  /** Remove event streams left behind by earlier sessions; never fatal. */
+  async pruneObservabilityStreams() {
+    const dir = this.options.observabilityDir;
+    if (!dir)
+      return;
+    let names2;
+    try {
+      names2 = await readdir3(dir);
+    } catch {
+      return;
+    }
+    const cutoff = Date.now() - OBSERVABILITY_RETENTION_MS;
+    for (const name of names2.filter((item) => item.endsWith(".jsonl"))) {
+      const file2 = path26.join(dir, name);
+      try {
+        const info = await stat11(file2);
+        if (info.mtimeMs < cutoff)
+          await unlink2(file2);
+      } catch {
+      }
+    }
   }
   async listAvailableModels() {
     const raw = await this.models.getAvailable();
@@ -319191,6 +319366,11 @@ var PiExpertRuntime = class _PiExpertRuntime {
       supportedTools: process.platform === "win32" ? ["read", "grep", "find", "ls", "edit", "write", "powershell"] : ["read", "grep", "find", "ls", "edit", "write", "bash"],
       realtimeInteraction: true,
       dynamicToolPermissions: true,
+      eventStream: {
+        enabled: this.options.config.security.observability.expertWindow === "interactive" && !!this.options.observabilityDir,
+        ...this.options.observabilityDir ? { dir: this.options.observabilityDir } : {},
+        redactToolArgs: this.options.config.security.observability.redactToolArgs
+      },
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : [],
@@ -319200,7 +319380,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       ]
     };
   }
-  async executeExpert(request) {
+  async executeExpertInner(request) {
     const started = Date.now();
     const executionKey = request.executionId ?? `exec-${Date.now()}`;
     let workspace;
@@ -319268,14 +319448,31 @@ var PiExpertRuntime = class _PiExpertRuntime {
           })
         }),
         execute: async (_toolCallId, params) => {
-          entry.stopRequested = true;
           const text = (value3, limit3) => String(value3 ?? "").slice(0, limit3);
           const lines = (value3) => Array.isArray(value3) ? value3.map((item) => String(item).slice(0, 500)).filter((item) => item.length > 0).slice(0, 20) : void 0;
+          const realLines = (value3) => {
+            const kept = (lines(value3) ?? []).filter((item) => !isPlaceholderText(item));
+            return kept.length ? kept : void 0;
+          };
+          const reason = text(params.reason, 4e3);
+          const findings = realLines(params.findings);
+          const risks = realLines(params.risks);
+          if (!isPlaceholderText(reason) && !findings && !risks && !entry.stopRejections) {
+            entry.stopRejections = 1;
+            return {
+              content: [{
+                type: "text",
+                text: "Stop report rejected: it carries no actual findings or risks. If you really are blocked, submit report_and_stop again with the exact blocker in reason and at least one concrete finding (paths, symbols, commands, or the missing capability). If the work is in fact done, do not stop - return your normal JSON result with status success and the content inside it."
+              }],
+              details: {}
+            };
+          }
+          entry.stopRequested = true;
           settleStop?.({
-            reason: text(params.reason, 4e3) || "Expert reported the task cannot be completed.",
-            ...lines(params.findings) ? { findings: lines(params.findings) } : {},
-            ...lines(params.risks) ? { risks: lines(params.risks) } : {},
-            ...text(params.recommendedNextAction, 1e3) ? { recommendedNextAction: text(params.recommendedNextAction, 1e3) } : {}
+            reason: reason || "Expert reported the task cannot be completed.",
+            ...findings ? { findings } : {},
+            ...risks ? { risks } : {},
+            ...realLines([text(params.recommendedNextAction, 1e3)])?.[0] ? { recommendedNextAction: realLines([text(params.recommendedNextAction, 1e3)])[0] } : {}
           });
           return {
             content: [{
@@ -319381,6 +319578,24 @@ Apply this decision and continue the assigned task now. If the decision changed 
         if (e2?.type === "tool_execution_end" && e2.toolName && entry.onceTools?.has(e2.toolName)) {
           entry.onceTools.delete(e2.toolName);
           this.deactivateTool(entry, e2.toolName);
+        }
+        if (this.observabilityActive(request.executionId)) {
+          if (e2?.type === "tool_execution_start" && e2.toolName) {
+            const summary = this.toolArgumentSummary(e2.args);
+            this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
+              tool: e2.toolName,
+              ...summary ? { argsSummary: summary } : {}
+            });
+          } else if (e2?.type === "tool_execution_end" && e2.toolName) {
+            this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
+              tool: e2.toolName,
+              ok: e2.isError !== true
+            });
+          } else if (e2?.type === "message_end" && e2.message?.role === "assistant") {
+            const narration = boundedText2(textFromContent(e2.message.content));
+            if (narration)
+              this.emitObservability(request.executionId, request.role, request.model, "assistant_text", { text: narration });
+          }
         }
       }) ?? void 0;
       if (entry.abortRequested) {
@@ -319549,9 +319764,16 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     const timeoutMs = this.options.interactionTimeoutMs ?? 9e5;
     const autonomous = request.kind === "decision" ? { kind: "decision", otherText: "No answer available \u2014 choose the most conservative reasonable option yourself and note the assumption in your risks." } : { kind: "tool_approval", scope: "reject" };
     if (!entry || (entry.interactionRounds ?? 0) >= maxRounds) {
+      this.emitObservability(executionKey, entry?.role ?? "unknown", entry?.model, "interaction_answered", {
+        text: boundedText2("no interaction budget left; the expert decides alone")
+      });
       return { response: { ...autonomous, otherText: autonomous.otherText ?? "Interaction budget exhausted; decide autonomously and note the assumption." }, hostAbsent: true, exhausted: true };
     }
     if (entry.pendingInteraction) {
+      this.emitObservability(executionKey, entry.role, entry.model, "interaction_answered", {
+        tool: request.kind === "tool_approval" ? request.tool : void 0,
+        text: boundedText2("refused: another interaction is already open for this execution")
+      });
       return {
         response: request.kind === "decision" ? { kind: "decision", otherText: "An interaction is already awaiting the Main Agent for this execution, so this one was not asked. Choose the most conservative reasonable option yourself, note the assumption in your risks, and do not ask again while one is open." } : { kind: "tool_approval", scope: "reject" },
         hostAbsent: true,
@@ -319562,6 +319784,10 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     const round = entry.interactionRounds;
     const openedAt = (/* @__PURE__ */ new Date()).toISOString();
     entry.pendingInteraction = { request, openedAt, round };
+    this.emitObservability(executionKey, entry.role, entry.model, "interaction_opened", {
+      tool: request.kind === "tool_approval" ? request.tool : void 0,
+      text: boundedText2(request.kind === "decision" ? `round ${round}: ${request.question ?? "decision"}${request.options?.length ? ` [${request.options.map((option) => option.label).join(" | ")}]` : ""}` : `round ${round}: needs approval for ${request.tool ?? "a tool"}`)
+    });
     const answer = await new Promise((resolve17) => {
       const finish = (response2) => {
         if (settled)
@@ -319571,6 +319797,10 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
           clearTimeout(timer);
         entry.pendingInteraction = void 0;
         entry.resolveInteraction = void 0;
+        this.emitObservability(executionKey, entry.role, entry.model, "interaction_answered", {
+          tool: response2.kind === "tool_approval" ? request.tool : void 0,
+          text: boundedText2(String(response2.kind === "decision" ? response2.choice ?? response2.otherText ?? "answered" : response2.scope ?? "answered"))
+        });
         resolve17(response2);
       };
       let settled = false;
@@ -319865,7 +320095,8 @@ function defaultCouncilStoragePaths(cwd, dataRoot = defaultCouncilDataRoot()) {
     routePolicyPath: path27.join(path27.resolve(dataRoot), "route-policy.json"),
     usageLedgerPath: path27.join(path27.resolve(dataRoot), "usage-ledger.json"),
     councilCompositionsPath: path27.join(path27.resolve(dataRoot), "council-compositions.json"),
-    councilConfigPath: path27.join(path27.resolve(dataRoot), "council-config.json")
+    councilConfigPath: path27.join(path27.resolve(dataRoot), "council-config.json"),
+    observabilityDir: path27.join(path27.resolve(dataRoot), "observability")
   };
 }
 async function createExpertCouncil(options = {}) {
@@ -319886,6 +320117,7 @@ async function createExpertCouncil(options = {}) {
   const runtime = await PiExpertRuntime.create({
     cwd,
     config: config2,
+    observabilityDir: options.observabilityDir ?? defaults4.observabilityDir,
     ...roleDirectory ? { roleDirectory } : {},
     ...options.sdk ? { sdk: options.sdk } : {},
     ...options.sdkPackageName ? { packageName: options.sdkPackageName } : {}
@@ -319958,16 +320190,16 @@ var failureType2 = external_exports.enum([
   "unknown"
 ]);
 var detail = external_exports.enum(["compact", "full"]).optional();
-var boundedText2 = (maximum) => external_exports.string().min(1).max(maximum).refine((value3) => !value3.includes("\0"), { message: "must not contain NUL bytes" });
-var taskText = boundedText2(1e5);
-var workspacePath = boundedText2(32768);
+var boundedText3 = (maximum) => external_exports.string().min(1).max(maximum).refine((value3) => !value3.includes("\0"), { message: "must not contain NUL bytes" });
+var taskText = boundedText3(1e5);
+var workspacePath = boundedText3(32768);
 var modelKey = external_exports.string().min(1).max(200).regex(/^[^/]+\/[^/]+$/).refine((value3) => !value3.includes("\0"), { message: "must not contain NUL bytes" });
 var executionIdentifier = external_exports.string().min(1).max(200).regex(/^[a-zA-Z0-9_-]+$/);
 var delegationAssignment = external_exports.object({
   role,
   task: taskText.describe("A bounded semantic assignment"),
   reasoningLevel: external_exports.string().min(1).max(40).describe("Reasoning level for the expert session (e.g. low/medium/high); a composition entry that pins one for the selected model overrides this"),
-  taskDescription: boundedText2(500).optional().describe("An optional concise host-facing label for the background task"),
+  taskDescription: boundedText3(500).optional().describe("An optional concise host-facing label for the background task"),
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
   model: modelKey.optional().describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
@@ -319984,14 +320216,14 @@ var MCP_INPUT_SCHEMAS = {
       costPolicy: external_exports.enum(["economy", "balanced", "speed", "quality"]).optional(),
       minimumContextWindow: external_exports.number().int().positive().optional()
     }).optional(),
-    composition: boundedText2(80).optional().describe("Name of a saved council composition from council-compositions.json; restricts each role's candidate pool"),
+    composition: boundedText3(80).optional().describe("Name of a saved council composition from council-compositions.json; restricts each role's candidate pool"),
     modelAssessment: modelAssessmentSnapshotSchema.optional(),
     detail
   },
   expert_delegate: {
     role: role.optional().describe("Required for a single assignment; omit when assignments is provided"),
     task: taskText.optional().describe("Required for a single assignment; omit when assignments is provided"),
-    taskDescription: boundedText2(500).optional().describe("An optional concise host-facing label for the background task"),
+    taskDescription: boundedText3(500).optional().describe("An optional concise host-facing label for the background task"),
     councilId: executionIdentifier.optional(),
     workspace: workspacePath.optional(),
     model: modelKey.optional().describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
@@ -320022,19 +320254,19 @@ var MCP_INPUT_SCHEMAS = {
   expert_escalate: {
     role,
     task: taskText,
-    currentModel: boundedText2(500),
+    currentModel: boundedText3(500),
     previousFailures: external_exports.array(external_exports.object({
-      model: boundedText2(500),
+      model: boundedText3(500),
       type: failureType2,
       summary: external_exports.string().min(1).max(2e3)
     })).min(1).max(8)
   },
   expert_availability_reset: {
-    scope: boundedText2(200)
+    scope: boundedText3(200)
   },
   expert_verify: {
     executionId: executionIdentifier.optional(),
-    workspace: boundedText2(32768).optional(),
+    workspace: boundedText3(32768).optional(),
     command: external_exports.array(external_exports.string().min(1).max(500)).min(1).max(12),
     timeoutMs: external_exports.number().int().min(1e3).max(6e5).optional()
   },
@@ -320042,8 +320274,8 @@ var MCP_INPUT_SCHEMAS = {
     executionId: executionIdentifier,
     response: external_exports.object({
       kind: external_exports.enum(["decision", "tool_approval"]),
-      choice: boundedText2(500).optional().describe("For a decision: the chosen option label, exactly as offered to you."),
-      otherText: boundedText2(4e3).optional().describe("For a decision: free-text guidance when none of the options fit."),
+      choice: boundedText3(500).optional().describe("For a decision: the chosen option label, exactly as offered to you."),
+      otherText: boundedText3(4e3).optional().describe("For a decision: free-text guidance when none of the options fit."),
       scope: external_exports.enum(["once", "persistent", "reject"]).optional().describe("For a tool_approval: grant the tool once, for the rest of the session, or reject.")
     })
   }

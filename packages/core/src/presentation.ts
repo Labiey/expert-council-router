@@ -1,4 +1,4 @@
-import type { CouncilPlan, ResourceInventory } from "./types.js";
+import type { CouncilPlan, ExpertObservabilityEvent, ResourceInventory } from "./types.js";
 
 export type PresentationDetail = "compact" | "full";
 
@@ -58,6 +58,9 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
         : {}),
       ...(inventory.runtimeCapabilities.workspaceProvisioning
         ? { workspaceProvisioning: inventory.runtimeCapabilities.workspaceProvisioning }
+        : {}),
+      ...(inventory.runtimeCapabilities.eventStream
+        ? { eventStream: inventory.runtimeCapabilities.eventStream }
         : {}),
       limitations: inventory.runtimeCapabilities.limitations,
     },
@@ -123,4 +126,39 @@ export function presentCouncilPlan(plan: CouncilPlan, detail: PresentationDetail
     detail: "compact" as const,
     fullDetailHint: "Call expert_build with detail='full' only when alternatives, scores, tools, or skills are required.",
   };
+}
+
+/**
+ * Render one observability event as a single bounded line for a terminal or log.
+ * Deliberately ANSI-free and single-line: it must survive Windows pipes, redirect
+ * to a file, and interleaving with other sources without corrupting output.
+ */
+export function formatExpertEvent(event: ExpertObservabilityEvent): string {
+  const clock = typeof event.t === "string" && event.t.length >= 19 ? event.t.slice(11, 19) : "--:--:--";
+  const head = `${clock} [${event.role}${event.model ? ` ${event.model}` : ""}]`;
+  switch (event.kind) {
+    case "started":
+      return `${head} started`;
+    case "tool_started":
+      return `${head} tool ${event.tool ?? "?"}${event.argsSummary ? ` (${event.argsSummary})` : ""}`;
+    case "tool_finished":
+      return `${head} tool ${event.tool ?? "?"} ${event.ok === false ? "FAILED" : "ok"}`;
+    case "assistant_text":
+      return `${head} says: ${event.text ?? ""}`;
+    case "interaction_opened":
+      return `${head} WAITING FOR HOST: ${event.text ?? ""}`;
+    case "interaction_answered":
+      return `${head} host answered: ${event.text ?? ""}`;
+    case "stopped":
+      return `${head} stopped by expert: ${event.status ?? "partial"}${event.failureType ? ` (${event.failureType})` : ""}`;
+    case "completed":
+    case "failed": {
+      const duration = typeof event.durationMs === "number" ? ` in ${Math.round(event.durationMs / 1000)}s` : "";
+      return `${head} ${event.kind}: ${event.status ?? ""}${event.failureType ? ` (${event.failureType})` : ""}${duration}`;
+    }
+    case "stream_truncated":
+      return `${head} stream truncated: ${event.text ?? "further events dropped"}`;
+    default:
+      return `${head} ${event.kind}`;
+  }
 }

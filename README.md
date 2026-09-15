@@ -23,7 +23,7 @@ The current version (0.8.4) includes:
 - **Dynamic tool permissions**: preset role tools are a **seed, not a ceiling**. An expert requests a missing tool via `request_tool`; the host grants `once` (auto-revoked after one use), `persistent` (this session), or `reject`. `security.toolGrants` gives operator-defined persistent per-role grants. A read-only execution can never be escalated to a mutating/shell tool (isolation guarantee).
 - **Interaction discovery on a correctness channel**: an open interaction surfaces as `pendingInteraction` in `expert_status(view:"running")` and `expert_result(includeProgress)`, and the native Pi package additionally wakes the host with an `expert-council-interaction` notice the moment one opens; headless hosts (Codex/MCP, no server-push) keep polling. Bounded per execution (default 3 rounds + wait timeout).
 - **Cross-language environments**: `provisionWorkspace` is no longer Node-only. A driver registry materializes node/pnpm/yarn/bun, python (uv/poetry/host venv), rust, go, jvm/maven, dotnet, ruby, php, elixir from each toolchain's already-global download cache. Environment-as-code backends (`flake.nix`, `.devcontainer/`) are detected and delegated, not re-implemented. New `security.workspaceProvisioning.strategy` (`auto`/`drivers`/`as-code`/`in-place`) and `runtimeEnv` (`isolated`/`host-env`); concurrent worktrees never share a recompiled target directory.
-- **Progress observability toggle**: `security.observability.expertWindow` (`off` default / `events`) surfaces bounded live progress (`messageCount` plus the last assistant text) in the running view, and `security.observability.streamToHost` can switch that stream off. `interactive` is accepted for forward compatibility but behaves as `events` until an RPC projection exists, and `expert_inspect` warns when it is configured. Neither toggle gates the `pendingInteraction` correctness channel, nor an explicit `expert_result(includeProgress)`.
+- **Progress observability toggle**: `security.observability.expertWindow` selects how much of an expert's live work is visible - `off` (default, nothing ambient), `events` (a bounded live progress block in the running views), or `interactive`, which additionally writes a **live event stream the operator can follow from a second terminal** with `expert-council watch --exec ID --follow`, at zero Main Agent context cost. `security.observability.streamToHost` can switch the streamed progress off, and `redactToolArgs` (default `true`) decides whether tool calls are recorded by name only. None of these gate the `pendingInteraction` correctness channel, nor an explicit `expert_result(includeProgress)` snapshot.
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
 - Per-expert hard tool allowlists and installed-Skill filtering.
@@ -295,10 +295,45 @@ Mutation worktrees start from committed `HEAD` and therefore contain no untracke
 This configuration lives in `council-config.json` inside the shared data directory (the same folder as `model-assessment.json`). The file is optional and discovered by default — no environment variable is required: if it exists it is read, if not everything stays at the defaults. `expert_inspect` returns its location under `operatorConfig` so the Main Agent can edit it on the user's behalf (changes apply after the host session restarts). An explicit `configPath` option or `EXPERT_COUNCIL_CONFIG` environment variable still takes precedence and must point at an existing file.
 
 - `mode` is `none` (default, never provision), `auto` (detect the committed lockfile and install), or `custom` (run `command` verbatim as an argv array).
-- `auto` runs `pnpm install --frozen-lockfile --prefer-offline`, `npm ci --prefer-offline --no-audit --no-fund`, or `bun install --frozen-lockfile`, always appending `--ignore-scripts`; `uv.lock`, `requirements.txt`, `Cargo.toml`, and `go.mod` are reported as skipped because no supported provisioning exists for those ecosystems.
+- `auto` runs `pnpm install --frozen-lockfile --prefer-offline`, `npm ci --prefer-offline --no-audit --no-fund`, or `bun install --frozen-lockfile`, always appending `--ignore-scripts`. A committed driver registry also materializes python (`uv sync`, `poetry install`, or a host `.venv` interpreter), rust, go, jvm/maven, dotnet, ruby, php, and elixir from each toolchain's own global download cache; a repository that declares an environment-as-code backend (`flake.nix`, `.devcontainer/`) is detected and delegated to, never re-implemented.
 - Only mutation worktrees are provisioned; read-only roles run in the main workspace and are never provisioned.
 - The child environment is allowlist-scrubbed (`PATH`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `SYSTEMROOT`, `SYSTEMDRIVE`, `COMSPEC`, `PROGRAMFILES`, `PROGRAMDATA`, `GIT_*`, `npm_config_registry`, `npm_config_cache`); API tokens and cloud credentials are not forwarded.
 - When provisioning is `ready`, the runtime runs `verifyCommand` if configured, otherwise `npm run typecheck` then `npm test`. A failing gate downgrades a successful expert result to `partial` with `failureType: "test_failure"`.
+
+### Observability and the expert window
+
+`security.observability` decides how much of an expert's live work is visible. It is deliberately separate from the `pendingInteraction` channel, which is a correctness surface and is therefore always reported:
+
+```json
+{
+  "security": {
+    "observability": {
+      "expertWindow": "interactive",
+      "streamToHost": true,
+      "redactToolArgs": true
+    }
+  }
+}
+```
+
+| `expertWindow` | What you get |
+| --- | --- |
+| `off` (default) | Nothing ambient: running views show elapsed and remaining budget only. |
+| `events` | Plus a bounded live progress block (`messageCount` and the last assistant text) in `expert_status` running views, when `streamToHost` is true. |
+| `interactive` | Plus a live event stream the operator can follow from **another terminal**, which costs the Main Agent no context at all. |
+
+The stream is one JSON object per line in `<dataDir>/observability/<executionId>.jsonl`: `started`, `tool_started`, `tool_finished`, `assistant_text`, `interaction_opened`, `interaction_answered`, then exactly one of `stopped` / `completed` / `failed`. Follow it with:
+
+```bash
+expert-council watch --exec exec_abc123 --follow
+```
+
+- `--follow` always terminates: on a terminal event, when `--timeout-ms` (default 300000) elapses, or if the file disappears. It tails by byte offset and never prints a partially written line. `--json` emits raw objects instead of formatted lines.
+- Expert narration is collapsed onto one bounded line per event; there is no tool output and no chain of thought on disk.
+- `redactToolArgs` (default `true`) records tool invocations by name only; set `false` to also write a bounded argument summary, which contains whatever the expert passed - file paths and full command lines. Only do this where a local file holding those values is acceptable.
+- Stream files are pruned after 7 days.
+- The stream is written by the process running the experts. An expert dispatched from your Pi session is followed by the `watch` command reading the same data directory, not by an unrelated checkout.
+- `expert_inspect` reports `runtimeCapabilities.eventStream`, so a Main Agent can tell whether the requested tier is actually available; `interactive` on a runtime that cannot write a stream degrades to `events` and says so in `warnings`.
 
 ### Provider limits & concurrency
 
@@ -488,6 +523,7 @@ expert-council delegate <role> <task>
 expert-council feedback <execution-id> --verification passed|failed
 expert-council cleanup <execution-id>
 expert-council status
+expert-council watch --exec <execution-id> [--follow]
 ```
 
 Common flags:
@@ -498,6 +534,7 @@ Common flags:
 - `--telemetry`: custom local telemetry path.
 - `--state`: custom path for persisted plans, executions, and results.
 - `--timeout-ms`: expert execution timeout.
+- `watch` also takes `--dir` (event stream directory), `--interval-ms` (poll interval, default 1000), and `--timeout-ms` (maximum follow time, default 300000). It needs `security.observability.expertWindow: "interactive"` to be producing a stream.
 
 ## MCP Server
 
@@ -849,6 +886,7 @@ Run `npm run validate` first, inspect every `npm pack --dry-run` file list, then
 - Worktree changes are returned for Main Agent review and are never auto-merged or applied; call `expert_cleanup` after acceptance or rejection, or they will be cleaned up automatically after the retention window.
 - Writes to non-Git workspaces require explicit in-place mutation authorization.
 - In-flight model calls do not resume after a server restart; persisted state closes them as explicit interrupted failures while preserving plans and completed results.
+- The interactive expert window is best-effort observability, not an audit log: event files are bounded, written asynchronously, may drop events under I/O failure, and are pruned after 7 days. They can only be followed from the same data directory as the host process running the experts, so a second checkout or a different `EXPERT_COUNCIL_DATA_DIR` sees nothing.
 - Codex's own sandbox does not automatically contain the external Pi runtime, so Expert Council uses separate allowed roots and worktree boundaries.
 - Expert Council provisions mutation worktrees from the repository's own committed lockfile only when `security.workspaceProvisioning.mode` is `auto` (default `none`, so nothing is installed unless opted in). Installs use the lockfile-pinned command with `--ignore-scripts` and a scrubbed child environment; read-only workspaces are never provisioned and ecosystems without a supported lockfile are skipped. After provisioning, a verification gate runs the repository typecheck and test commands, and a failing gate downgrades an otherwise successful result to `partial` with `failureType: "test_failure"` so the corrected-retry path engages. Expert Council still contains no recursive expert trees, graphical interface, remote control plane, or remote telemetry.
 

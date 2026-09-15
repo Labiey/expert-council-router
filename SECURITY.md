@@ -28,6 +28,8 @@ Durable recovery state is stored in `.expert-council/state.json`, which is also 
 
 The runtime reads Pi's existing credential store through Pi APIs. Expert Council does not copy credentials into its config or telemetry.
 
+When `security.observability.expertWindow` is `interactive`, the runtime additionally writes a live event stream to `<dataDir>/observability/<executionId>.jsonl` so an operator can follow expert work from a second terminal. Each line is one bounded event: a tool name, one collapsed line of expert narration, an interaction opening or closing, and a terminal status. It contains no tool output, no chain of thought, and no tool arguments - unless the operator sets `redactToolArgs: false`, which records a bounded summary of what the expert passed and can therefore include file paths and complete command lines. Treat the data directory as project-private under that configuration; stream files are pruned after 7 days. The stream is append-only and best-effort: a failed write cannot affect an expert run, and observability is **not** an audit log - use `expert_verify`, the structured `tests[]` evidence, and the Git diff to establish what an expert actually did.
+
 ## Reporting
 
 Do not open a public issue containing credentials, private prompts, or source code from a confidential repository. Report the smallest reproducible security boundary failure to the project maintainers through the repository's private security-reporting channel once one is configured.

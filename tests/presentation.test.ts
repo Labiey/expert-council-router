@@ -44,6 +44,22 @@ describe("compact host presentation", () => {
     });
   });
 
+  it("forwards the interactive event-stream capability so hosts can discover the window", () => {
+    // 0.8.0 lesson: a capability field the runtime reports but presentation drops is
+    // invisible to every host. The window is only reachable if this survives.
+    const withStream: ResourceInventory = {
+      ...inventory,
+      runtimeCapabilities: {
+        ...capabilities,
+        eventStream: { enabled: true, dir: "/tmp/ec/observability", redactToolArgs: true },
+      },
+    };
+    expect((presentResourceInventory(withStream) as any).runtimeCapabilities.eventStream)
+      .toEqual({ enabled: true, dir: "/tmp/ec/observability", redactToolArgs: true });
+    // A runtime that reports no stream must not grow a fabricated one.
+    expect(presentResourceInventory(inventory) as any).not.toHaveProperty("runtimeCapabilities.eventStream");
+  });
+
   it("omits individual model metadata and role weights by default", () => {
     const compact = presentResourceInventory(inventory) as any;
     expect(compact.summary).toEqual({ modelCount: 3, providerCount: 2, enabledSkillCount: 1, roleCount: 1 });

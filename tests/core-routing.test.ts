@@ -12,6 +12,7 @@ import {
   getRole,
   indicatesModelUnavailable,
   LEGACY_COST_MULTIPLIERS,
+  listRoles,
   mergeModelProfiles,
   normalizePiModel,
   parseCouncilConfig,
@@ -325,6 +326,34 @@ describe("council sizing and permissions", () => {
     }
   });
 
+  it("never weights shell reliability for a role that can never get a shell", () => {
+    // Isolation rule: mutating/shell tools can never be granted to a read-only
+    // execution, so `bashReliability` must not appear in any read-only role's
+    // weights, otherwise routing selects for a capability it cannot exercise.
+    const offending = listRoles()
+      .filter((role) => role.readOnly && "bashReliability" in role.weights)
+      .map((role) => role.role);
+    expect(offending).toEqual([]);
+  });
+
+  it("keeps every role's weights normalized and pins the verifier's read-only weighting", () => {
+    for (const role of listRoles()) {
+      const total = Object.values(role.weights).reduce((sum, weight) => sum + weight, 0);
+      // Role weights are decimal literals, so binary float error is expected but tiny.
+      expect(Math.abs(total - 1)).toBeLessThan(1e-9);
+    }
+    expect(getRole("verifier").readOnly).toBe(true);
+    expect(getRole("verifier").weights).toEqual({
+      toolReliability: 0.3,
+      review: 0.2,
+      longContext: 0.15,
+      autonomousExecution: 0.1,
+      debugging: 0.1,
+      speed: 0.1,
+      costEfficiency: 0.05,
+    });
+  });
+
   it("ignores missing configured models", () => {
     const config = parseCouncilConfig({ profiles: { models: { "missing/model": { coding: 10 } } } });
     const plan = buildCouncilPlan(
@@ -395,13 +424,15 @@ describe("configuration", () => {
   });
 
   it("defaults and validates security.observability", () => {
-    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true });
+    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true });
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "events" } } }).security.observability).toMatchObject({ expertWindow: "events", streamToHost: true });
     expect(() => parseCouncilConfig({ security: { observability: { expertWindow: "magic" } } })).toThrow(ConfigValidationError);
-    // The inert redactToolArgs key was removed (nothing ever surfaced tool arguments),
-    // but configs that still carry it must keep loading instead of failing validation.
-    expect(parseCouncilConfig({ security: { observability: { expertWindow: "events", redactToolArgs: false } } }).security.observability)
-      .toEqual({ expertWindow: "events", streamToHost: true });
+    // redactToolArgs was removed in 0.8.3 as an inert placebo and returns in 0.8.4 with
+    // real behavior: it governs whether the interactive event stream records a bounded
+    // tool-argument summary. An operator turning it off must actually be honored.
+    expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive", redactToolArgs: false } } }).security.observability)
+      .toEqual({ expertWindow: "interactive", streamToHost: true, redactToolArgs: false });
+    expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive" } } }).security.observability.redactToolArgs).toBe(true);
   });
 });
 

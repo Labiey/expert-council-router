@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -167,6 +167,144 @@ describe("CLI JSON integration", () => {
     }, mockCouncil());
     expect(code).toBe(1);
     expect(JSON.parse(stderr).error).toContain("--max-experts must be an integer");
+  });
+});
+
+describe("CLI expert-window watch", () => {
+  const event = (kind: string, extra: Record<string, unknown> = {}) => ({
+    t: "2026-09-16T00:00:00.000Z",
+    executionId: "exec_watch",
+    role: "scout",
+    kind,
+    ...extra,
+  });
+  const line = (kind: string, extra?: Record<string, unknown>) => JSON.stringify(event(kind, extra));
+  const capture = () => {
+    const out: string[] = [];
+    const err: string[] = [];
+    return {
+      io: { stdout: { write: (value: string) => { out.push(value); } }, stderr: { write: (value: string) => { err.push(value); } } },
+      out,
+      err,
+    };
+  };
+  const withStream = async (contents: string, run: (dir: string) => Promise<void>) => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-watch-"));
+    try {
+      await writeFile(path.join(dir, "exec_watch.jsonl"), contents, "utf8");
+      await run(dir);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+
+  it("renders a finished stream through the injected formatter and exits", async () => {
+    await withStream(`${line("started")}\n${line("tool_started", { tool: "read" })}\n${line("completed", { status: "success" })}\n`, async (dir) => {
+      const { io, out } = capture();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir],
+        io,
+        undefined,
+        { formatEvent: (frame) => `FMT ${frame.kind}` },
+      );
+      expect(code).toBe(0);
+      expect(out.join("")).toBe("FMT started\nFMT tool_started\nFMT completed\n");
+    });
+  });
+
+  it("emits raw objects with --json and never touches the formatter", async () => {
+    await withStream(`${line("assistant_text", { text: "reading" })}\n`, async (dir) => {
+      const { io, out } = capture();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--json"],
+        io,
+        undefined,
+        { formatEvent: () => { throw new Error("--json must not render"); } },
+      );
+      expect(code).toBe(0);
+      expect(out.join("")).toBe(`${line("assistant_text", { text: "reading" })}\n`);
+    });
+  });
+
+  it("lists available streams when --exec is missing or unknown", async () => {
+    await withStream(`${line("started")}\n`, async (dir) => {
+      const missing = capture();
+      expect(await runCli(["watch", "--dir", dir], missing.io, undefined, { formatEvent: (frame) => frame.kind })).not.toBe(0);
+      expect(missing.err.join("")).toContain("requires --exec");
+      expect(missing.err.join("")).toContain("exec_watch");
+
+      const unknown = capture();
+      expect(await runCli(["watch", "--exec", "exec_none", "--dir", dir], unknown.io, undefined, { formatEvent: (frame) => frame.kind })).not.toBe(0);
+      expect(unknown.err.join("")).toContain('expertWindow');
+    });
+  });
+
+  it("holds back a trailing line that is still being written", async () => {
+    await withStream(`${line("started")}\n{"kind":"assistant_text","tex`, async (dir) => {
+      const { io, out, err } = capture();
+      const code = await runCli(["watch", "--exec", "exec_watch", "--dir", dir], io, undefined, { formatEvent: (frame) => frame.kind });
+      expect(code).toBe(0);
+      expect(out.join("")).toBe("started\n");
+      expect(err.join("")).toContain("held back");
+    });
+  });
+
+  it("stops following at a terminal event without burning the timeout", async () => {
+    await withStream(`${line("started")}\n${line("failed", { status: "failed", failureType: "timeout" })}\n`, async (dir) => {
+      const { io, err } = capture();
+      const started = Date.now();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "60000"],
+        io,
+        undefined,
+        { formatEvent: (frame) => frame.kind },
+      );
+      expect(code).toBe(0);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      expect(err.join("")).toContain("stream closed (failed)");
+    });
+  });
+
+  it("bounds --follow by --timeout-ms when a stream never terminates", async () => {
+    await withStream(`${line("started")}\n`, async (dir) => {
+      const { io, err } = capture();
+      const started = Date.now();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "1000"],
+        io,
+        undefined,
+        { formatEvent: (frame) => frame.kind },
+      );
+      const elapsed = Date.now() - started;
+      expect(code).toBe(0);
+      expect(elapsed).toBeGreaterThanOrEqual(900);
+      expect(elapsed).toBeLessThan(6_000);
+      expect(err.join("")).toContain("stopped after --timeout-ms");
+    });
+  });
+
+  it("rejects an out-of-range follow budget instead of silently clamping it", async () => {
+    await withStream(`${line("started")}\n`, async (dir) => {
+      const { io, err } = capture();
+      // 800ms is below the accepted minimum: refusing beats pretending to obey an operator.
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--timeout-ms", "800"],
+        io,
+        undefined,
+        { formatEvent: (frame) => frame.kind },
+      );
+      expect(code).not.toBe(0);
+      expect(err.join("")).toContain("--timeout-ms");
+    });
+  });
+
+  it("refuses an execution id that could not name a file", async () => {
+    await withStream(`${line("started")}\n`, async (dir) => {
+      const { io, err } = capture();
+      const code = await runCli(["watch", "--exec", "../../etc/passwd", "--dir", dir], io, undefined, { formatEvent: (frame) => frame.kind });
+      expect(code).not.toBe(0);
+      expect(err.join("")).toContain("rejected value");
+    });
   });
 });
 

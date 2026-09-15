@@ -1,9 +1,44 @@
+import { open, readdir } from "node:fs/promises";
+import path from "node:path";
 import type { CostPolicy, ExpertCouncil, ExpertRole } from "@expert-council/core";
-import { createExpertCouncil } from "@expert-council/pi-runtime";
+import { createExpertCouncil, defaultCouncilDataRoot } from "@expert-council/pi-runtime";
 
 export interface CliIo {
   stdout: { write(value: string): unknown };
   stderr: { write(value: string): unknown };
+}
+
+/**
+ * Optional in-process seams for `runCli`. `formatEvent` exists so a caller (or a
+ * test) can substitute the renderer; production always resolves the shared
+ * `formatExpertEvent` from `@expert-council/core`. The CLI never carries its own
+ * copy of the formatting rules.
+ */
+export interface CliDeps {
+  formatEvent?: (event: ExpertEventFrame) => string;
+}
+
+/**
+ * Tolerant reader-side mirror of one JSONL frame of the runtime's observability
+ * stream (`ExpertObservabilityEvent` in `@expert-council/core`). It is a *reader*,
+ * not a formatter: fields are copied only after a type check, unknown extras are
+ * dropped, and an unrecognised `kind` is passed through so a newer runtime's event
+ * still renders (core's renderer has a `default:` branch for exactly that).
+ */
+export interface ExpertEventFrame {
+  t: string;
+  executionId: string;
+  role: string;
+  /** `kind` is intentionally widened: a future event kind must not break the tail. */
+  kind: string;
+  model?: string;
+  tool?: string;
+  ok?: boolean;
+  text?: string;
+  argsSummary?: string;
+  status?: string;
+  failureType?: string;
+  durationMs?: number;
 }
 
 const ROLES = new Set<ExpertRole>([
@@ -43,11 +78,13 @@ function integerOption(args: string[], name: string, minimum: number, maximum: n
   return parsed;
 }
 
+const BOOLEAN_FLAGS = ["--json", "--help", "--follow"];
+
 function positional(args: string[]): string[] {
   const result: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
     if (args[index]?.startsWith("--")) {
-      if (!["--json", "--help"].includes(args[index]!)) index += 1;
+      if (!BOOLEAN_FLAGS.includes(args[index]!)) index += 1;
       continue;
     }
     result.push(args[index]!);
@@ -57,7 +94,22 @@ function positional(args: string[]): string[] {
 
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
-  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
+  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]
+  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N]
+
+watch (run it from a second terminal) tails the live expert event stream that the
+runtime writes to <dataDir>/observability/<execution-id>.jsonl while
+security.observability.expertWindow is "interactive":
+  --exec ID         execution id to follow (required; only its own stream file is read)
+  --dir PATH        stream directory override; defaults to <dataDir>/observability, where
+                    <dataDir> honours EXPERT_COUNCIL_DATA_DIR
+  --json            print the raw JSON frames instead of the shared human rendering
+  --follow          keep tailing; exits at a terminal event (completed, failed, stopped,
+                    stream_truncated), at --timeout-ms, or if the stream file disappears
+  --interval-ms N   poll interval, 50-60000 (default 1000)
+  --timeout-ms N    maximum total follow time, 1000-3600000 (default 300000)
+Without --follow it prints what already exists and exits. Never feed a path from
+model output or task text into --exec or --dir; both are operator arguments.\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
 }
 
 function human(command: string, value: unknown): string {
@@ -70,10 +122,250 @@ function human(command: string, value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
+/** Kinds that close a stream; `watch --follow` must stop at the first one it sees. */
+const WATCH_TERMINAL_KINDS = new Set(["completed", "failed", "stopped", "stream_truncated"]);
+const WATCH_STREAM_SUFFIX = ".jsonl";
+/** Why an operator sees nothing: the prerequisite is a configuration the runtime honoured at start. */
+const WATCH_PREREQUISITE_HINT = 'The runtime writes this stream only for a run started while security.observability.expertWindow is "interactive" (the default "off" writes nothing).';
+const WATCH_MAX_CHUNK_BYTES = 1_048_576;
+const WATCH_MAX_LINE_BYTES = 4_194_304;
+const WATCH_LISTED_IDS = 20;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => { setTimeout(resolve, ms); });
+}
+
+/**
+ * Resolve the shared renderer owned by `@expert-council/core`. Formatting lives in
+ * exactly one place on purpose, so the CLI must not grow its own copy; when the
+ * installed core build does not export it we fail with an actionable message (or the
+ * caller uses `--json`, which needs no renderer at all).
+ */
+export async function resolveExpertEventFormatter(): Promise<(event: ExpertEventFrame) => string> {
+  const core: unknown = await import("@expert-council/core");
+  const shared = (core as { formatExpertEvent?: unknown }).formatExpertEvent;
+  if (typeof shared !== "function") {
+    throw new Error(
+      "watch cannot render events: @expert-council/core in this build does not export "
+      + "formatExpertEvent (the single owner of expert event formatting). Rebuild the workspace so the "
+      + "installed core provides it, or run watch with --json to read the raw stream.",
+    );
+  }
+  return shared as (event: ExpertEventFrame) => string;
+}
+
+/**
+ * Where the operator's streams live. `--dir` is an explicit operator argument, the
+ * default is the runtime's own data root (EXPERT_COUNCIL_DATA_DIR-aware); neither is
+ * ever derived from task text or model output.
+ */
+function watchStreamDir(args: string[]): string {
+  if (args.includes("--dir")) {
+    const value = option(args, "--dir");
+    if (value === undefined) throw new Error("watch --dir requires a path");
+    return path.resolve(bounded(value, "--dir", 32_768));
+  }
+  return path.join(defaultCouncilDataRoot(), "observability");
+}
+
+function safeStreamId(entry: string): string | undefined {
+  if (!entry.endsWith(WATCH_STREAM_SUFFIX)) return undefined;
+  const id = entry.slice(0, -WATCH_STREAM_SUFFIX.length);
+  return /^[a-zA-Z0-9_-]{1,200}$/.test(id) ? id : undefined;
+}
+
+/** Execution ids that actually have a stream in this directory (for actionable errors). */
+async function listStreamExecutions(dir: string): Promise<{ ids: string[]; extra: number }> {
+  let entries: string[];
+  try {
+    entries = await readdir(dir);
+  } catch {
+    return { ids: [], extra: 0 };
+  }
+  const ids = entries
+    .map((entry) => safeStreamId(entry))
+    .filter((id): id is string => id !== undefined)
+    .sort();
+  return { ids: ids.slice(0, WATCH_LISTED_IDS), extra: Math.max(0, ids.length - WATCH_LISTED_IDS) };
+}
+
+function describeStreams(dir: string, listed: { ids: string[]; extra: number }): string {
+  if (listed.ids.length === 0) return `no .jsonl streams found in ${dir}`;
+  return `available execution id(s) in ${dir}: ${listed.ids.join(", ")}${listed.extra > 0 ? ` (+${listed.extra} more)` : ""}`;
+}
+
+/**
+ * Read one bounded slice from a byte offset. Returns `missing` instead of throwing on
+ * ENOENT so the caller can distinguish "never existed" from "vanished mid-follow", and
+ * rewinds to 0 when the file shrank (a replaced stream).
+ */
+async function readStreamChunk(file: string, offset: number): Promise<{
+  missing: boolean;
+  rewound: boolean;
+  data: Buffer;
+  nextOffset: number;
+}> {
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    try {
+      handle = await open(file, "r");
+      const size = (await handle.stat()).size;
+      const start = size < offset ? 0 : offset;
+      const length = Math.min(size - start, WATCH_MAX_CHUNK_BYTES);
+      if (length === 0) {
+        return { missing: false, rewound: start === 0 && offset > 0, data: Buffer.alloc(0), nextOffset: size };
+      }
+      const buffer = Buffer.allocUnsafe(length);
+      const { bytesRead } = await handle.read(buffer, 0, length, start);
+      return {
+        missing: false,
+        rewound: start === 0 && offset > 0,
+        data: buffer.subarray(0, bytesRead),
+        nextOffset: start + bytesRead,
+      };
+    } finally {
+      await handle?.close();
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { missing: true, rewound: false, data: Buffer.alloc(0), nextOffset: 0 };
+    }
+    throw error;
+  }
+}
+
+async function streamExists(file: string): Promise<boolean> {
+  const probe = await readStreamChunk(file, 0);
+  return !probe.missing;
+}
+
+function parseExpertEvent(line: string): ExpertEventFrame | undefined {
+  if (line.length === 0 || line.length > WATCH_MAX_LINE_BYTES) return undefined;
+  let value: unknown;
+  try {
+    value = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null) return undefined;
+  const frame = value as Record<string, unknown>;
+  if (typeof frame.t !== "string" || typeof frame.role !== "string" || typeof frame.kind !== "string") {
+    return undefined;
+  }
+  const text = (key: string): string | undefined => (typeof frame[key] === "string" ? frame[key] as string : undefined);
+  return {
+    t: frame.t,
+    executionId: text("executionId") ?? "",
+    role: frame.role,
+    kind: frame.kind,
+    ...(text("model") !== undefined ? { model: text("model") } : {}),
+    ...(text("tool") !== undefined ? { tool: text("tool") } : {}),
+    ...(typeof frame.ok === "boolean" ? { ok: frame.ok } : {}),
+    ...(text("text") !== undefined ? { text: text("text") } : {}),
+    ...(text("argsSummary") !== undefined ? { argsSummary: text("argsSummary") } : {}),
+    ...(text("status") !== undefined ? { status: text("status") } : {}),
+    ...(text("failureType") !== undefined ? { failureType: text("failureType") } : {}),
+    ...(typeof frame.durationMs === "number" ? { durationMs: frame.durationMs } : {}),
+  };
+}
+
+async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: ExpertEventFrame) => string): Promise<number> {
+  const dir = watchStreamDir(args);
+  const executionId = option(args, "--exec");
+  if (executionId === undefined) {
+    throw new Error(`watch requires --exec <execution-id>; ${describeStreams(dir, await listStreamExecutions(dir))}`);
+  }
+  if (!/^[a-zA-Z0-9_-]{1,200}$/.test(executionId)) {
+    throw new Error(`watch --exec must be 1-200 characters of A-Z, a-z, 0-9, '_' or '-' (got a rejected value); ${describeStreams(dir, await listStreamExecutions(dir))}`);
+  }
+  const follow = args.includes("--follow");
+  const json = args.includes("--json");
+  const intervalMs = integerOption(args, "--interval-ms", 50, 60_000) ?? 1_000;
+  const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000) ?? 300_000;
+  const file = path.join(dir, `${executionId}${WATCH_STREAM_SUFFIX}`);
+  if (!(await streamExists(file))) {
+    const listed = describeStreams(dir, await listStreamExecutions(dir));
+    throw new Error(`watch found no event stream for ${executionId} at ${file}. ${WATCH_PREREQUISITE_HINT} ${listed}`);
+  }
+  const format = json ? undefined : (injectedFormat ?? await resolveExpertEventFormatter());
+
+  let offset = 0;
+  // Node's Buffer is generic over its ArrayBuffer type since @types/node 22, and
+  // subarray() widens to Buffer<ArrayBufferLike>; holding the wider type here is what
+  // lets the partial-line carry-over compile.
+  let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  let terminal: string | undefined;
+  let vanished = false;
+  let malformed = 0;
+  let printed = 0;
+  const deadline = Date.now() + (follow ? timeoutMs : 0);
+  // Bounded by construction: one pass without --follow, and with --follow at most
+  // ceil(timeout/interval) polls plus the deadline check on each pass.
+  const maxPasses = follow ? Math.ceil(timeoutMs / intervalMs) + 2 : 1;
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const chunk = await readStreamChunk(file, offset);
+    if (chunk.missing) {
+      vanished = true;
+      break;
+    }
+    if (chunk.rewound) pending = Buffer.alloc(0);
+    offset = chunk.nextOffset;
+    const merged = pending.length > 0 && chunk.data.length > 0
+      ? Buffer.concat([pending, chunk.data])
+      : (pending.length > 0 ? pending : chunk.data);
+    const lastNewline = merged.lastIndexOf(0x0a);
+    if (lastNewline < 0) {
+      if (merged.length > WATCH_MAX_LINE_BYTES) {
+        throw new Error(`watch found no newline within ${WATCH_MAX_LINE_BYTES} bytes in ${file}; the stream is malformed`);
+      }
+      pending = merged;
+    } else {
+      pending = merged.subarray(lastNewline + 1);
+      for (const rawLine of merged.subarray(0, lastNewline + 1).toString("utf8").split("\n")) {
+        const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+        if (line.trim() === "") continue;
+        const event = parseExpertEvent(line);
+        if (event !== undefined && WATCH_TERMINAL_KINDS.has(event.kind)) terminal ??= event.kind;
+        if (json) {
+          io.stdout.write(`${line}\n`);
+          printed += 1;
+        } else if (event !== undefined) {
+          io.stdout.write(`${format!(event)}\n`);
+          printed += 1;
+        } else {
+          malformed += 1;
+        }
+      }
+    }
+    if (terminal !== undefined) break;
+    if (!follow) break;
+    if (Date.now() >= deadline) {
+      io.stderr.write(`[watch] ${executionId}: stopped after --timeout-ms ${timeoutMs} (${printed} event line(s) shown)\n`);
+      break;
+    }
+    await sleep(intervalMs);
+  }
+  if (vanished) {
+    io.stderr.write(`watch: ${file} disappeared before the stream reached a terminal event. ${WATCH_PREREQUISITE_HINT}\n`);
+    return 1;
+  }
+  if (terminal !== undefined) {
+    io.stderr.write(`[watch] ${executionId}: stream closed (${terminal})\n`);
+  }
+  if (!follow && pending.length > 0) {
+    io.stderr.write(`[watch] ${executionId}: held back ${pending.length} trailing byte(s) with no newline yet (still being written)\n`);
+  }
+  if (malformed > 0) {
+    io.stderr.write(`[watch] ${executionId}: ignored ${malformed} unparseable line(s)\n`);
+  }
+  return 0;
+}
+
 export async function runCli(
   args: string[],
   io: CliIo = process,
   council?: ExpertCouncil,
+  deps: CliDeps = {},
 ): Promise<number> {
   const command = args[0];
   if (!command || command === "help" || args.includes("--help")) {
@@ -81,6 +373,10 @@ export async function runCli(
     return 0;
   }
   try {
+    // `watch` is a second-terminal reader of an on-disk stream: it must work without
+    // a council, a model inventory, or a provisioned workspace, so it is dispatched
+    // before createExpertCouncil.
+    if (command === "watch") return await runWatch(args, io, deps.formatEvent);
     const service = council ?? (await createExpertCouncil({
       cwd: option(args, "--cwd"),
       configPath: option(args, "--config"),

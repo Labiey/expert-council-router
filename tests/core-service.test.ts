@@ -257,13 +257,26 @@ describe("retry and escalation", () => {
       security: { observability: { expertWindow: "interactive" } },
     });
     const inventory = await interactive.inspectResources();
-    expect(inventory.operatorConfig?.observability).toEqual({ expertWindow: "interactive", streamToHost: true });
-    expect(inventory.warnings.join(" ")).toContain("has no distinct behavior yet");
+    expect(inventory.operatorConfig?.observability).toEqual({ expertWindow: "interactive", streamToHost: true, redactToolArgs: true });
+    // This mock runtime cannot write an event stream, so the requested tier must say so.
+    expect(inventory.warnings.join(" ")).toContain("cannot write a live event stream");
 
     const quiet = new ExpertCouncilService(new MockRuntime([model("cheap", "one")]), { profiles: { models: profiles } });
     const quietInventory = await quiet.inspectResources();
-    expect(quietInventory.operatorConfig?.observability).toEqual({ expertWindow: "off", streamToHost: true });
-    expect(quietInventory.warnings.join(" ")).not.toContain("has no distinct behavior yet");
+    expect(quietInventory.operatorConfig?.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true });
+    expect(quietInventory.warnings.join(" ")).not.toContain("cannot write a live event stream");
+
+    // A runtime that CAN write the stream must not be warned about the same tier.
+    const baseCapabilities = (await interactive.inspectResources()).runtimeCapabilities;
+    const capable = new MockRuntime([model("cheap", "one")]);
+    capable.getCapabilities = async () => ({ ...baseCapabilities, eventStream: { enabled: true } });
+    const streamService = new ExpertCouncilService(capable, {
+      profiles: { models: profiles },
+      security: { observability: { expertWindow: "interactive" } },
+    });
+    const streamInventory = await streamService.inspectResources();
+    expect(streamInventory.warnings.join(" ")).not.toContain("cannot write a live event stream");
+    expect(streamInventory.runtimeCapabilities.eventStream).toMatchObject({ enabled: true });
   });
 
   it("waits without polling until any requested background execution completes", async () => {

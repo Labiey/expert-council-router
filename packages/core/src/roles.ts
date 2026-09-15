@@ -70,7 +70,7 @@ export const DEFAULT_ROLES: Record<ExpertRole, RoleDefinition> = {
     tools: readOnlyTools,
     skills: ["testing"],
     minimumToolReliability: 4,
-    weights: { toolReliability: 0.3, bashReliability: 0.25, autonomousExecution: 0.15, debugging: 0.1, speed: 0.1, costEfficiency: 0.1 },
+    weights: { toolReliability: 0.3, review: 0.2, longContext: 0.15, autonomousExecution: 0.1, debugging: 0.1, speed: 0.1, costEfficiency: 0.05 },
   },
 };
 

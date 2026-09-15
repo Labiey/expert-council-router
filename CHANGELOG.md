@@ -4,17 +4,51 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ## 0.8.4 - 2026-09-16
 
+### Added
+- **The expert window is real.** `security.observability.expertWindow: "interactive"` - previously an accepted-but-inert tier that behaved exactly like `events` - now writes a **live event stream** an operator can follow from a second terminal at zero Main Agent context cost.
+  - The Pi runtime appends one bounded JSON object per line to `<dataDir>/observability/<executionId>.jsonl`: `started`, `tool_started`, `tool_finished`, `assistant_text`, `interaction_opened`, `interaction_answered`, then exactly one of `stopped` / `completed` / `failed`. Failed tool calls carry `ok: false`; expert narration is collapsed onto a single bounded line; no tool output and no chain of thought ever reaches disk.
+  - `expert-council watch --exec <id> [--follow]` renders it through the same formatter the host uses, tails by byte offset, never prints a partially written line, and **always terminates** - on a terminal event, when `--timeout-ms` (default 300000) elapses, or if the file disappears. `--json` emits raw objects; a missing `--exec` lists the ids that do have streams.
+  - `expert_inspect` reports `runtimeCapabilities.eventStream`, so a Main Agent can tell whether the requested tier is actually available. On a runtime that cannot write a stream, `interactive` degrades to `events` and says so in `warnings` - replacing 0.8.3's placeholder notice with a real capability check.
+  - Streams are pruned after 7 days, and a failed observability write can never affect an expert run. Observation is deliberately best-effort and **not** an audit log; `expert_verify`, structured `tests[]` evidence, and the Git diff remain the acceptance bar.
+
 ### Fixed
+- **Verifier routing scored a capability the role can never receive.** The `verifier` role is read-only, and by this project's own isolation rule a read-only execution can never be granted a shell - yet its single largest routing weight was `bashReliability: 0.25`, selecting candidates for a capability they cannot exercise. The role is now weighted on `toolReliability 0.3, review 0.2, longContext 0.15, autonomousExecution 0.1, debugging 0.1, speed 0.1, costEfficiency 0.05`, and a class-guard test asserts that no read-only role weights `bashReliability` and that every role's weights sum to 1, so this cannot recur as roles are added. Found live: a dispatched verifier tried `node --version`, was correctly refused by the isolation rule, and had to report the step as `not-run`.
+- **A stop report could be filed with filler and still be credited as delivery.** An expert that called `report_and_stop` with `findings: ["placeholders"]` and a reason reading "no blocker - the report is complete" was accepted as a legitimate stop result: the real deliverable was lost, the run looked terminal, and telemetry recorded the model/role combination as an honest stop. A contentless stop report is now **bounced once** with an explicit correction - state the actual blocker and at least one concrete finding, or return normally if the work is in fact finished. Filler entries are stripped from accepted reports too, and the bounce is capped at one so it can never loop.
 - **`interactionRounds` reached the type but never the store.** Since 0.8.0 the council has recorded how many decision/tool-approval rounds an execution raised, `expert_result` reported it correctly, and the field was declared on `ExpertOutcome` — but the local JSONL telemetry store writes through a **whitelist projection** (`sanitizeOutcome`) that never listed it, so every persisted row silently dropped it (0 of 78 rows on the maintainer's own machine). A metric that exists only in the response is not a learning signal: routing can only use what survives locally. The field is now persisted, clamped to a non-negative integer, and still omitted when an execution never interacted. The regression test asserts both directions (present → written, absent → not invented), and the projection now carries a comment naming this hazard, because any newly added persisted field must be listed there or it vanishes quietly.
   - Scope note, stated rather than implied: aggregates do not *consume* the value yet. It is recorded locally so the conservative reliability adjustment has the data available; no claim is made that routing already learns from it.
+
+### Changed
+- **`security.observability.redactToolArgs` returns with real behavior.** It was removed in 0.8.3 for being an inert placebo; now that an event stream exists to redact, it decides whether tool invocations are recorded by name only (default `true`) or with a bounded argument summary that can contain file paths and complete command lines. Configurations that carried the key throughout 0.8.3 keep loading unchanged.
+
+### Documentation
+- Added "Observability and the expert window" (and its 中文 mirror): all three tiers, the file layout, every `watch` flag, the redaction tradeoff, and the fact that a stream can only be followed from the same data directory as the running host.
+- Corrected a stale provisioning claim that repositories using `uv.lock`, `requirements.txt`, `Cargo.toml`, or `go.mod` "are reported as skipped because no supported provisioning exists" - the committed driver registry has materialized those ecosystems since 0.8.0.
+- The shared Agent Skill gained an observation item: point the operator at `expert-council watch` rather than relaying live progress back into the Main Agent's context, which is the cost delegation exists to avoid.
 
 ### 中文
 
 ## 0.8.4（中文）
 
+### 新增
+- **专家窗口真的实现了。** `security.observability.expertWindow: "interactive"`——此前只是一个能填但行为等同 `events` 的空档位——现在会写入一份**实时事件流**，运维者可在另一个终端跟随，且不花主代理任何上下文。
+  - Pi 运行时向 `<数据目录>/observability/<executionId>.jsonl` 逐行追加有界 JSON 对象：`started`、`tool_started`、`tool_finished`、`assistant_text`、`interaction_opened`、`interaction_answered`，最后恰好一个 `stopped` / `completed` / `failed`。失败的工具调用带 `ok: false`；专家叙述被压成单行有界文本；工具输出与思考链永远不会落盘。
+  - `expert-council watch --exec <id> [--follow]` 用与宿主相同的格式化器输出，按字节偏移量追读，绝不输出未写完的半行，且**一定会退出**——遇到终止事件、超过 `--timeout-ms`（默认 300000）、或文件消失。`--json` 输出原始对象；未指定 `--exec` 时会列出当前有流的可执行 ID。
+  - `expert_inspect` 报 `runtimeCapabilities.eventStream`，主代理因此能判断所请求档位是否真可用。写入能力缺失时 `interactive` 降级为 `events` 并在 `warnings` 里说明——把 0.8.3 那个占位告警换成了真能力探测。
+  - 事件流 7 天后清理；写入失败永远不可能影响专家执行。可观测性有意只是尽力而为，**不是**审计日志；`expert_verify`、结构化的 `tests[]` 证据与 Git diff 仍是验收标准。
+
 ### 修复
+- **Verifier 的路由权重在考核一个角色永远拿不到的能力。** `verifier` 是只读角色，而根据本项目自己的隔离规则，只读执行永远不会被授予 shell——但它最大的单项路由权重恰恰是 `bashReliability: 0.25`，在用一个无法行使的能力挑选候选。现改为 `toolReliability 0.3、review 0.2、longContext 0.15、autonomousExecution 0.1、debugging 0.1、speed 0.1、costEfficiency 0.05`；并新增类不变量测试：任何只读角色都不得权重 `bashReliability`，且所有角色权重之和必须为 1，以免未来新增角色时重跨。该缺陷是实机发现的：一个 verifier 尝试 `node --version`，被隔离规则正确拒绝，只能把那一步报为 `not-run`。
+- **停止报告可以只交占位内容却被当成已交付。** 专家调用 `report_and_stop` 时写 `findings: ["placeholders"]`、理由却是“没有障碍——报告已完成”，仍被当成合法的停止结果接受：真实交付物丢了，执行看起来已终止，遥测还把那个模型/角色组合记为一次诚实停止。现在无实质内容的停止报告会**被退回一次**并附上明确纠正——写清真正的障碍与至少一条具体发现，或者若确实做完了就正常返回。已接受的报告也会滤掉占位项；退回最多一次，绝对不会循环。
 - **`interactionRounds` 到了类型，却没到存储。** 自 0.8.0 起，议会会记录一次执行提出了多少个决策/工具审批交互，`expert_result` 也正确上报，`ExpertOutcome` 上更声明了该字段——但本地 JSONL 遥测存储经一个**白名单投影**（`sanitizeOutcome`）写盘，而该投影从未列入这个字段，于是每一条持久化记录都静默丢弃了它（维护者自己机器上 78 行里 0 行含该字段）。只存在于响应里的指标不是学习信号：路由只能用本地留得下来的数据。现在该字段会被写入、被限制为非负整数，且未发生交互时照旧不出现。回归测试断言两个方向（有→写入，无→不凭空生成）；投影处也加了注释点明这个陷阱，因为今后任何新增的持久字段若不在那里登记就会静默消失。
-  - 范围如实说明：聚合指标**尚未**消费该值。它只是先记录在本地，供保守的可靠性调节取用；并不声称路由已经从中学习。
+  - 范围如实说明：聚合指标**尚未**消费 `interactionRounds`。它只是先记录在本地，供保守的可靠性调节取用；并不声称路由已经从中学习。
+
+### 变更
+- **`security.observability.redactToolArgs` 带真行为回归。** 0.8.3 因它是个空转安慰剂而移除；现在既然确实存在一份可被脱敏的事件流，它决定工具调用是只按名称记录（默认 `true`），还是同时写入有界的入参摘要（可能含文件路径与完整命令行）。在 0.8.3 期间仍携带该键的配置照旧加载。
+
+### 文档
+- 新增“可观测性与专家窗口”一节（含中文镜像）：三个档位、文件布局、`watch` 全部参数、脱敏取舍，以及事件流只能从与运行宿主相同的数据目录里跟随这一事实。
+- 修正一处关于供给的过时断言：说使用 `uv.lock`、`requirements.txt`、`Cargo.toml`、`go.mod` 的仓库“会被报为跳过，因为不存在支持的供给方式”——提交的驱动注册表自 0.8.0 起就已为这些生态物化环境。
+- 共享 Agent Skill 新增一条观测守则：把运维者引向 `expert-council watch`，而不是把实时进度转述进主代理上下文——那正是委托本要避免的成本。
 
 ## 0.8.3 - 2026-09-16
 

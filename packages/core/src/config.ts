@@ -236,12 +236,18 @@ export const councilConfigSchema = z.object({
        * (correctness channel); this governs the optional live progress block.
        * No tool arguments are ever surfaced, so there is nothing to redact here.
        */
+      /**
+       * Expert progress visibility. `pendingInteraction` is always surfaced
+       * (correctness channel); this governs the optional live progress block and,
+       * for "interactive", the on-disk event stream another terminal can follow.
+       */
       observability: z
         .object({
           expertWindow: z.enum(["off", "events", "interactive"]).default("off"),
           streamToHost: z.boolean().default(true),
+          redactToolArgs: z.boolean().default(true),
         })
-        .default({ expertWindow: "off", streamToHost: true }),
+        .default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
       workspaceProvisioning: z
         .object({
           mode: z.enum(["auto", "none", "custom"]).default("none"),
@@ -272,7 +278,7 @@ export const councilConfigSchema = z.object({
       worktreeRetentionMs: 24 * 60 * 60_000,
       toolGrants: {},
       expertLifetime: "host-bound",
-      observability: { expertWindow: "off", streamToHost: true },
+      observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
       workspaceProvisioning: {
         mode: "none",
         strategy: "auto",

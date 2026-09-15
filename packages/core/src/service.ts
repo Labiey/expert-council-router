@@ -338,14 +338,15 @@ export class ExpertCouncilService implements ExpertCouncil {
         observability: {
           expertWindow: this.config.security.observability.expertWindow,
           streamToHost: this.config.security.observability.streamToHost,
+          redactToolArgs: this.config.security.observability.redactToolArgs,
         },
       },
       warnings: [
         ...(this.routePolicyWarning ? [this.routePolicyWarning] : []),
         ...(this.compositionsWarning ? [this.compositionsWarning] : []),
-        ...(this.config.security.observability.expertWindow === "interactive"
+        ...(this.config.security.observability.expertWindow === "interactive" && !runtimeCapabilities.eventStream?.enabled
           ? [
-            'security.observability.expertWindow = "interactive" has no distinct behavior yet (no RPC projection) and acts as "events".',
+            'security.observability.expertWindow = "interactive" was requested, but this runtime cannot write a live event stream, so progress behaves as "events".',
           ]
           : []),
         ...configuredUnavailable.map((key) => `Configured profile ${key} is not currently available and was ignored.`),
