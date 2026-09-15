@@ -175,6 +175,31 @@ describe("retry and escalation", () => {
     });
   });
 
+  it("maps cleanup of a non-isolated execution to not-required, keeping not-found real", async () => {
+    const runtime = new MockRuntime(
+      [model("cheap", "one")],
+      [
+        { status: "success", role: "scout", model: "cheap/one", summary: "explored", executionMetadata: { attempts: 1, isolated: false } },
+        { status: "success", role: "reviewer", model: "cheap/one", summary: "reviewed", executionMetadata: { attempts: 1, isolated: true } },
+      ],
+    );
+    // The boundary always reports that nothing matched, because no worktree exists.
+    runtime.cleanupOutcome = { status: "not-found" };
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+
+    const readOnly = service.startDelegation({ role: "scout", task: "Explore the repository", timeoutMs: 60_000 });
+    await readOnly.result;
+    const mapped = await service.cleanup(readOnly.executionId);
+    expect(mapped.status).toBe("not-required");
+    expect(mapped.message).toContain("no isolated worktree");
+
+    const isolated = service.startDelegation({ role: "reviewer", task: "Review the bounded change", timeoutMs: 60_000 });
+    await isolated.result;
+    // For a run that did own a worktree, not-found stays a genuine signal.
+    expect((await service.cleanup(isolated.executionId)).status).toBe("not-found");
+    expect(runtime.cleanupCalls).toHaveLength(2);
+  });
+
   it("respondToInteraction delegates to the runtime and reports unsupported when the runtime lacks it", async () => {
     const runtime = new MockRuntime([model("cheap", "one")]);
     runtime.respondToResult = { executionId: "ignored", status: "resolved", kind: "tool_approval" };

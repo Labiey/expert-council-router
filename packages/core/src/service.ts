@@ -1344,7 +1344,20 @@ export class ExpertCouncilService implements ExpertCouncil {
     if (!this.runtime.cleanupExecution) {
       return { executionId, status: "unsupported", message: "The configured expert runtime does not support cleanup." };
     }
-    return { executionId, ...(await this.runtime.cleanupExecution(executionId)) };
+    const cleanup = await this.runtime.cleanupExecution(executionId);
+    if (cleanup.status === "not-found") {
+      // A non-isolated execution never created a worktree, so "nothing matched the
+      // execution id" is not the same fact as "this execution id is unknown".
+      // Reporting not-found made read-only cleanup look like a lost or mistyped id.
+      if (this.results.get(executionId)?.executionMetadata?.isolated === false) {
+        return {
+          executionId,
+          status: "not-required",
+          message: "The expert ran in the existing workspace and created no isolated worktree, so there is nothing to clean.",
+        };
+      }
+    }
+    return { executionId, ...cleanup };
   }
 
   async recordFeedback(request: ExpertFeedbackRequest): Promise<ExpertFeedbackResult> {

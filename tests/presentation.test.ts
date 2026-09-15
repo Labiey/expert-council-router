@@ -34,6 +34,16 @@ describe("compact host presentation", () => {
     warnings: [],
   };
 
+  it("forwards 0.8.0 interaction and permission capabilities to the host view", () => {
+    const compact = presentResourceInventory(inventory) as any;
+    // Hosts must be able to discover that experts can raise decision points and
+    // request tools; a runtime that reports these flags has to survive presentation.
+    expect(compact.runtimeCapabilities).toMatchObject({
+      realtimeInteraction: true,
+      dynamicToolPermissions: true,
+    });
+  });
+
   it("omits individual model metadata and role weights by default", () => {
     const compact = presentResourceInventory(inventory) as any;
     expect(compact.summary).toEqual({ modelCount: 3, providerCount: 2, enabledSkillCount: 1, roleCount: 1 });

@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -345,6 +346,59 @@ describe("Pi runtime adapter", () => {
     // read tools (find/ls) stay inactive until granted.
     expect(narrowCalls[0]).toEqual(["read", "grep", "report_and_stop", "request_decision", "request_tool"]);
     expect(narrowCalls[0]).not.toContain("find");
+  });
+
+  it("never attributes the host's uncommitted changes to a read-only expert", async () => {
+    const repo = await mkdtemp(path.join(tmpdir(), "expert-council-dirty-repo-"));
+    execFileSync("git", ["init", repo]);
+    execFileSync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
+    execFileSync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
+    await writeFile(path.join(repo, "file.txt"), "committed\n", "utf8");
+    execFileSync("git", ["-C", repo, "add", "file.txt"]);
+    execFileSync("git", ["-C", repo, "commit", "-m", "initial"]);
+    // The Main Agent's own in-progress edit, on disk while the expert runs.
+    await writeFile(path.join(repo, "file.txt"), "dirty by the host\n", "utf8");
+    try {
+      const nativeModel = { provider: "p", id: "m" };
+      const modelRuntime = {
+        getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+        getModel: () => nativeModel,
+      };
+      const sdk: PiSdkLike = {
+        ...safeResourceApis,
+        ModelRuntime: { create: async () => modelRuntime },
+        SessionManager: { inMemory: () => ({}) },
+        createAgentSession: async () => ({
+          session: {
+            prompt: async () => undefined,
+            waitForIdle: async () => {},
+            dispose: () => {},
+            subscribe: () => () => {},
+            state: {
+              messages: [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "inspected", filesChanged: [], tests: [], findings: [] }) }] }],
+            },
+          },
+        }),
+      };
+      const runtime = await PiExpertRuntime.create({ cwd: repo, config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+      const result = await runtime.executeExpert({
+        executionId: "exec_dirty",
+        role: "scout",
+        task: "read-only inspection",
+        model: "p/m",
+        tools: ["read"],
+        skills: [],
+        readOnly: true,
+        workspace: repo,
+        timeoutMs: 20_000,
+        attempt: 1,
+      });
+      expect(result.status).toBe("success");
+      // The expert had no mutation tool, so the host's dirty file is not its work.
+      expect(result.filesChanged).toBeUndefined();
+    } finally {
+      await rm(repo, { recursive: true, force: true, maxRetries: 3 });
+    }
   });
 
   it("delivers a structured partial result when the expert calls report_and_stop", async () => {

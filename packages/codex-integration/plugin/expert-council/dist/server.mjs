@@ -311365,6 +311365,8 @@ function presentResourceInventory(inventory, detail2 = "compact") {
       hardToolRestriction: inventory.runtimeCapabilities.hardToolRestriction,
       skillOverride: inventory.runtimeCapabilities.skillOverride,
       subagentBackend: inventory.runtimeCapabilities.subagentBackend,
+      realtimeInteraction: inventory.runtimeCapabilities.realtimeInteraction,
+      dynamicToolPermissions: inventory.runtimeCapabilities.dynamicToolPermissions,
       mutation: inventory.runtimeCapabilities.mutation,
       workspaceIsolation: inventory.runtimeCapabilities.workspaceIsolation,
       ...inventory.runtimeCapabilities.sourceWorkspaceDirty !== void 0 ? { sourceWorkspaceDirty: inventory.runtimeCapabilities.sourceWorkspaceDirty } : {},
@@ -312747,7 +312749,17 @@ var ExpertCouncilService = class {
     if (!this.runtime.cleanupExecution) {
       return { executionId: executionId2, status: "unsupported", message: "The configured expert runtime does not support cleanup." };
     }
-    return { executionId: executionId2, ...await this.runtime.cleanupExecution(executionId2) };
+    const cleanup = await this.runtime.cleanupExecution(executionId2);
+    if (cleanup.status === "not-found") {
+      if (this.results.get(executionId2)?.executionMetadata?.isolated === false) {
+        return {
+          executionId: executionId2,
+          status: "not-required",
+          message: "The expert ran in the existing workspace and created no isolated worktree, so there is nothing to clean."
+        };
+      }
+    }
+    return { executionId: executionId2, ...cleanup };
   }
   async recordFeedback(request) {
     const state2 = this.executions.get(request.executionId);
@@ -319444,7 +319456,7 @@ ${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
       if (workspace.strategy === "git-worktree" && !effectiveReadOnly && workspace.provisioning.status === "ready") {
         verification = await runVerification(workspace, this.options.config.security.workspaceProvisioning);
       }
-      const changedFiles = await this.boundary.changedFiles(workspace);
+      const changedFiles = await this.expertChangedFiles(workspace);
       let result = applyVerificationGate(normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session), verification));
       if (workspace.limitations?.length) {
         result = { ...result, risks: [...workspace.limitations, ...result.risks ?? []].slice(0, 20) };
@@ -319604,7 +319616,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     const text = finalAssistantText(entry.session);
     let filesChangedSoFar = [];
     try {
-      filesChangedSoFar = await this.boundary.changedFiles(entry.workspace);
+      filesChangedSoFar = await this.expertChangedFiles(entry.workspace);
     } catch {
     }
     return {
@@ -319623,6 +319635,17 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     };
   }
   /**
+   * Files this expert can honestly claim as its own work. A read-only execution
+   * runs in the main workspace and cannot mutate anything, so any git-dirty file
+   * there belongs to the Main Agent; reporting it as the expert's change fabricates
+   * authorship and can make the host try to "integrate" its own uncommitted edits.
+   */
+  async expertChangedFiles(workspace) {
+    if (workspace.strategy === "read-only")
+      return [];
+    return this.boundary.changedFiles(workspace);
+  }
+  /**
    * Preserve failure evidence from a dead session: changed files from the
    * prepared workspace (undefined for read-only/no-worktree runs or when the
    * diff fails) and the last assistant text. Best-effort at every step.
@@ -319631,7 +319654,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     let filesChanged;
     if (workspace) {
       try {
-        filesChanged = (await this.boundary.changedFiles(workspace)).slice(0, 1e3);
+        filesChanged = (await this.expertChangedFiles(workspace)).slice(0, 1e3);
       } catch {
         filesChanged = void 0;
       }
@@ -319672,7 +319695,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
     const rawText = finalAssistantText(entry.session);
     let changedFiles = [];
     try {
-      changedFiles = await this.boundary.changedFiles(entry.workspace);
+      changedFiles = await this.expertChangedFiles(entry.workspace);
     } catch {
     }
     const reason = entry.reason ? ` Abort reason: ${entry.reason}` : "";
@@ -319702,7 +319725,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
   async buildStoppedResult(entry, request, started, report) {
     let changedFiles = [];
     try {
-      changedFiles = await this.boundary.changedFiles(entry.workspace);
+      changedFiles = await this.expertChangedFiles(entry.workspace);
     } catch {
     }
     const usage2 = sessionUsage(entry.session);

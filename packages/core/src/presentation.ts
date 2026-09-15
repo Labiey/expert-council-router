@@ -49,6 +49,8 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
       hardToolRestriction: inventory.runtimeCapabilities.hardToolRestriction,
       skillOverride: inventory.runtimeCapabilities.skillOverride,
       subagentBackend: inventory.runtimeCapabilities.subagentBackend,
+      realtimeInteraction: inventory.runtimeCapabilities.realtimeInteraction,
+      dynamicToolPermissions: inventory.runtimeCapabilities.dynamicToolPermissions,
       mutation: inventory.runtimeCapabilities.mutation,
       workspaceIsolation: inventory.runtimeCapabilities.workspaceIsolation,
       ...(inventory.runtimeCapabilities.sourceWorkspaceDirty !== undefined

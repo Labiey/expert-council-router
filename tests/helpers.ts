@@ -2,6 +2,7 @@ import type {
   AbortExecutionRequest,
   AbortExecutionResult,
   AvailableModel,
+  ExpertCleanupResult,
   ExpertExecutionRequest,
   ExpertResult,
   ExpertRuntime,
@@ -17,6 +18,8 @@ export const capabilities: RuntimeCapabilities = {
   hardToolRestriction: true,
   skillOverride: true,
   subagentBackend: true,
+  realtimeInteraction: true,
+  dynamicToolPermissions: true,
   mutation: true,
   workspaceIsolation: "git-worktree",
   supportedTools: ["read", "grep", "find", "ls", "edit", "write", "bash"],
@@ -40,6 +43,14 @@ export class MockRuntime implements ExpertRuntime {
   readonly capabilityRequests: Array<string | undefined> = [];
   readonly abortCalls: Array<{ executionId: string; reason?: string }> = [];
   readonly interactionCalls: Array<{ executionId: string; response: InteractionResponse }> = [];
+  readonly cleanupCalls: string[] = [];
+  /** Canned cleanup outcome so tests can exercise the service's status mapping. */
+  cleanupOutcome: Omit<ExpertCleanupResult, "executionId"> = { status: "cleaned", removedCount: 1 };
+
+  async cleanupExecution(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">> {
+    this.cleanupCalls.push(executionId);
+    return this.cleanupOutcome;
+  }
   /** Configurable canned result returned by respondToInteraction; defaults to resolved. */
   respondToResult: RespondToInteractionResult = { executionId: "", status: "resolved", kind: "decision" };
 

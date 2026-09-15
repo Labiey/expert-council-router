@@ -930,7 +930,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       ) {
         verification = await runVerification(workspace, this.options.config.security.workspaceProvisioning);
       }
-      const changedFiles = await this.boundary.changedFiles(workspace);
+      const changedFiles = await this.expertChangedFiles(workspace);
       let result = applyVerificationGate(
         normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session), verification),
       );
@@ -1102,7 +1102,7 @@ export class PiExpertRuntime implements ExpertRuntime {
     const text = finalAssistantText(entry.session);
     let filesChangedSoFar: string[] = [];
     try {
-      filesChangedSoFar = await this.boundary.changedFiles(entry.workspace);
+      filesChangedSoFar = await this.expertChangedFiles(entry.workspace);
     } catch {
       // Best-effort progress; read-only workspaces have nothing to diff.
     }
@@ -1123,6 +1123,17 @@ export class PiExpertRuntime implements ExpertRuntime {
   }
 
   /**
+   * Files this expert can honestly claim as its own work. A read-only execution
+   * runs in the main workspace and cannot mutate anything, so any git-dirty file
+   * there belongs to the Main Agent; reporting it as the expert's change fabricates
+   * authorship and can make the host try to "integrate" its own uncommitted edits.
+   */
+  private async expertChangedFiles(workspace: PreparedWorkspace): Promise<string[]> {
+    if (workspace.strategy === "read-only") return [];
+    return this.boundary.changedFiles(workspace);
+  }
+
+  /**
    * Preserve failure evidence from a dead session: changed files from the
    * prepared workspace (undefined for read-only/no-worktree runs or when the
    * diff fails) and the last assistant text. Best-effort at every step.
@@ -1134,7 +1145,7 @@ export class PiExpertRuntime implements ExpertRuntime {
     let filesChanged: string[] | undefined;
     if (workspace) {
       try {
-        filesChanged = (await this.boundary.changedFiles(workspace)).slice(0, 1_000);
+        filesChanged = (await this.expertChangedFiles(workspace)).slice(0, 1_000);
       } catch {
         filesChanged = undefined;
       }
@@ -1187,7 +1198,7 @@ export class PiExpertRuntime implements ExpertRuntime {
     const rawText = finalAssistantText(entry.session);
     let changedFiles: string[] = [];
     try {
-      changedFiles = await this.boundary.changedFiles(entry.workspace);
+      changedFiles = await this.expertChangedFiles(entry.workspace);
     } catch {
       // Read-only workspaces have no diff to preserve.
     }
@@ -1224,7 +1235,7 @@ export class PiExpertRuntime implements ExpertRuntime {
   ): Promise<ExpertResult> {
     let changedFiles: string[] = [];
     try {
-      changedFiles = await this.boundary.changedFiles(entry.workspace);
+      changedFiles = await this.expertChangedFiles(entry.workspace);
     } catch {
       // Read-only workspaces have no diff to preserve.
     }
