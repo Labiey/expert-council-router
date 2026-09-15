@@ -2,6 +2,20 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.4 - 2026-09-16
+
+### Fixed
+- **`interactionRounds` reached the type but never the store.** Since 0.8.0 the council has recorded how many decision/tool-approval rounds an execution raised, `expert_result` reported it correctly, and the field was declared on `ExpertOutcome` — but the local JSONL telemetry store writes through a **whitelist projection** (`sanitizeOutcome`) that never listed it, so every persisted row silently dropped it (0 of 78 rows on the maintainer's own machine). A metric that exists only in the response is not a learning signal: routing can only use what survives locally. The field is now persisted, clamped to a non-negative integer, and still omitted when an execution never interacted. The regression test asserts both directions (present → written, absent → not invented), and the projection now carries a comment naming this hazard, because any newly added persisted field must be listed there or it vanishes quietly.
+  - Scope note, stated rather than implied: aggregates do not *consume* the value yet. It is recorded locally so the conservative reliability adjustment has the data available; no claim is made that routing already learns from it.
+
+### 中文
+
+## 0.8.4（中文）
+
+### 修复
+- **`interactionRounds` 到了类型，却没到存储。** 自 0.8.0 起，议会会记录一次执行提出了多少个决策/工具审批交互，`expert_result` 也正确上报，`ExpertOutcome` 上更声明了该字段——但本地 JSONL 遥测存储经一个**白名单投影**（`sanitizeOutcome`）写盘，而该投影从未列入这个字段，于是每一条持久化记录都静默丢弃了它（维护者自己机器上 78 行里 0 行含该字段）。只存在于响应里的指标不是学习信号：路由只能用本地留得下来的数据。现在该字段会被写入、被限制为非负整数，且未发生交互时照旧不出现。回归测试断言两个方向（有→写入，无→不凭空生成）；投影处也加了注释点明这个陷阱，因为今后任何新增的持久字段若不在那里登记就会静默消失。
+  - 范围如实说明：聚合指标**尚未**消费该值。它只是先记录在本地，供保守的可靠性调节取用；并不声称路由已经从中学习。
+
 ## 0.8.3 - 2026-09-16
 
 ### Fixed

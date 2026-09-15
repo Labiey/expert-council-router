@@ -367,13 +367,37 @@ describe("local JSONL telemetry", () => {
         retryCount: 0,
         timedOut: false,
         verificationPassed: true,
+        interactionRounds: 2.6,
         escalationCount: 0,
         attempts: 1,
         hostType: "test",
         ...({ prompt: "must not persist" } as object),
       });
-      expect(await readFile(file, "utf8")).not.toContain("must not persist");
+      const firstLine = await readFile(file, "utf8");
+      expect(firstLine).not.toContain("must not persist");
+      // Declared ExpertOutcome fields must survive the whitelist projection, or the
+      // store silently loses them (interactionRounds did for a whole release line).
+      expect(JSON.parse(firstLine.trim().split("\n")[0]!)).toMatchObject({ interactionRounds: 2 });
       expect(await store.aggregate()).toMatchObject([{ samples: 1, verificationPassRate: 1 }]);
+
+      // An outcome that never interacted must not invent the field.
+      await store.record({
+        timestamp: new Date().toISOString(),
+        model: "m",
+        provider: "p",
+        role: "verifier",
+        taskCategory: "normal",
+        success: true,
+        firstPass: true,
+        toolErrors: 0,
+        retryCount: 0,
+        timedOut: false,
+        escalationCount: 0,
+        attempts: 1,
+        hostType: "test",
+      });
+      const lines = (await readFile(file, "utf8")).trim().split("\n");
+      expect(JSON.parse(lines[1]!)).not.toHaveProperty("interactionRounds");
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

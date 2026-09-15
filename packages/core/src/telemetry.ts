@@ -15,6 +15,11 @@ export function sanitizeOutcome(outcome: ExpertOutcome): ExpertOutcome {
     timedOut: outcome.timedOut,
     ...(outcome.aborted !== undefined ? { aborted: outcome.aborted } : {}),
     ...(outcome.verificationPassed !== undefined ? { verificationPassed: outcome.verificationPassed } : {}),
+    // Whitelist projection: a field not copied here is silently dropped before it
+    // reaches the store, so newly added ExpertOutcome fields must be listed here too.
+    ...(typeof outcome.interactionRounds === "number"
+      ? { interactionRounds: Math.max(0, Math.floor(outcome.interactionRounds)) }
+      : {}),
     escalationCount: Math.max(0, outcome.escalationCount),
     attempts: Math.max(1, outcome.attempts),
     hostType: outcome.hostType,
