@@ -288,8 +288,12 @@ All notable changes to Expert Council are documented here. Versions follow seman
   Proven by 16 launcher tests plus two runtime wiring tests (one window across a retried delegation,
   none while off) that inject a fake spawner, so the suite never opens a real window. Falsified six
   ways: removing the dedupe, the key-wait, the budget scaling, the config rule, the failure-not-
-  recorded rule, and the runtime call each redden exactly the tests that own them - and a deliberate
-  no-op control edit stayed green, confirming the falsifications are measuring the change.
+  recorded rule, the runtime call, restoring a quoted first token (#39) and restoring the library
+  entry as the resolution target (#40) each redden exactly the tests that own them - and a
+  deliberate no-op control edit stayed green, confirming the falsifications measure the change
+  rather than any edit. One earlier flip was inert and had to be redone: reordering the candidate
+  names cannot matter when the first pass already filters for `bin.js`, so the assertion was
+  re-pointed at the pre-fix shape of the resolver itself.
 - **A drift guard for the renderer.** Every event kind must now be listed in a `Record` over the
   `ExpertEventKind` union - an unlisted kind fails the build with the property name - and a table-driven test
   requires a rendering expectation for each one. Both halves were proven by injection: adding a kind with no
@@ -442,8 +446,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
   只给一条 limitation 且不弹窗，绝不让委派失败。`@expert-council/pi-package` 现在依赖 CLI——否则只装 Pi 包的
   用户永远弹不出窗。测试：16 条 launcher 测试 + 2 条运行时接线测试（重试的委派仍只有一个窗；关闭时一个都不开），
   全部注入假 spawner，套件永不真开窗。真机验收抓出两个假 spawner 永远测不出的缺陷：**#39** 命令行把解释器作为*第一个* token 加了引号，而 cmd 对引号开头的首 token 直接报「不是内部或外部命令」，窗口开出来是空的——现在解释器用裸名调用，并把其所在目录前置进子进程 PATH；**#40** CLI 解析到 `cli/dist/index.js`，它确实存在但只是库入口、直接运行静默退出，同样是空窗——现在优先解析可执行的 `cli/dist/bin.js`。两条都在真机上重验：真实控制台渲染出某次已完成委派的 467 条事件尾部并等键。
-  套件永不真开窗被反证八次。反证八次：摘去重、摘按键等待、摘预算缩放、摘配置规则、让失败的开窗也记账、把解释器改回带引号的首个 token、
-  摘掉运行时调用——各自恰好弄红属于自己的测试；另外故意放了一个空改动作对照，它必须不红而确实没红，说明反证在度量改动本身。
+  反证八次：摘去重、摘按键等待、摘预算缩放、摘配置规则、让失败的开窗也记账、摘掉运行时调用、把解释器
+  改回带引号的首个 token（#39）、把库入口改回解析目标（#40）——各自恰好弄红属于自己的测试。其中一次反证
+  本来无效、重做了一次：第一遍已经只认 `bin.js`，所以调整候选名顺序不可能有任何影响，于是改成把解析器退回
+  修复前的形状来验。另故意放了一个空改动作对照，它必须不红而确实没红，说明反证在度量改动本身。
 - **渲染器的防漂移守卫。** 每个事件种类现在都必须在 `ExpertEventKind` 联合类型上的一个 `Record` 里登记——漏登就编译失败并点名缺的键；另有一条表驱动测试要求每个种类都有渲染断言。两半都用注入法验证过：加种类不登记会打断 `tsc`，登记却不测则守卫变红。
 - **每个可观测事件都带尝试序号**，重试或升级的尝试渲染为 `[role model #2]`。单次尝试的普通运行保持原样。
 ## 0.8.5（中文）
