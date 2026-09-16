@@ -286,7 +286,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
   when run - also an empty window; resolution now prefers the executable `cli/dist/bin.js`. Both
   re-verified live: a real console rendered a finished 467-event delegation tail and waited.
   Proven by 16 launcher tests plus two runtime wiring tests (one window across a retried delegation,
-  none while off) that inject a fake spawner, so the suite never opens a real window. Falsified six
+  none while off) that inject a fake spawner, so the suite never opens a real window. Falsified eight
   ways: removing the dedupe, the key-wait, the budget scaling, the config rule, the failure-not-
   recorded rule, the runtime call, restoring a quoted first token (#39) and restoring the library
   entry as the resolution target (#40) each redden exactly the tests that own them - and a
