@@ -27,6 +27,7 @@ import {
   rolesForTask,
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
+import type { ModelAssessmentSnapshot } from "../packages/core/src/index.js";
 import { capabilities, model } from "./helpers.js";
 
 describe("availability evidence classification", () => {
@@ -57,7 +58,7 @@ describe("availability evidence classification", () => {
   it("expires quota markers on a shorter lifetime than dead-model markers", async () => {
     const { activeModelAvailability, MODEL_QUOTA_MARKER_TTL_MS } = await import("../packages/core/src/model-assessment.js");
     const now = new Date("2026-09-05T12:00:00.000Z");
-    const assessment = {
+    const assessment: ModelAssessmentSnapshot = {
       asOf: "2026-09-05T00:00:00.000Z",
       sources: ["https://livebench.ai/"],
       models: {},

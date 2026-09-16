@@ -10,6 +10,9 @@ import { describe, expect, it } from "vitest";
 import {
   MODEL_ASSESSMENT_JSON_SCHEMA,
   modelAssessmentSnapshotSchema,
+  type CouncilStatus,
+  type CouncilStatusView,
+  type CouncilStatusViewResult,
   type ExpertCouncil,
 } from "../packages/core/src/index.js";
 import { runCli } from "../packages/cli/src/index.js";
@@ -67,13 +70,7 @@ function mockCouncil(): ExpertCouncil {
     buildCouncil: async (request) => ({ id: "c", taskClass: "normal", task: request.task, experts: [], createdAt: "now", warnings: [] }),
     delegate: async (request) => ({ status: "success", role: request.role, model: "p/m", summary: "ok" }),
     startDelegation: () => ({ executionId: "exec_mock", result: Promise.resolve(completed) }),
-    inspectExecution: async () => undefined,
     abortExecution: async (request) => ({ executionId: request.executionId, status: "already-finished" }),
-    setRoutePolicy: async (policy) => ({
-      ...(policy.allow?.length ? { allow: policy.allow } : {}),
-      ...(policy.deny?.length ? { deny: policy.deny } : {}),
-      excludedModels: [],
-    }),
     getResult: async (executionId) => ({ executionId, status: "completed", result: completed }),
     waitForResults: async ({ executionIds, mode = "all" }) => ({
       status: "completed",
@@ -86,7 +83,12 @@ function mockCouncil(): ExpertCouncil {
     recordFeedback: async ({ executionId, verificationPassed }) => ({ executionId, status: "recorded", verificationPassed }),
     cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     escalate: async () => ({ action: "stop", reason: "done" }),
-    getStatus: async () => ({ plans: [], executions: [], telemetry: [] }),
+    getStatus: async <V extends CouncilStatusView = "full">(): Promise<CouncilStatusViewResult<V>> => {
+      // Every CLI path this mock feeds reads the legacy full payload, so the stub
+      // answers each view with it; the assertion mirrors ExpertCouncilService.getStatus.
+      const status: CouncilStatus = { plans: [], executions: [], telemetry: [] };
+      return status as CouncilStatusViewResult<V>;
+    },
     inspectExecution: async (executionId) => ({
       executionId,
       status: "running" as const,
@@ -98,6 +100,8 @@ function mockCouncil(): ExpertCouncil {
     }),
     respondToInteraction: async ({ executionId, response }) => ({ executionId, status: "resolved" as const, kind: response.kind }),
     recordOutcome: async () => {},
+    resetAvailability: async () => ({ cleared: [] }),
+    verifyCommand: async () => ({ exitCode: null, durationMs: 0 }),
   };
 }
 
@@ -522,7 +526,7 @@ describe("MCP semantic surface", () => {
       expect(MCP_INPUT_SCHEMAS.expert_build.modelAssessment.safeParse(candidate).success)
         .toBe(modelAssessmentSnapshotSchema.safeParse(candidate).success);
     }
-    expect((MODEL_ASSESSMENT_JSON_SCHEMA.properties as Record<string, { minProperties?: number }>).models.minProperties).toBe(1);
+    expect((MODEL_ASSESSMENT_JSON_SCHEMA.properties as Record<string, { minProperties?: number }>).models?.minProperties).toBe(1);
     expect(MCP_INPUT_SCHEMAS.expert_inspect.detail.safeParse("compact").success).toBe(true);
     expect(MCP_INPUT_SCHEMAS.expert_inspect.detail.safeParse("everything").success).toBe(false);
     expect(MCP_INPUT_SCHEMAS.expert_delegate.role.safeParse("lead").success).toBe(false);
@@ -632,7 +636,7 @@ describe("Codex plugin packaging", () => {
       args: ["dist/server.mjs"],
       cwd: ".",
     });
-    expect(server.env_vars).toBeUndefined();
+    expect(server?.env_vars).toBeUndefined();
     expect(JSON.stringify(server)).not.toContain("${PLUGIN_ROOT}");
     expect(mcpFile.mcpServers).not.toHaveProperty("expert-council");
     expect(existsSync("packages/codex-integration/plugin/expert-council/hooks/hooks.json")).toBe(false);
@@ -943,6 +947,7 @@ describe("Pi adapter registration", () => {
         billing: { p: { billingType: "unknown" } },
         roles: [],
         runtimeCapabilities: (await mockCouncil().inspectResources()).runtimeCapabilities,
+        routePolicy: { sessionKey: "default", effective: {} },
         warnings: [],
       }),
       buildCouncil: async (request) => {
@@ -976,6 +981,10 @@ describe("Pi adapter registration", () => {
     type Tool = { execute: (...args: any[]) => Promise<{ content: Array<{ text: string }> }> };
     const tools = new Map<string, Tool>();
     let received: Parameters<ExpertCouncil["buildCouncil"]>[0] | undefined;
+    // Read the captured request through a closure: the `received = undefined` resets
+    // below would otherwise narrow the variable away for the rest of the block.
+    const constraintsSeen = () => received?.constraints;
+
     const council: ExpertCouncil = {
       ...mockCouncil(),
       buildCouncil: async (request) => {
@@ -1012,8 +1021,8 @@ describe("Pi adapter registration", () => {
       { cwd: ".", sessionManager: { getBranch: () => sessionEntries } },
     );
 
-    expect(received?.constraints?.minimumContextWindow).toBe(128_000);
-    expect(received?.constraints?.costPolicy).toBe("speed");
+    expect(constraintsSeen()?.minimumContextWindow).toBe(128_000);
+    expect(constraintsSeen()?.costPolicy).toBe("speed");
 
     received = undefined;
     await tools.get("expert_build")!.execute(
@@ -1023,7 +1032,7 @@ describe("Pi adapter registration", () => {
       undefined,
       { cwd: ".", sessionManager: { getBranch: () => sessionEntries } },
     );
-    expect(received?.constraints?.costPolicy).toBe("speed");
+    expect(constraintsSeen()?.costPolicy).toBe("speed");
   });
 
   it.each([

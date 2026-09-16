@@ -8,7 +8,7 @@ const outcome = (overrides: Partial<ExpertOutcome> = {}): ExpertOutcome => ({
   model: "test/model",
   provider: "test",
   role: "reviewer",
-  taskCategory: "code-review",
+  taskCategory: "normal",
   success: true,
   firstPass: true,
   toolErrors: 0,

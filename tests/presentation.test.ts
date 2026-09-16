@@ -33,6 +33,7 @@ describe("compact host presentation", () => {
       weights: { speed: 1 },
     }],
     runtimeCapabilities: capabilities,
+    routePolicy: { sessionKey: "default", effective: {} },
     warnings: [],
   };
 

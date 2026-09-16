@@ -488,10 +488,10 @@ describe("Pi runtime adapter", () => {
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
-        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>;
+        const custom = (options?.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<unknown> }>;
         stopTool = custom.find((tool) => tool.name === "report_and_stop");
         expect(stopTool).toBeDefined();
-        expect((options.tools as string[]).includes("report_and_stop")).toBe(true);
+        expect(((options?.tools ?? []) as string[]).includes("report_and_stop")).toBe(true);
         return {
           session: {
             prompt: async () => {
@@ -550,10 +550,10 @@ describe("Pi runtime adapter", () => {
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
-        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        const custom = (options?.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
         decisionTool = custom.find((tool) => tool.name === "request_decision");
         expect(decisionTool).toBeDefined();
-        expect((options.tools as string[]).includes("request_decision")).toBe(true);
+        expect(((options?.tools ?? []) as string[]).includes("request_decision")).toBe(true);
         return {
           session: {
             prompt: async () => {
@@ -704,7 +704,7 @@ describe("Pi runtime adapter", () => {
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
-        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        const custom = (options?.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
         stopTool = custom.find((tool) => tool.name === "report_and_stop");
         return {
           session: {
@@ -772,7 +772,7 @@ describe("Pi runtime adapter", () => {
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
-        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        const custom = (options?.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
         decisionTool = custom.find((tool) => tool.name === "request_decision");
         return {
           session: {
@@ -867,7 +867,7 @@ describe("Pi runtime adapter", () => {
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
-        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        const custom = (options?.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
         requestTool = custom.find((tool) => tool.name === "request_tool");
         expect(requestTool).toBeDefined();
         return {
@@ -922,7 +922,7 @@ describe("Pi runtime adapter", () => {
       ModelRuntime: { create: async () => modelRuntime },
       SessionManager: { inMemory: () => ({}) },
       createAgentSession: async (options) => {
-        const custom = (options.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
+        const custom = (options?.customTools ?? []) as Array<{ name: string; execute: (id: string, params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }> }>;
         requestTool = custom.find((tool) => tool.name === "request_tool");
         return {
           session: {

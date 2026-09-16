@@ -6,9 +6,10 @@ import {
   ModelRegistry,
   SessionManager,
   wrapRegisteredTools,
+  type ExtensionActions,
 } from "@earendil-works/pi-coding-agent";
 import { describe, expect, it } from "vitest";
-import type { ExpertCouncil, ExpertResult } from "../packages/core/src/index.js";
+import type { CouncilStatus, CouncilStatusView, CouncilStatusViewResult, ExpertCouncil, ExpertResult } from "../packages/core/src/index.js";
 
 function hostCouncil(startDelegation: ExpertCouncil["startDelegation"]): ExpertCouncil {
   const assessment = {
@@ -19,6 +20,7 @@ function hostCouncil(startDelegation: ExpertCouncil["startDelegation"]): ExpertC
   return {
     inspectResources: async () => ({
       models: [{ provider: "p", id: "m", available: true }], skills: [], billing: {}, roles: [], warnings: [],
+      routePolicy: { sessionKey: "default", effective: {} },
       modelAssessment: assessment,
       runtimeCapabilities: {
         hostType: "pi-host-test",
@@ -41,14 +43,24 @@ function hostCouncil(startDelegation: ExpertCouncil["startDelegation"]): ExpertC
     startDelegation,
     delegate: async (request) => (await startDelegation(request).result),
     getResult: async (executionId) => ({ executionId, status: "running" }),
+    inspectExecution: async () => undefined,
+    abortExecution: async ({ executionId }) => ({ executionId, status: "not-found" as const }),
+    respondToInteraction: async ({ executionId }) => ({ executionId, status: "not-found" as const }),
     waitForResults: async ({ executionIds, mode = "all" }) => ({
       status: "timed-out", mode, completed: [], running: executionIds, notFound: [], waitedMs: 0,
     }),
     cleanup: async (executionId) => ({ executionId, status: "not-required" }),
     recordFeedback: async ({ executionId, verificationPassed }) => ({ executionId, status: "recorded", verificationPassed }),
     escalate: async () => ({ action: "stop", reason: "test" }),
-    getStatus: async () => ({ plans: [], executions: [], telemetry: [] }),
+    getStatus: async <V extends CouncilStatusView = "full">(): Promise<CouncilStatusViewResult<V>> => {
+      // This host stub only ever feeds the legacy full payload, so it answers every
+      // view with it; the assertion mirrors ExpertCouncilService.getStatus.
+      const status: CouncilStatus = { plans: [], executions: [], telemetry: [] };
+      return status as CouncilStatusViewResult<V>;
+    },
     recordOutcome: async () => {},
+    resetAvailability: async () => ({ cleared: [] }),
+    verifyCommand: async () => ({ exitCode: null, durationMs: 0 }),
   };
 }
 
@@ -84,9 +96,12 @@ describe("Pi 0.84.4 extension host integration", () => {
       }> = [];
       let idle = false;
       runner.bindCore({
-        sendMessage: (message, options) => messages.push({ message: message as { content: string }, options }),
+        sendMessage: (
+          message: Parameters<ExtensionActions["sendMessage"]>[0],
+          options?: Parameters<ExtensionActions["sendMessage"]>[1],
+        ) => messages.push({ message: message as { content: string }, options }),
         sendUserMessage: () => {},
-        appendEntry: (customType, data) => { sessionManager.appendCustomEntry(customType, data); },
+        appendEntry: (customType: string, data?: unknown) => { sessionManager.appendCustomEntry(customType, data); },
         setSessionName: () => {},
         getSessionName: () => undefined,
         setLabel: () => {},

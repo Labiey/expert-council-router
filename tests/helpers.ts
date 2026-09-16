@@ -6,6 +6,7 @@ import type {
   ExpertExecutionRequest,
   ExpertResult,
   ExpertRuntime,
+  ExecutionProgress,
   InteractionResponse,
   RespondToInteractionResult,
   RuntimeCapabilities,
@@ -95,7 +96,9 @@ export class MockRuntime implements ExpertRuntime {
     return this.runtimeCapabilities;
   }
 
-  async inspectExecution(executionId: string) {
+  // Explicitly typed as the interface's optional-hook signature so a test can
+  // assign a richer progress snapshot to this property without widening it away.
+  async inspectExecution(executionId: string): Promise<ExecutionProgress | undefined> {
     return undefined;
   }
 

@@ -311287,7 +311287,7 @@ function markerTtlMs(kind, defaultTtlMs) {
   if (kind === "quota-exhausted")
     return MODEL_QUOTA_MARKER_TTL_MS;
   if (kind === "rate-limited")
-    return MODEL_RATE_LIMIT_MARKER_TTL_MS;
+    return defaultTtlMs;
   return defaultTtlMs;
 }
 function activeModelAvailability(assessment, now = /* @__PURE__ */ new Date(), ttlMs = MODEL_AVAILABILITY_MARKER_TTL_MS) {

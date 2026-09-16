@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  activeModelAvailability,
   applyUsage,
   decideEscalation,
   evaluateModelAssessment,
@@ -8,12 +9,14 @@ import {
   inferFailureType,
   instantiateLedger,
   MemoryTelemetryStore,
+  MODEL_AVAILABILITY_MARKER_TTL_MS,
+  MODEL_RATE_LIMIT_MARKER_TTL_MS,
   observedAdjustment,
   resolveModelAssessment,
   sanitizeOutcome,
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
-import type { CompositionDocument, CouncilStateOptions, CouncilStateSnapshot, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
+import type { BillingPolicyEntry, CompositionDocument, CouncilStateOptions, CouncilStateSnapshot, ExpertResult, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
 import { applyVerificationGate } from "../packages/pi-runtime/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
@@ -659,12 +662,11 @@ describe("runtime availability marking", () => {
     expect(decision.model).toBe("p/alive");
   });
 
-  it("does not mark transient provider failures such as rate limits", async () => {
+  it("marks a transient rate limit on the short rate-limited window, not the provider-blackout window", async () => {
     const runtime = new MockRuntime(models, [
       {
         status: "failed",
         role: "scout",
-        reasoningLevel: "medium",
         model: "p/dead",
         summary: "Provider returned 429 rate limit exceeded.",
         executionMetadata: { failureType: "provider_error" },
@@ -672,15 +674,26 @@ describe("runtime availability marking", () => {
       { status: "success", role: "scout", model: "p/alive", summary: "ok" },
     ]);
     let markerUpdates = 0;
+    // Mirrors RecordingPersistence above: the snapshot currently on disk is the
+    // seeded assessment, and every accepted mutation replaces it.
+    let stored: ModelAssessmentSnapshot = assessment;
+    // The service treats marker persistence as best-effort, so a throwing fixture
+    // would be swallowed and quietly void every assertion below. Capture and fail.
+    const stubErrors: unknown[] = [];
     const persistence = {
       save: async () => {},
       updateModelAssessment: async (
         mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
       ) => {
-        const before = current;
-        const next = mutate(before);
-        if (next && Object.keys(next.modelAvailability ?? {}).length > Object.keys(before?.modelAvailability ?? {}).length) {
-          markerUpdates += 1;
+        try {
+          const before = stored;
+          const next = mutate(before);
+          if (next) stored = next;
+          if (next && Object.keys(next.modelAvailability ?? {}).length > Object.keys(before.modelAvailability ?? {}).length) {
+            markerUpdates += 1;
+          }
+        } catch (error) {
+          stubErrors.push(error);
         }
       },
     };
@@ -689,9 +702,29 @@ describe("runtime availability marking", () => {
       persistence,
     });
     const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+
+    // The shipped contract: an account-level 429 is provider evidence, so the failed
+    // model AND its siblings take a marker, and the delegation still escalates to the
+    // sibling (a quota-exhausted marker would drop the provider and end after one call).
+    expect(stubErrors).toEqual([]);
     expect(result.status).toBe("success");
-    expect(result.executionMetadata?.unavailableModels).toBeUndefined();
-    expect(markerUpdates).toBe(0);
+    expect(runtime.requests.map((request) => request.model)).toEqual(["p/dead", "p/alive"]);
+    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead", "p/alive"]);
+    expect(markerUpdates).toBe(1);
+    const marked = stored.modelAvailability?.["p/dead"];
+    if (!marked) throw new Error("expected the rate-limited model to carry a marker");
+    expect(marked).toMatchObject({ callable: false, kind: "rate-limited", source: "runtime-failure" });
+    expect(stored.modelAvailability?.["p/alive"]).toMatchObject({ callable: false, kind: "rate-limited" });
+    expect(stored.modelStatus?.["p/dead"]).toMatchObject({ state: "rate-limited" });
+    // The distinction that matters: the marker expires on the throttling window, well
+    // before the default blackout lifetime, so routing gets the model back.
+    const observedAt = Date.parse(marked.observedAt);
+    expect(MODEL_RATE_LIMIT_MARKER_TTL_MS).toBeLessThan(MODEL_AVAILABILITY_MARKER_TTL_MS);
+    expect(Object.keys(activeModelAvailability(stored, new Date(observedAt + MODEL_RATE_LIMIT_MARKER_TTL_MS - 1_000))))
+      .toEqual(["p/dead", "p/alive"]);
+    expect(activeModelAvailability(stored, new Date(observedAt + MODEL_RATE_LIMIT_MARKER_TTL_MS + 1_000))).toEqual({});
+    expect(Object.keys(activeModelAvailability(stored, new Date(observedAt + MODEL_AVAILABILITY_MARKER_TTL_MS - 1_000))))
+      .toEqual([]);
   });
 
   it("warns about active markers during inspection and preserves them across a fresh audit", async () => {
@@ -723,7 +756,6 @@ describe("runtime availability marking", () => {
       {
         status: "failed",
         role: "scout",
-        reasoningLevel: "medium",
         model: "p/dead",
         summary: "Provider API returned model_not_found for p/dead.",
         executionMetadata: { failureType: "provider_error" },
@@ -744,7 +776,7 @@ describe("runtime availability marking", () => {
 });
 
 const abortModels = [model("p", "dead"), model("p", "alive")];
-const markAssessment = {
+const markAssessment: ModelAssessmentSnapshot = {
   asOf: "2026-09-01T00:00:00.000Z",
   sources: ["https://livebench.ai/"],
   models: {
@@ -766,7 +798,6 @@ describe("Main-Agent abort", () => {
       {
         status: "aborted",
         role: "scout",
-        reasoningLevel: "medium",
         model: "p/dead",
         summary: "Expert execution aborted by the Main Agent. Abort reason: wrong direction.",
         filesChanged: ["notes.md"],
@@ -875,7 +906,7 @@ describe("Main-Agent abort", () => {
       status: "aborted",
       summary: "Expert execution aborted: Host session is shutting down.",
     });
-    expect(lookup.result.executionMetadata).toMatchObject({ failureType: "aborted", attempts: 1 });
+    expect(lookup.result?.executionMetadata).toMatchObject({ failureType: "aborted", attempts: 1 });
     // The terminal state must be durably persisted before shutdownAll returns.
     const persisted = saves.at(-1);
     const persistedEntry = persisted?.executions.find((entry) => entry.id === handle.executionId);
@@ -913,7 +944,6 @@ describe("quota-exhausted model status", () => {
       {
         status: "failed",
         role: "scout",
-        reasoningLevel: "medium",
         model: "p/dead",
         summary: "403 AccessDenied: insufficient_quota - You exceeded your current quota.",
         executionMetadata: { failureType: "provider_error" },
@@ -961,7 +991,6 @@ describe("quota-exhausted model status", () => {
       {
         status: "failed",
         role: "scout",
-        reasoningLevel: "medium",
         model: "q/one",
         summary: "Insufficient balance: the token plan for this provider is depleted.",
         executionMetadata: { failureType: "provider_error" },
@@ -1115,11 +1144,12 @@ describe("quota-aware billing guidance", () => {
       model("sub", "one"), model("sub", "two"), model("sub", "three"), model("sub", "four"), model("sub", "five"),
       model("other", "one"),
     ];
-    const assessment = {
+    const billing: Record<string, BillingPolicyEntry> = { sub: { billingType: "subscription", costMultiplier: 0.1 } };
+    const assessment: ModelAssessmentSnapshot = {
       asOf: "2026-09-03T00:00:00.000Z",
       sources: ["https://livebench.ai/"],
       models: Object.fromEntries(models.map((entry) => [`${entry.provider}/${entry.id}`, { coding: 8 }])),
-      billing: { sub: { billingType: "subscription", costMultiplier: 0.1 } },
+      billing,
     };
     const runtime = new MockRuntime(models);
     const service = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(assessment) });
@@ -1127,7 +1157,7 @@ describe("quota-aware billing guidance", () => {
     expect(inventory.warnings.join(" ")).toContain("subscription-billed but has no per-model cost classes");
 
     // Adding a model-level entry silences the warning.
-    assessment.billing["sub/one"] = { billingType: "subscription", costMultiplier: 0.5 };
+    billing["sub/one"] = { billingType: "subscription", costMultiplier: 0.5 };
     const refreshed = new ExpertCouncilService(runtime, {}, undefined, { initialState: abortInitialState(assessment) });
     const updated = await refreshed.inspectResources();
     expect(updated.warnings.join(" ")).not.toContain("subscription-billed but has no per-model cost classes");
@@ -1235,7 +1265,6 @@ describe("required delegation timeouts", () => {
       {
         status: "partial",
         role: "scout",
-        reasoningLevel: "medium",
         model: "p/dead",
         summary: "[Task stopped by expert] The worktree has no installed dependencies.",
         findings: ["src/entry.ts exports run()"],
@@ -1256,7 +1285,6 @@ describe("required delegation timeouts", () => {
       {
         status: "failed",
         role: "scout",
-        reasoningLevel: "medium",
         model: "p/dead",
         summary: "The required environment is absent from the isolated worktree.",
         executionMetadata: { failureType: "missing_context" },
@@ -1282,11 +1310,10 @@ describe("429 quota exhaustion classification", () => {
       sources: ["https://livebench.ai/"],
       models: Object.fromEntries(models.map((entry) => [`${entry.provider}/${entry.id}`, { coding: 8 }])),
     };
-    const results = [
+    const results: ExpertResult[] = [
       {
         status: "failed",
         role: "scout",
-        reasoningLevel: "medium",
         model: "plan/one",
         summary: '429: {"message":"Your token-plan 1-week quota has been exhausted.","type":"insufficient_quota"}',
         executionMetadata: { failureType: "unknown" },
@@ -1335,8 +1362,8 @@ describe("persistent council compositions", () => {
   const document: CompositionDocument = {
     version: 1,
     compositions: [
-      { name: "daily-cheap", roles: { scout: ["cheap/one", "cheap/two"], "implementation-worker": ["strong/one"] } },
-      { name: "only-cheap", roles: { "implementation-worker": ["cheap/one"], verifier: ["strong/one"] } },
+      { name: "daily-cheap", roles: { scout: [{ model: "cheap/one" }, { model: "cheap/two" }], "implementation-worker": [{ model: "strong/one" }] } },
+      { name: "only-cheap", roles: { "implementation-worker": [{ model: "cheap/one" }], verifier: [{ model: "strong/one" }] } },
     ],
   };
   const boundDocument: CompositionDocument = {
@@ -1415,7 +1442,7 @@ describe("persistent council compositions", () => {
 
   it("reports a fully excluded composition as unstaffable", async () => {
     const service = compositionService(new MockRuntime(compositionModels), {
-      compositions: { version: 1, compositions: [{ name: "cheap-only", roles: { "implementation-worker": ["cheap/one"] } }] },
+      compositions: { version: 1, compositions: [{ name: "cheap-only", roles: { "implementation-worker": [{ model: "cheap/one" }] } }] },
       readRoutePolicy: async () => ({ version: 1, system: { deny: ["cheap"] } }),
     });
     await expect(service.buildCouncil({
@@ -1503,7 +1530,6 @@ describe("provider usage ledger and caps", () => {
     const runtime = new MockRuntime([model("p", "one")], [{
       status: "success",
       role: "scout",
-      reasoningLevel: "medium",
       model: "p/one",
       summary: "ok",
       executionMetadata: {
@@ -1581,7 +1607,7 @@ describe("provider usage ledger and caps", () => {
       executionMetadata: { usage: { inputTokens: 100, outputTokens: 0 } },
     }]);
     let ledger = instantiateLedger();
-    const saved = {
+    const saved: ModelAssessmentSnapshot = {
       asOf: "2026-09-03T00:00:00.000Z",
       sources: ["https://livebench.ai/"],
       models: { "p/one": { coding: 8 }, "q/one": { coding: 8 } },
@@ -1624,7 +1650,6 @@ describe("worktree verification gate", () => {
     const gated = applyVerificationGate({
       status: "success",
       role: "implementation-worker",
-      reasoningLevel: "medium",
       model: "p/one",
       summary: "implemented the change",
       executionMetadata: {
