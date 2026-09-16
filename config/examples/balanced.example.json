@@ -67,6 +67,15 @@
       "streamToHost": true,
       "redactToolArgs": true
     },
+    "guardrails": {
+      "warnHost": true,
+      "nudgeExpert": true,
+      "consecutiveToolFailures": 3,
+      "minCallsForRatio": 8,
+      "failureRatio": 0.5,
+      "budgetFractions": [0.6, 0.85],
+      "maxTotalWallMs": 1800000
+    },
     "workspaceProvisioning": {
       "mode": "auto",
       "strategy": "auto",

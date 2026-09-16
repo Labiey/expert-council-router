@@ -2,6 +2,52 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.5 - 2026-09-16
+
+### Added
+- **Struggle detection (`security.guardrails`).** The council now counts what it observes rather than
+  what an expert reports, warns the host, and can steer a struggling expert - without ever aborting it.
+  - `toolCalls` / `toolErrors` are counted from the runtime's own tool events and ride out on
+    `executionMetadata`, into the running views, and into telemetry.
+  - `attention` warnings (`consecutive_tool_failures`, `failure_ratio_high`, `budget_fraction`) appear in
+    `expert_status({ view: "running" })` regardless of the observability toggle, are written to the event
+    stream as `attention` events, and reach a Pi Main Agent as one `expert-council-guardrail` notice each.
+  - `nudgeExpert` (default on) steers the expert once per warning, capped at two per execution, and tells
+    it the only three things worth doing: change approach, `report_and_stop`, or `request_decision`.
+  - `maxTotalWallMs` bounds the aggregate wall clock across all attempts of one delegation. A per-attempt
+    budget multiplied by `retry.maxAttempts` is not a budget anybody chose; one mechanical CLI delegation
+    cost 58.9 minutes that way before this existed.
+- **`executionMetadata.attemptHistory`.** Every delegation with more than one attempt now returns a
+  bounded per-attempt record (model, status, failure type, duration, first 300 characters of its summary),
+  so a host can reconstruct what happened without opening a state file.
+- **Configuration for all of it** under `security.guardrails`, documented with a table in
+  [README](README.md#struggle-detection-guardrails) and in `config/examples/balanced.example.json`.
+
+### Fixed
+- **A supplier outage is no longer charged to the model.** Transport failures (`Connection error.`,
+  `fetch failed`, `bad gateway`, `service unavailable`, `gateway timeout`, `overloaded`, 502/503/504)
+  classify as `provider_error` instead of `unknown`, so they mark provider availability and no longer
+  degrade that model's reliability aggregate. Observed live twice: two `zai/glm-5.3-flash` worker runs
+  died on `Connection error.` and were attributed to the model.
+- **`toolErrors` in telemetry was a 0/1 flag wearing a count.** It recorded whether an attempt was
+  *classified* as a tool error, which silently starved the tool-error term of `observedAdjustment`; the
+  real observed count is used now, with the old classification kept only as a fallback for runtimes that
+  cannot observe tool events.
+- **`state.json` is written indented**, like every other persisted document. Stored as a single minified
+  line it was opaque to our own read-only roles (`read` caps a line at 50KB, `grep` truncates a match to
+  500 characters), which is why a per-attempt diagnosis required shell access on the host.
+- **Newly persisted outcome fields are registered in the projection whitelist** (`failureType`,
+  `toolCalls`, `toolErrorsObserved`, `attentionCodes`) - the same class of silent-drop bug fixed in 0.8.4
+  for `interactionRounds`, now covered by a regression test in `tests/guardrails-telemetry.test.ts`.
+
+### Notes
+- Detection is deliberately non-blocking: each warning fires at most once per execution (budget warnings
+  once per configured fraction) and nothing in this mechanism can abort, approve, or rewrite an expert's
+  work. A false positive costs one look; an auto-abort would destroy good work.
+- Known limits are documented in README: budget timing assumes the host process is scheduled, a nudge
+  requires a runtime session that supports steering, and a tool that hangs instead of failing produces no
+  failure count until the attempt times out.
+
 ## 0.8.4 - 2026-09-16
 
 ### Added
@@ -26,6 +72,27 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - The shared Agent Skill gained an observation item: point the operator at `expert-council watch` rather than relaying live progress back into the Main Agent's context, which is the cost delegation exists to avoid.
 
 ### 中文
+
+## 0.8.5（中文）
+
+### 新增
+- **挣扎检测（`security.guardrails`）。** Council 开始按**自己观测**到的事实而非专家的自述来判断它是否卡住，会通知宿主，也可以在必要时 steer 专家——但从不中止它。
+  - `toolCalls` / `toolErrors` 由运行时在自己的工具事件上计数，随 `executionMetadata`、运行视图与遥测一起输出。
+  - `attention` 警告（`consecutive_tool_failures`、`failure_ratio_high`、`budget_fraction`）会出现在 `expert_status({ view: "running" })`，**不受可观测开关约束**；同时写入事件流（`attention` 事件），并作为一条 `expert-council-guardrail` 原生通知发给 Pi 主代理。
+  - `nudgeExpert`（默认开）每条警告最多 steer 一次、每次执行最多两次，只告诉专家三件值得做的事：换做法、`report_and_stop`、或 `request_decision`。
+  - `maxTotalWallMs` 为一次委派的**全部尝试**设总时长上限。单次预算乘以 `retry.maxAttempts` 不等于任何人选择的预算——在此之前，一个机械的 CLI 任务正是这样花掉 58.9 分钟。
+- **`executionMetadata.attemptHistory`。** 超过一次尝试的委派现在返回有界的逐次记录（模型、状态、失败类型、耗时、摘要前 300 字符），宿主无需翻状态文件即可复盘。
+- 全部选项集中在 `security.guardrails`，README 有表格说明，`config/examples/balanced.example.json` 给出示例。
+
+### 修复
+- **供应商故障不再算到模型头上。** 传输类失败（`Connection error.`、`fetch failed`、`bad gateway`、`service unavailable`、`gateway timeout`、`overloaded`、502/503/504）归为 `provider_error` 而不再是 `unknown`，因此能正确标记提供商可用性，也不再拉低该模型的可靠性聚合。现场两次证据：两次 `zai/glm-5.3-flash` worker 都死于 `Connection error.`，却记在模型账上。
+- **遥测里的 `toolErrors` 曾是一个伪装成计数的 0/1 标志。** 它记录的是「这次尝试是否被*分类*为工具错误」，导致 `observedAdjustment` 的工具错误项长期饥饿；现在使用真实观测计数，旧分类仅作为无法观测工具事件的运行时的兜底。
+- **`state.json` 改为缩进写盘**，与其他持久化文档一致。此前单行 minified 对我们自己的只读角色完全不透明（`read` 每行上限 50KB，`grep` 把命中截断到 500 字符），这正是逐次诊断必须借宿主 shell 的原因。
+- **新增持久化字段已登记进投影白名单**（`failureType`、`toolCalls`、`toolErrorsObserved`、`attentionCodes`）——与 0.8.4 修复的 `interactionRounds` 静默丢弃属同一类缺陷，现由 `tests/guardrails-telemetry.test.ts` 的回归测试守住了。
+
+### 说明
+- 检测刻意做成非阻塞：每条警告每次执行最多一次（预算警告按配置分位各一次），且整个机制不能中止、批准或改写专家的工作。误报只损失一次查看，自动中止会毁掉好成果。
+- 已知限制见 README：预算计时假设宿主进程确实被调度；nudge 需要会话支持 steer；工具「卡住」而非报错时，在该次尝试超时前不会计入失败。
 
 ## 0.8.4（中文）
 

@@ -1757,3 +1757,74 @@ describe("routing-drift note", () => {
     expect((result.risks ?? []).join(" ")).not.toContain("routing refreshed");
   });
 });
+
+describe("delegation forensics: attempt history, aggregate ceiling, attention visibility", () => {
+  const failedAttempt = (attempt: number, summary: string) => ({
+    status: "failed" as const,
+    role: "reviewer" as const,
+    model: "cheap/one",
+    summary,
+    executionMetadata: { failureType: "test_failure" as const, attempts: attempt, toolCalls: 6, toolErrors: 5 },
+  });
+
+  it("surfaces a bounded per-attempt history so the host never has to read a state file", async () => {
+    // Two candidates are needed to reach three attempts: `retry.correctedRetriesPerModel`
+    // caps a single model at one corrected retry, so the third attempt escalates.
+    const runtime = new MockRuntime([model("cheap", "one"), model("quality", "two")], [
+      failedAttempt(1, `x`.repeat(900)),
+      failedAttempt(2, "second attempt summary"),
+      failedAttempt(3, "third attempt summary"),
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles }, retry: { maxAttempts: 3 } });
+    const result = await service.startDelegation({ role: "reviewer", task: "Review it", timeoutMs: 60_000 }).result;
+    const history = result.executionMetadata?.attemptHistory;
+    expect(history?.map((entry) => entry.attempt)).toEqual([1, 2, 3]);
+    expect(history?.[0]?.failureType).toBe("test_failure");
+    expect(history?.[0]?.durationMs).toBeTypeOf("number");
+    expect((history?.[0]?.summary ?? "").length).toBeLessThanOrEqual(300);
+    expect(history?.[2]?.summary).toBe("third attempt summary");
+  });
+
+  it("stops retrying once the aggregate wall-clock ceiling is reached", async () => {
+    let calls = 0;
+    const runtime = new MockRuntime([model("cheap", "one"), model("quality", "two")], [
+      async () => { calls += 1; await new Promise((r) => setTimeout(r, 600)); return failedAttempt(calls, "gate failed"); },
+      async () => { calls += 1; await new Promise((r) => setTimeout(r, 600)); return failedAttempt(calls, "gate failed"); },
+      async () => { calls += 1; await new Promise((r) => setTimeout(r, 600)); return failedAttempt(calls, "gate failed"); },
+    ]);
+    const service = new ExpertCouncilService(runtime, {
+      profiles: { models: profiles },
+      security: { guardrails: { maxTotalWallMs: 1_000 } },
+      retry: { maxAttempts: 3 },
+    });
+    const result = await service.startDelegation({ role: "reviewer", task: "Review it", timeoutMs: 60_000 }).result;
+    // The ceiling is checked before each further attempt, so the third one never runs.
+    expect(calls).toBe(2);
+    expect((result.risks ?? []).some((risk) => risk.includes("aggregate ceiling"))).toBe(true);
+  });
+
+  it("keeps struggle warnings visible to the host even when the progress window is off", async () => {
+    const pending = failedAttempt(1, "ok");
+    const runtime = new MockRuntime([model("cheap", "one")], [
+      async () => { await new Promise((r) => setTimeout(r, 400)); return pending; },
+    ]);
+    runtime.inspectExecution = async (executionId: string) => ({
+      executionId, status: "running", role: "reviewer", model: "cheap/one", startedAt: new Date().toISOString(),
+      elapsedMs: 1000, messageCount: 3,
+      lastAssistantText: "still working",
+      toolCalls: 9, toolErrors: 6, budgetFractionUsed: 0.7,
+      attention: [{ code: "consecutive_tool_failures", at: new Date().toISOString(), detail: "3 consecutive tool calls failed.", toolCalls: 9, toolErrors: 6 }],
+    });
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const handle = service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 });
+    await new Promise((r) => setTimeout(r, 10));
+    // The full view lists running ids only; the enriched per-execution detail lives in
+    // the dedicated running view.
+    const status = await service.getStatus({ view: "running" });
+    const running = status.running[0] as unknown as Record<string, unknown> | undefined;
+    expect(running?.attention).toBeDefined();
+    // Tool counters and budget usage are progress, so the off-switch keeps them out.
+    expect(running?.progress).toBeUndefined();
+    await handle.result;
+  });
+});

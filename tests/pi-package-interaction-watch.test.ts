@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { PendingInteraction, RunningExecutionView } from "../packages/core/src/index.js";
 import {
+  buildGuardrailNotification,
   buildInteractionNotification,
   watchForInteractions,
+  type GuardrailNotification,
 } from "../packages/pi-package/src/interaction-watch.js";
 
 function running(overrides: Partial<RunningExecutionView> & { id: string }): RunningExecutionView {
@@ -133,5 +135,64 @@ describe("pi-package interaction watcher", () => {
     expect(notice.context).toBeUndefined();
     const truncated = buildInteractionNotification(running({ id: "exec_b" }), decision());
     expect(String(truncated.context).length).toBeLessThanOrEqual(600);
+  });
+});
+
+describe("guardrail notices ride the same poll", () => {
+  const running = (attention: unknown[]): RunningExecutionView =>
+    ({
+      id: "exec_g", role: "implementation-worker", status: "running", model: "p/m", elapsedMs: 1_000,
+      attention,
+    }) as unknown as RunningExecutionView;
+
+  const warning = { code: "consecutive_tool_failures", at: "2026-09-02T00:00:00.000Z", detail: "3 consecutive tool calls failed (3 of 5 observed).", toolCalls: 5, toolErrors: 3, nudgedExpert: true };
+
+  it("sends each guardrail warning once while the expert keeps running", async () => {
+    const guardrails: GuardrailNotification[] = [];
+    let polls = 0;
+    const sent = await watchForInteractions({
+      listRunning: async () => {
+        polls += 1;
+        // Same warning present on three polls: it must be delivered exactly once.
+        return polls >= 3 ? [] : [running(polls === 1 ? [] : [warning])];
+      },
+      executionIds: ["exec_g"],
+      deadlineMs: 1_000,
+      intervalMs: 1,
+      send: () => undefined,
+      sendGuardrail: (notification) => { guardrails.push(notification); },
+      sleep: async () => undefined,
+    });
+    expect(guardrails).toHaveLength(1);
+    expect(sent).toBe(1);
+    expect(guardrails[0]!.code).toBe("consecutive_tool_failures");
+    expect(guardrails[0]!.detail).toContain("consecutive tool calls failed");
+    expect(guardrails[0]!.nudgedExpert).toBe(true);
+  });
+
+  it("keeps budget warnings distinct per fraction and says so in the action text", () => {
+    const notice = buildGuardrailNotification(
+      running([]),
+      { code: "budget_fraction", at: "2026-09-02T00:00:00.000Z", detail: "85% of the execution budget used with no result yet.", budgetFractionUsed: 0.85 },
+      "refactor the parser",
+    );
+    expect(notice.taskDescription).toBe("refactor the parser");
+    expect(notice.budgetFractionUsed).toBe(0.85);
+    // Informational by construction: nothing was aborted, and the notice says so.
+    expect(notice.action).toContain("nothing was aborted");
+    expect(notice.action).toContain("not steered");
+  });
+
+  it("stays compatible with hosts that never wired a guardrail sink", async () => {
+    const interactions: unknown[] = [];
+    await watchForInteractions({
+      listRunning: async () => [],
+      executionIds: ["exec_g"],
+      deadlineMs: 1,
+      intervalMs: 1,
+      send: (notification) => { interactions.push(notification); },
+      sleep: async () => undefined,
+    });
+    expect(interactions).toEqual([]);
   });
 });

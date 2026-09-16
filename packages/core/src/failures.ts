@@ -1,5 +1,46 @@
 import type { ExpertResult, FailureType } from "./types.js";
 
+/**
+ * Transport-level upstream faults. These are checked before the generic `timeout`
+ * branch, because "gateway timeout" is the provider's failure, not our budget
+ * expiring. Without them a dropped provider connection was classified `unknown`,
+ * which cost three things at once: no availability marking, none of the bounded
+ * budget growth reserved for timeouts, and - worst - a supplier outage charged
+ * against that model's own reliability record in local learning. Observed live:
+ * an attempt whose last text was "Connection error." recorded `failureType: unknown`.
+ */
+const TRANSPORT_FAILURE_MARKERS = [
+  "connection error",
+  "connection reset",
+  "connection closed",
+  "connection failure",
+  "connection refused",
+  "econnreset",
+  "econnrefused",
+  "econnaborted",
+  "epipeconn",
+  "socket hang up",
+  "socket hangup",
+  "fetch failed",
+  "network error",
+  "network timeout",
+  "upstream connect error",
+  "upstream connect",
+  "bad gateway",
+  "service unavailable",
+  "gateway timeout",
+  "overloaded",
+  "server error",
+  "internal server error",
+  "stream disconnected",
+  "502",
+  "503",
+  "504",
+  "521",
+  "522",
+  "524",
+] as const;
+
 const PROVIDER_FAILURE_MARKERS = [
   "provider",
   "api key",
@@ -101,6 +142,10 @@ export function indicatesModelUnavailable(summary: unknown): boolean {
 
 export function inferFailureType(value: unknown, fallback: FailureType = "unknown"): FailureType {
   const message = value instanceof Error ? value.message.toLowerCase() : String(value).toLowerCase();
+  // Transport faults win over the generic timeout branch: they are upstream failures,
+  // and misreading them as our own timeout both grows a budget that was never the
+  // problem and blames the model for a supplier outage.
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => message.includes(marker))) return "provider_error";
   if (message.includes("timeout") || message.includes("timed out")) return "timeout";
   if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) {
     return "permission_error";

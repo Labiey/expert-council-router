@@ -17,13 +17,14 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.8.4) includes:
+The current version (0.8.5) includes:
 
 - **Interactive experts**: a running expert can pause on a major, hard-to-reverse, or ambiguous decision and present 2-4 recommended options (+ optional free text) to the Main Agent through `request_decision`; the host answers with `expert_respond` and the expert continues in the **same session**. Non-terminal — distinct from `report_and_stop`.
 - **Dynamic tool permissions**: preset role tools are a **seed, not a ceiling**. An expert requests a missing tool via `request_tool`; the host grants `once` (auto-revoked after one use), `persistent` (this session), or `reject`. `security.toolGrants` gives operator-defined persistent per-role grants. A read-only execution can never be escalated to a mutating/shell tool (isolation guarantee).
 - **Interaction discovery on a correctness channel**: an open interaction surfaces as `pendingInteraction` in `expert_status(view:"running")` and `expert_result(includeProgress)`, and the native Pi package additionally wakes the host with an `expert-council-interaction` notice the moment one opens; headless hosts (Codex/MCP, no server-push) keep polling. Bounded per execution (default 3 rounds + wait timeout).
 - **Cross-language environments**: `provisionWorkspace` is no longer Node-only. A driver registry materializes node/pnpm/yarn/bun, python (uv/poetry/host venv), rust, go, jvm/maven, dotnet, ruby, php, elixir from each toolchain's already-global download cache. Environment-as-code backends (`flake.nix`, `.devcontainer/`) are detected and delegated, not re-implemented. New `security.workspaceProvisioning.strategy` (`auto`/`drivers`/`as-code`/`in-place`) and `runtimeEnv` (`isolated`/`host-env`); concurrent worktrees never share a recompiled target directory.
 - **Progress observability toggle**: `security.observability.expertWindow` selects how much of an expert's live work is visible - `off` (default, nothing ambient), `events` (a bounded live progress block in the running views), or `interactive`, which additionally writes a **live event stream the operator can follow from a second terminal** with `expert-council watch --exec ID --follow`, at zero Main Agent context cost. `security.observability.streamToHost` can switch the streamed progress off, and `redactToolArgs` (default `true`) decides whether tool calls are recorded by name only. None of these gate the `pendingInteraction` correctness channel, nor an explicit `expert_result(includeProgress)` snapshot.
+- **Struggle detection**: `security.guardrails` counts tool failures and budget consumption the runtime actually observed, surfaces them as `attention` in the running views plus one native host notice per warning, steers the expert at most twice per execution, and never aborts a run. `maxTotalWallMs` caps the aggregate wall clock across all attempts of one delegation, and `executionMetadata.attemptHistory` explains what each attempt did.
 - A host-agnostic Core: config validation, model normalization, per-model/per-provider billing multipliers, profile layering, role scoring, task classification, dynamic team sizing, retry/escalation, and telemetry aggregation.
 - An execution runtime built on Pi's current `ModelRuntime` and `createAgentSession` APIs.
 - Per-expert hard tool allowlists and installed-Skill filtering.
@@ -119,7 +120,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.4 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -334,6 +335,38 @@ expert-council watch --exec exec_abc123 --follow
 - Stream files are pruned after 7 days.
 - The stream is written by the process running the experts. An expert dispatched from your Pi session is followed by the `watch` command reading the same data directory, not by an unrelated checkout.
 - `expert_inspect` reports `runtimeCapabilities.eventStream`, so a Main Agent can tell whether the requested tier is actually available; `interactive` on a runtime that cannot write a stream degrades to `events` and says so in `warnings`.
+
+### Struggle detection (guardrails)
+
+`security.guardrails` decides whether the council notices an expert that is stuck
+rather than merely busy, and what it does about it. Detection is **non-blocking by
+construction**: it warns, and never aborts. A false positive costs one wasted look;
+an auto-abort destroys good work.
+
+| Option | Default | Effect |
+| --- | --- | --- |
+| `warnHost` | `true` | Count struggles and surface them as `attention` in `expert_status({ view: "running" })`, plus one native Pi notice per warning (`expert-council-guardrail`). Off stops the warnings; the counters are still recorded. |
+| `nudgeExpert` | `true` | Steer the expert itself once per warning: do not repeat an identical failing call; either state the change of approach, `report_and_stop`, or `request_decision`. Hard cap **two nudges per execution**, and only where the runtime session supports steering. |
+| `consecutiveToolFailures` | `3` | Failing tool calls in a row that raise `consecutive_tool_failures`. |
+| `minCallsForRatio` / `failureRatio` | `8` / `0.5` | After at least 8 observed calls, a failure fraction at or above 50% raises `failure_ratio_high`. |
+| `budgetFractions` | `[0.6, 0.85]` | `budget_fraction` warnings at those fractions of the current attempt's `timeoutMs`; only the highest one also nudges. |
+| `maxTotalWallMs` | unset | Aggregate ceiling across **all attempts of one delegation**. Unset keeps the historical behaviour; when set, the retry loop stops early with an explanatory risk instead of silently spending `retry.maxAttempts x timeoutMs`. |
+
+Every warning is also written to the observability stream as an `attention` event, so
+`expert-council watch` shows it in the operator's terminal.
+
+The numbers come from what the runtime observed on its own tool events, not from the
+expert's account of its run: a delegation result carries `executionMetadata.toolCalls`,
+`.toolErrors` and `.attention`, plus `executionMetadata.attemptHistory` - one bounded
+entry per attempt (model, status, failure type, duration, first 300 characters of the
+attempt summary) - so a host can see why three attempts cost an hour without opening a
+single state file.
+
+A supplier outage says nothing about a model. Transport failures (`Connection error.`,
+`fetch failed`, `502/503/504`, `gateway timeout`, `overloaded`) classify as
+`provider_error` instead of `unknown`, and outcomes with that failure type are excluded
+from the reliability aggregates that feed routing, so an outage cannot make a capable
+model look unreliable.
 
 ### Provider limits & concurrency
 
@@ -707,7 +740,7 @@ packages/codex-integration/plugin/expert-council/
 Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.4 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -733,7 +766,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.4 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -744,7 +777,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.4` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.5` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 
@@ -878,6 +911,10 @@ Run `npm run validate` first, inspect every `npm pack --dry-run` file list, then
 ```
 
 ## Known limitations
+
+- Guardrail timing depends on the host process actually being scheduled: a suspended or CPU-starved process can raise a `budget_fraction` warning later than the timeout it was meant to anticipate.
+- A nudge requires the runtime session to support steering. Pi sessions do; against a runtime that does not, the council warns the host and stays out of the expert's way.
+- Tool-failure counters record only what the runtime could observe. They are not an audit surface, and a tool that hangs instead of failing contributes no failure count until the attempt itself times out.
 
 - Pi's API moves quickly. The current release was verified against the local 0.84.4 SDK; the runtime checks required SDK, model-runtime, resource-loader, and session methods and lists any missing contract explicitly on incompatibility.
 - Pi has no unified real billing-type API. Runtime subscription signals and named Token Plans take priority; otherwise non-zero catalog prices are treated as metered, and providers without reliable evidence stay `unknown` until an audit or explicit user configuration confirms them.

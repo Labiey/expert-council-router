@@ -18,13 +18,14 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.8.4）已包含：
+当前版本（0.8.5）已包含：
 
 - **交互式专家**：运行中专家可在重大、难回退或方向含糊处暂停，通过 `request_decision` 向主代理给出 2-4 个推荐选项（含可选自由文本）；宿主用 `expert_respond` 回答，专家在**同一会话**继续。非终止——与 `report_and_stop` 区分。
 - **动态工具权限**：预设角色工具是**种子而非上限**。专家用 `request_tool` 申请缺失工具；宿主授予 `once`（用一次后自动撤销）/`persistent`（本会话）/`reject`。`security.toolGrants` 提供运维侧持久按角色授予。只读执行永不升级为变更/shell 工具（隔离保证）。
 - **交互经正确性通道发现**：未决交互以 `pendingInteraction` 出现在 `expert_status(view:"running")` 与 `expert_result(includeProgress)`；原生 Pi 包还会在交互一打开时用 `expert-council-interaction` 通知唤醒宿主；无法接收推送的无头宿主（Codex/MCP）继续轮询。每执行有界（默认 3 轮 + 等待超时）。
 - **跨语言环境**：`provisionWorkspace` 不再只支持 Node。驱动注册表从各工具链已有的全局下载缓存物化 node/pnpm/yarn/bun、python(uv/poetry/宿主 venv)、rust、go、jvm/maven、dotnet、ruby、php、elixir。环境即代码后端（`flake.nix`、`.devcontainer/`）被检测并交还委托而非重造。新增 `security.workspaceProvisioning.strategy`（auto/drivers/as-code/in-place）与 `runtimeEnv`（isolated/host-env）；并发 worktree 绝不共享重编译 target 目录。
 - **进度可观测开关**：`security.observability.expertWindow` 决定能看到专家实时工作的多少——`off`（默认，不环境播报）、`events`（running 视图浮现轻量进度），或 `interactive`：此外写入一份**可让运维者在另一个终端跟随的实时事件流**，用 `expert-council watch --exec ID --follow` 查看，**完全不占用主代理上下文**。`security.observability.streamToHost` 可关流，`redactToolArgs`（默认 `true`）决定工具调用是否只按名称记录。三者都不约束 `pendingInteraction` 正确性通道，也不约束宿主显式索取的 `expert_result(includeProgress)` 快照。
+- **挣扎检测**：`security.guardrails` 统计运行时**实际观测**到的工具失败与预算消耗，以 `attention` 呈现在运行视图并为主代理发一条原生通知，每次执行最多 steer 专家两次，且**从不中止**。`maxTotalWallMs` 为一次委派的全部尝试设总时长上限；`executionMetadata.attemptHistory` 说明每次尝试做了什么。
 - 与宿主无关的 Core：配置校验、模型归一化、按模型/供应商计费倍率、画像分层、角色评分、任务分类、动态团队规模、重试/升级和遥测聚合。
 - 基于 Pi 当前 `ModelRuntime` 与 `createAgentSession` API 的执行运行时。
 - 每个专家会话的硬工具白名单和已安装 Skill 过滤。
@@ -120,7 +121,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.4 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -361,6 +362,25 @@ expert-council watch --exec exec_abc123 --follow
 - 事件流文件 7 天后自动清理。
 - 事件流由**运行专家的那个进程**写入。同一数据目录下的 `watch` 才能看到它；换一个无关仓库去跟是看不到的。
 - `expert_inspect` 会报 `runtimeCapabilities.eventStream`，主代理由此能判断所请求的档位是否真可用；写入能力缺失时 `interactive` 降级为 `events`，并在 `warnings` 里说明。
+
+### 挣扎检测（护栏）
+
+`security.guardrails` 决定 Council 是否会察觉「专家卡住」而不是「只是忙」。检测在设计上**不阻塞、不中止**：误报只浪费一次查看，自动中止会毁掉好成果。
+
+| 选项 | 默认 | 作用 |
+| --- | --- | --- |
+| `warnHost` | `true` | 统计挣扎信号，并以 `attention` 出现在 `expert_status({ view: "running" })`；每条警告另发一次原生 Pi 通知（`expert-council-guardrail`）。关闭后不再有警告，计数仍会记录。 |
+| `nudgeExpert` | `true` | 用一条有界指令 steer 专家本身：不要重复同样失败的调用；要么说明换什么做法，要么 `report_and_stop`，要么 `request_decision`。每次执行**最多 2 次**，且仅当运行时会话支持 steer。 |
+| `consecutiveToolFailures` | `3` | 连续失败多少次触发 `consecutive_tool_failures`。 |
+| `minCallsForRatio` / `failureRatio` | `8` / `0.5` | 观测到至少 8 次调用后，失败比例达到 50% 触发 `failure_ratio_high`。 |
+| `budgetFractions` | `[0.6, 0.85]` | 在本次尝试 `timeoutMs` 的这些分位发 `budget_fraction` 警告；只有最高一档才同时 nudge。 |
+| `maxTotalWallMs` | 未设 | **一次委派全部尝试**的总时长上限。未设即保持旧行为；设置后重试循环会提前停止并给出原因，而不会无声地花掉 `retry.maxAttempts × timeoutMs`。 |
+
+每条警告也会以 `attention` 事件写入事件流，运维者在 `expert-council watch` 里能看到。
+
+这些数字来自运行时自己观测到的工具事件，不是专家自述。委派结果的 `executionMetadata` 会带 `toolCalls`、`toolErrors`、`attention`，以及 `attemptHistory`（每次尝试一条有界记录：模型、状态、失败类型、耗时、摘要前 300 字符），因此主代理无需翻状态文件就能看懂「三次尝试为什么花了一小时」。
+
+供应商故障不能当作模型证据。传输类失败（`Connection error.`、`fetch failed`、`502/503/504`、`gateway timeout`、`overloaded`）现在归为 `provider_error` 而非 `unknown`，并且带该失败类型的结果会被排除在喂给路由的可靠性聚合之外——一次断流不会让一个能干的模型看起来不可靠。
 
 ### 能力画像
 
@@ -703,7 +723,7 @@ packages/codex-integration/plugin/expert-council/
 `v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.4 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -729,7 +749,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.4 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -740,7 +760,7 @@ if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
 若要开发插件，可克隆仓库、执行 `npm ci && npm run build`，再把仓库根目录的绝对路径传给 `codex plugin marketplace add`。普通使用建议安装固定版本的远程 Release。
 
-加载成功时会同时出现 `expert-council` Skill 和全部 13 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.8.4` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
+加载成功时会同时出现 `expert-council` Skill 和全部 13 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.8.5` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
 
 在新的 Codex 任务中输入以下提示以验证安装：
 
@@ -874,6 +894,10 @@ npm run smoke:live:pi
 ```
 
 ## 已知限制
+
+- 护栏计时依赖宿主进程确实被调度：进程被挂起或长期抢不到 CPU 时，`budget_fraction` 警告可能晚于它本应预警的超时点。
+- nudge 需要运行时会话支持 steer。Pi 会话支持；对不支持的运行时，Council 只通知宿主而不去干扰专家。
+- 工具失败计数只记录运行时能观测到的部分，它不是审计面；工具「卡住」而非报错时，在该次尝试超时之前不会计入失败。
 
 - Pi API 变化较快。当前版本已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
 - Pi 没有统一的真实计费类型 API。运行时订阅信号和具名 Token Plan 优先；否则非零目录价格按按量计费处理，没有可靠证据的 Provider 保持 `unknown`，直到评估或显式用户配置确认。

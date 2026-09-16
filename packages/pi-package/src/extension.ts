@@ -398,6 +398,9 @@ export default function expertCouncilExtension(
           labels: Object.fromEntries(receipts.map((receipt) => [receipt.executionId, receipt.taskDescription])),
           deadlineMs: Math.max(...assignments.map((assignment) => assignment.timeoutMs)) + 60_000,
           send: (notification) => deliver("expert-council-interaction", notification),
+          // Guardrail warnings ride the same poll. They are capped per execution (each
+          // code once), so informing the host cannot become a stream of noise.
+          sendGuardrail: (notification) => deliver("expert-council-guardrail", notification as unknown as Record<string, unknown>),
         }).catch(() => undefined);
       }
       return output(batch

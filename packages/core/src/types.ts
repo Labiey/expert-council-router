@@ -134,6 +134,7 @@ export type ExpertEventKind =
   | "tool_started"
   | "tool_finished"
   | "assistant_text"
+  | "attention"
   | "interaction_opened"
   | "interaction_answered"
   | "stopped"
@@ -251,6 +252,13 @@ export interface ExpertResult {
     stoppedByExpert?: boolean;
     /** Decision and tool-approval interactions raised by the expert during this execution. */
     interactionRounds?: number;
+    /** Tool calls attempted and observed to fail, counted by the runtime, not self-reported. */
+    toolCalls?: number;
+    toolErrors?: number;
+    /** Stall/budget warnings raised during the run, oldest first, bounded. */
+    attention?: ExpertAttention[];
+    /** Per-attempt record of this delegation, so the host never has to dig through state files. */
+    attemptHistory?: AttemptRecord[];
     /** Outcome of runtime worktree provisioning for this attempt. */
     provisioning?: {
       status: "ready" | "skipped" | "failed";
@@ -302,6 +310,41 @@ export interface RuntimeBillingDiscovery {
 }
 
 /** Bounded progress snapshot for a running expert execution. */
+/** Why the council thinks an expert is struggling rather than merely busy. */
+export type AttentionCode =
+  | "consecutive_tool_failures"
+  | "failure_ratio_high"
+  | "budget_fraction";
+
+/**
+ * A non-blocking warning about one running execution. Attention is deliberately not
+ * an interaction: it never waits for an answer, and it does not abort the expert -
+ * a false positive costs one wasted run, an auto-abort would destroy good work.
+ */
+export interface ExpertAttention {
+  code: AttentionCode;
+  at: string;
+  /** One bounded line, safe to show to a human or feed back to the expert. */
+  detail: string;
+  toolCalls?: number;
+  toolErrors?: number;
+  consecutiveToolErrors?: number;
+  budgetFractionUsed?: number;
+  /** Whether the expert itself was steered with a bounded nudge. */
+  nudgedExpert?: boolean;
+}
+
+/** One attempt of a delegation, as observed by the council. */
+export interface AttemptRecord {
+  attempt: number;
+  model: string;
+  status: string;
+  failureType?: FailureType;
+  durationMs?: number;
+  /** Bounded first line of the attempt's own summary; never a transcript. */
+  summary?: string;
+}
+
 export interface ExecutionProgress {
   executionId: string;
   status: "running";
@@ -317,6 +360,13 @@ export interface ExecutionProgress {
   filesChangedSoFar?: string[];
   /** A live interaction the blocked expert is waiting on the Main Agent to resolve. */
   pendingInteraction?: PendingInteraction;
+  /** Tool calls attempted / observed to fail so far, counted by the runtime. */
+  toolCalls?: number;
+  toolErrors?: number;
+  /** Fraction of the execution budget already used (0-1), when a budget exists. */
+  budgetFractionUsed?: number;
+  /** Stall/budget warnings raised so far. */
+  attention?: ExpertAttention[];
 }
 
 /** One selectable answer for a decision point. */
@@ -687,6 +737,18 @@ export interface ExpertOutcome {
   attempts: number;
   /** Decision/tool-approval interactions raised during the execution, for routing telemetry. */
   interactionRounds?: number;
+  /**
+   * Observed failing tool calls, counted by the runtime. Historically this carried
+   * 0 or 1 (whether the whole attempt was classified as a tool-call error), which
+   * silently starved the tool-error term of `observedAdjustment`.
+   */
+  toolErrorsObserved?: number;
+  /** Terminal failure type, recorded so infrastructure faults can be excluded from model learning. */
+  failureType?: FailureType;
+  /** Observed tool calls, i.e. the denominator for `toolErrors`. */
+  toolCalls?: number;
+  /** Which stall warnings fired during this execution, deduped and without detail text. */
+  attentionCodes?: string[];
   hostType: string;
   approximateUsage?: {
     inputTokens?: number;
@@ -746,6 +808,8 @@ export interface ResourceInventory {
     provisioningMode: string;
     /** Effective progress-visibility settings, so a host can see what the toggle actually does. */
     observability?: { expertWindow: string; streamToHost: boolean; redactToolArgs: boolean };
+    /** Effective struggle-detection thresholds, so a host can tell whether warnings/nudges are live. */
+    guardrails?: { warnHost: boolean; nudgeExpert: boolean; consecutiveToolFailures: number; maxTotalWallMs?: number };
   };
   /** Per-provider caps, weighted usage, and in-flight counts; omitted when caps are unwired. */
   providerLimits?: ProviderLimitsView[];
@@ -927,8 +991,20 @@ export interface RunningExecutionView {
   remainingMs?: number;
   /** A live interaction the expert is blocked on, when one is open. */
   pendingInteraction?: PendingInteraction;
-  /** Bounded live progress, surfaced only when security.observability.expertWindow is "events"/"interactive". */
-  progress?: { messageCount: number; lastActivity?: string };
+  /**
+   * Non-blocking struggle warnings. Surfaced regardless of the observability toggle:
+   * "this expert appears stuck" is a correctness-adjacent signal the host needs in
+   * order to decide whether to intervene, not a cosmetic progress stream.
+   */
+  attention?: ExpertAttention[];
+  /** Bounded live progress, surfaced only when security.observability.expertWindow is not "off". */
+  progress?: {
+    messageCount: number;
+    lastActivity?: string;
+    toolCalls?: number;
+    toolErrors?: number;
+    budgetFractionUsed?: number;
+  };
 }
 
 /** One finished execution in the summary status view. */

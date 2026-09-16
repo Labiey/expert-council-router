@@ -310134,6 +310134,39 @@ var councilConfigSchema = external_exports.object({
       streamToHost: external_exports.boolean().default(true),
       redactToolArgs: external_exports.boolean().default(true)
     }).default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
+    /**
+     * Struggle detection. Non-blocking by construction: warnings reach the host, an
+     * optional bounded nudge reaches the expert, and nothing here ever aborts a run.
+     * A false positive costs one wasted look; an auto-abort would destroy good work,
+     * so the mechanism stops short of it.
+     */
+    guardrails: external_exports.object({
+      /** Surface stall and budget warnings in running views (and native host notices). */
+      warnHost: external_exports.boolean().default(true),
+      /** Steer the expert itself with a bounded nudge when it appears to be struggling. */
+      nudgeExpert: external_exports.boolean().default(true),
+      /** Consecutive failing tool calls that count as struggling. */
+      consecutiveToolFailures: external_exports.number().int().min(2).max(50).default(3),
+      /** Minimum observed tool calls before the failure-ratio rule may fire. */
+      minCallsForRatio: external_exports.number().int().min(4).max(200).default(8),
+      /** Failure fraction, over at least `minCallsForRatio` calls, that counts as struggling. */
+      failureRatio: external_exports.number().min(0.2).max(0.95).default(0.5),
+      /** Budget fractions at which the host is warned; the expert is nudged at the highest one. */
+      budgetFractions: external_exports.array(external_exports.number().min(0.1).max(0.99)).min(1).max(4).default([0.6, 0.85]),
+      /**
+       * Aggregate wall-clock ceiling across ALL attempts of one delegation. Unset means
+       * unlimited, which is the historical behaviour: a per-attempt timeout multiplied by
+       * `retry.maxAttempts` let one mechanical delegation cost ~59 minutes unnoticed.
+       */
+      maxTotalWallMs: external_exports.number().int().min(1e3).max(6 * 36e5).optional()
+    }).default({
+      warnHost: true,
+      nudgeExpert: true,
+      consecutiveToolFailures: 3,
+      minCallsForRatio: 8,
+      failureRatio: 0.5,
+      budgetFractions: [0.6, 0.85]
+    }),
     workspaceProvisioning: external_exports.object({
       mode: external_exports.enum(["auto", "none", "custom"]).default("none"),
       strategy: external_exports.enum(["auto", "drivers", "as-code", "in-place"]).default("auto"),
@@ -310162,6 +310195,14 @@ var councilConfigSchema = external_exports.object({
     toolGrants: {},
     expertLifetime: "host-bound",
     observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
+    guardrails: {
+      warnHost: true,
+      nudgeExpert: true,
+      consecutiveToolFailures: 3,
+      minCallsForRatio: 8,
+      failureRatio: 0.5,
+      budgetFractions: [0.6, 0.85]
+    },
     workspaceProvisioning: {
       mode: "none",
       strategy: "auto",
@@ -310576,16 +310617,28 @@ function sanitizeOutcome(outcome) {
     // Whitelist projection: a field not copied here is silently dropped before it
     // reaches the store, so newly added ExpertOutcome fields must be listed here too.
     ...typeof outcome.interactionRounds === "number" ? { interactionRounds: Math.max(0, Math.floor(outcome.interactionRounds)) } : {},
+    // Observed failing tool calls (a real count, not the old 0/1 attempt flag) and the
+    // terminal failure type, which aggregation needs in order to keep infrastructure
+    // faults out of a model's reliability signal. Both must be listed in this
+    // whitelist or they vanish silently on the way to disk.
+    ...typeof outcome.toolErrorsObserved === "number" ? { toolErrorsObserved: Math.max(0, Math.floor(outcome.toolErrorsObserved)) } : {},
+    ...outcome.failureType ? { failureType: outcome.failureType } : {},
+    // Same whitelist hazard again: any new ExpertOutcome field must be listed here or
+    // it is silently dropped on the way to disk.
+    ...typeof outcome.toolCalls === "number" ? { toolCalls: Math.max(0, Math.floor(outcome.toolCalls)) } : {},
+    ...outcome.attentionCodes?.length ? { attentionCodes: outcome.attentionCodes.slice(0, 8) } : {},
     escalationCount: Math.max(0, outcome.escalationCount),
     attempts: Math.max(1, outcome.attempts),
     hostType: outcome.hostType,
     ...outcome.approximateUsage ? { approximateUsage: { ...outcome.approximateUsage } } : {}
   };
 }
+var LEARNING_NEUTRAL_FAILURE_TYPES = /* @__PURE__ */ new Set(["provider_error"]);
 function aggregateOutcomes(outcomes) {
+  const attributable = outcomes.filter((outcome) => !(outcome.failureType && LEARNING_NEUTRAL_FAILURE_TYPES.has(outcome.failureType)));
   const latestByExecution = /* @__PURE__ */ new Map();
   const anonymous = [];
-  for (const outcome of outcomes) {
+  for (const outcome of attributable) {
     if (outcome.executionId)
       latestByExecution.set(outcome.executionId, outcome);
     else
@@ -310994,6 +311047,37 @@ function decideEscalation(request, candidates, correctedRetriesPerModel = 1) {
 }
 
 // packages/core/dist/failures.js
+var TRANSPORT_FAILURE_MARKERS = [
+  "connection error",
+  "connection reset",
+  "connection closed",
+  "connection failure",
+  "connection refused",
+  "econnreset",
+  "econnrefused",
+  "econnaborted",
+  "epipeconn",
+  "socket hang up",
+  "socket hangup",
+  "fetch failed",
+  "network error",
+  "network timeout",
+  "upstream connect error",
+  "upstream connect",
+  "bad gateway",
+  "service unavailable",
+  "gateway timeout",
+  "overloaded",
+  "server error",
+  "internal server error",
+  "stream disconnected",
+  "502",
+  "503",
+  "504",
+  "521",
+  "522",
+  "524"
+];
 var PROVIDER_FAILURE_MARKERS = [
   "provider",
   "api key",
@@ -311072,6 +311156,8 @@ function indicatesModelUnavailable(summary) {
 }
 function inferFailureType(value3, fallback = "unknown") {
   const message = value3 instanceof Error ? value3.message.toLowerCase() : String(value3).toLowerCase();
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => message.includes(marker)))
+    return "provider_error";
   if (message.includes("timeout") || message.includes("timed out"))
     return "timeout";
   if (message.includes("permission") || message.includes("workspace") || message.includes("worktree")) {
@@ -311918,6 +312004,12 @@ var ExpertCouncilService = class {
           expertWindow: this.config.security.observability.expertWindow,
           streamToHost: this.config.security.observability.streamToHost,
           redactToolArgs: this.config.security.observability.redactToolArgs
+        },
+        guardrails: {
+          warnHost: this.config.security.guardrails.warnHost,
+          nudgeExpert: this.config.security.guardrails.nudgeExpert,
+          consecutiveToolFailures: this.config.security.guardrails.consecutiveToolFailures,
+          ...this.config.security.guardrails.maxTotalWallMs !== void 0 ? { maxTotalWallMs: this.config.security.guardrails.maxTotalWallMs } : {}
         }
       },
       warnings: [
@@ -312151,6 +312243,9 @@ var ExpertCouncilService = class {
     let lastResult;
     let correctedInstruction;
     let currentTimeoutMs = request.timeoutMs;
+    const delegationWallStart = Date.now();
+    let observedToolCalls = 0;
+    let observedToolErrors = 0;
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
     while (state2.attempts < maxAttempts) {
@@ -312162,6 +312257,17 @@ var ExpertCouncilService = class {
           role: request.role,
           model: current.model,
           summary: `Execution aborted by the Main Agent before the next attempt${state2.abortReason ? `. Reason: ${state2.abortReason}` : ""}; completed work is preserved.`
+        };
+        break;
+      }
+      const totalCeiling = this.config.security.guardrails.maxTotalWallMs;
+      if (lastResult && totalCeiling !== void 0 && state2.attempts > 1 && Date.now() - delegationWallStart >= totalCeiling) {
+        lastResult = {
+          ...lastResult,
+          risks: [
+            `Delegation stopped at the aggregate ceiling security.guardrails.maxTotalWallMs=${totalCeiling}ms after ${state2.attempts} attempt(s); the last attempt's own failure stands.`,
+            ...lastResult.risks ?? []
+          ].slice(0, 20)
         };
         break;
       }
@@ -312230,6 +312336,8 @@ var ExpertCouncilService = class {
         });
       }
       await this.persistState();
+      observedToolCalls += typeof lastResult.executionMetadata?.toolCalls === "number" ? lastResult.executionMetadata.toolCalls : 0;
+      observedToolErrors += typeof lastResult.executionMetadata?.toolErrors === "number" ? lastResult.executionMetadata.toolErrors : 0;
       const attemptUsage = approximateUsage(lastResult);
       if (attemptUsage) {
         for (const [key, value3] of Object.entries(attemptUsage)) {
@@ -312334,6 +312442,17 @@ var ExpertCouncilService = class {
     if (capBreaches.length) {
       result.risks = [...capBreaches, ...result.risks ?? []].slice(0, 20);
     }
+    const attemptHistory = (state2.attemptHistory ?? []).slice(-5).map((attempt3) => ({
+      attempt: attempt3.attempt,
+      model: attempt3.model,
+      status: attempt3.status,
+      ...attempt3.failureType ? { failureType: attempt3.failureType } : {},
+      ...attempt3.startedAt && attempt3.finishedAt ? { durationMs: Math.max(0, Date.parse(attempt3.finishedAt) - Date.parse(attempt3.startedAt)) } : {},
+      ...attempt3.summary ? { summary: attempt3.summary.slice(0, 300) } : {}
+    }));
+    if (attemptHistory.length > 1) {
+      result.executionMetadata = { ...result.executionMetadata, attemptHistory };
+    }
     Object.assign(state2, { status: result.status, model: result.model, finishedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const parsed = parseModelKey(result.model);
     if (result.status === "success") {
@@ -312348,7 +312467,12 @@ var ExpertCouncilService = class {
       taskCategory: classifyTask(request.task, this.config.routing.taskClassification),
       success: result.status === "success",
       firstPass: result.status === "success" && state2.attempts === 1,
-      toolErrors: failures.filter((failure) => failure.type === "tool_call_error").length,
+      // The runtime's observed count is authoritative when a runtime can observe it; the
+      // historical attempt-level classification stays only as a fallback, because it was
+      // a 0/1 flag masquerading as a count and starved the tool-error learning term.
+      toolErrors: observedToolErrors || failures.filter((failure) => failure.type === "tool_call_error").length,
+      ...observedToolErrors ? { toolErrorsObserved: observedToolErrors } : {},
+      ...result.executionMetadata?.failureType ? { failureType: result.executionMetadata.failureType } : {},
       retryCount: Math.max(0, state2.attempts - 1),
       timedOut: failures.some((failure) => failure.type === "timeout"),
       ...result.status === "aborted" ? { aborted: true } : {},
@@ -312356,6 +312480,8 @@ var ExpertCouncilService = class {
       attempts: Math.max(1, state2.attempts),
       hostType: runtimeCapabilities.hostType,
       ...typeof result.executionMetadata?.interactionRounds === "number" ? { interactionRounds: result.executionMetadata.interactionRounds } : {},
+      ...typeof result.executionMetadata?.toolCalls === "number" ? { toolCalls: result.executionMetadata.toolCalls } : {},
+      ...result.executionMetadata?.attention?.length ? { attentionCodes: [...new Set(result.executionMetadata.attention.map((item) => item.code))] } : {},
       ...approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}
     });
     return result;
@@ -312862,7 +312988,16 @@ var ExpertCouncilService = class {
       return {
         ...view,
         ...progress.pendingInteraction ? { pendingInteraction: progress.pendingInteraction } : {},
-        ...showProgress ? { progress: { messageCount: progress.messageCount, ...progress.lastAssistantText ? { lastActivity: progress.lastAssistantText } : {} } } : {}
+        ...progress.attention?.length ? { attention: progress.attention } : {},
+        ...showProgress ? {
+          progress: {
+            messageCount: progress.messageCount,
+            ...progress.lastAssistantText ? { lastActivity: progress.lastAssistantText } : {},
+            ...typeof progress.toolCalls === "number" ? { toolCalls: progress.toolCalls } : {},
+            ...typeof progress.toolErrors === "number" ? { toolErrors: progress.toolErrors } : {},
+            ...typeof progress.budgetFractionUsed === "number" ? { budgetFractionUsed: progress.budgetFractionUsed } : {}
+          }
+        } : {}
       };
     }));
   }
@@ -313506,7 +313641,7 @@ var JsonCouncilStateStore = class {
     const task = this.writeQueue.catch(() => void 0).then(async () => {
       const filePath = await ensurePrivateStoragePath(this.filePath);
       const temporary = path23.join(path23.dirname(filePath), `.${path23.basename(filePath)}.${process.pid}.${randomUUID12()}.tmp`);
-      await writeFile5(temporary, `${JSON.stringify(snapshot)}
+      await writeFile5(temporary, `${JSON.stringify(snapshot, null, 2)}
 `, { encoding: "utf8", mode: 384, flag: "wx" });
       await rename4(temporary, filePath);
       await chmod3(filePath, 384).catch((error61) => {
@@ -319120,6 +319255,8 @@ var PiExpertRuntime = class _PiExpertRuntime {
   lastHostResponded = /* @__PURE__ */ new Map();
   /** Per-execution state for the interactive observability event stream. */
   observabilityStreams = /* @__PURE__ */ new Map();
+  /** Guardrail observations kept past the entry's lifetime so the result can carry them. */
+  lastGuardrails = /* @__PURE__ */ new Map();
   skillDiscoveryWarning;
   constructor(sdk, models, options, packageName) {
     this.sdk = sdk;
@@ -319142,25 +319279,28 @@ var PiExpertRuntime = class _PiExpertRuntime {
    * closed with exactly one terminal event and flushed before returning.
    */
   async executeExpert(input2) {
-    const request = input2.executionId ? input2 : { ...input2, executionId: `exec-${Date.now()}` };
+    const executionId2 = input2.executionId ?? `exec-${Date.now()}`;
+    const request = { ...input2, executionId: executionId2 };
     this.openObservabilityStream(request);
     let result;
     try {
       result = await this.executeExpertInner(request);
     } catch (error61) {
-      this.emitObservability(request.executionId, request.role, request.model, "failed", {
+      this.lastGuardrails.delete(executionId2);
+      this.emitObservability(executionId2, request.role, request.model, "failed", {
         status: "failed",
         text: boundedText2(error61 instanceof Error ? error61.message : String(error61))
       });
-      await this.closeObservabilityStream(request.executionId);
+      await this.closeObservabilityStream(executionId2);
       throw error61;
     }
-    this.emitObservability(request.executionId, request.role, request.model ?? result.model, terminalKindFor(result), {
+    result = this.withGuardrailEvidence(executionId2, result);
+    this.emitObservability(executionId2, request.role, request.model ?? result.model, terminalKindFor(result), {
       status: result.status,
       ...result.executionMetadata?.failureType ? { failureType: String(result.executionMetadata.failureType) } : {},
       ...typeof result.executionMetadata?.durationMs === "number" ? { durationMs: result.executionMetadata.durationMs } : {}
     });
-    await this.closeObservabilityStream(request.executionId);
+    await this.closeObservabilityStream(executionId2);
     return result;
   }
   /** Whether an interactive stream is open for this execution (cheap check, never creates one). */
@@ -319241,6 +319381,96 @@ var PiExpertRuntime = class _PiExpertRuntime {
       return;
     await state2.chain;
     this.observabilityStreams.delete(executionId2);
+  }
+  /**
+   * Fold the runtime's own guardrail observations into a finished result. The attempt
+   * summary is the expert's word; these numbers are what was actually seen, and the
+   * escalation and learning paths must not have to trust the former for the latter.
+   */
+  withGuardrailEvidence(executionId2, result) {
+    if (executionId2 === void 0)
+      return result;
+    const guardrails = this.lastGuardrails.get(executionId2);
+    this.lastGuardrails.delete(executionId2);
+    if (!guardrails)
+      return result;
+    return {
+      ...result,
+      executionMetadata: {
+        ...result.executionMetadata,
+        toolCalls: guardrails.toolCalls,
+        toolErrors: guardrails.toolErrors,
+        ...guardrails.attention.length ? { attention: guardrails.attention } : {}
+      }
+    };
+  }
+  /**
+   * Record one non-blocking struggle warning. Each code fires at most once per execution
+   * (budget fractions are keyed by their own threshold) and the list is capped. Nothing
+   * here stops the expert: a false positive costs one wasted look, while an auto-abort
+   * would destroy good work, so the mechanism deliberately stops short of it.
+   */
+  raiseAttention(entry, request, code, detail2, extra = {}, options = {}) {
+    const keyOf = (item) => item.code === "budget_fraction" ? `budget_fraction:${item.budgetFractionUsed ?? 0}` : item.code;
+    const key = code === "budget_fraction" ? `budget_fraction:${extra.budgetFractionUsed ?? 0}` : code;
+    if (entry.attention.some((item) => keyOf(item) === key))
+      return void 0;
+    const attention = {
+      code,
+      at: (/* @__PURE__ */ new Date()).toISOString(),
+      detail: detail2.slice(0, 500),
+      toolCalls: entry.toolCalls,
+      toolErrors: entry.toolErrors,
+      ...extra
+    };
+    entry.attention = [...entry.attention.slice(-7), attention];
+    this.emitObservability(request.executionId, request.role, request.model, "attention", { text: attention.detail });
+    if (options.nudge)
+      this.nudgeExpert(entry, request, attention);
+    return attention;
+  }
+  /** A bounded steer, at most twice per execution, and only if the session can take one. */
+  nudgeExpert(entry, request, attention) {
+    if (!this.options.config.security.guardrails.nudgeExpert)
+      return;
+    if (entry.nudgesSent >= 2 || typeof entry.session?.steer !== "function")
+      return;
+    entry.nudgesSent += 1;
+    attention.nudgedExpert = true;
+    const minutes = typeof request.timeoutMs === "number" ? Math.round(request.timeoutMs / 6e4) : void 0;
+    const budget = attention.budgetFractionUsed ? ` You have used about ${Math.round(attention.budgetFractionUsed * 100)}%${minutes ? ` of a ${minutes}-minute` : ""} budget.` : "";
+    void entry.session.steer(`Council guardrail: ${attention.detail}.${budget} Do not repeat an identical failing call. If the goal is still reachable with your assigned tools, say in one sentence what you will do differently and continue. If it is not reachable, call report_and_stop now with the exact blocker and at least one concrete finding. If the direction itself is ambiguous, call request_decision.`)?.catch(() => void 0);
+  }
+  evaluateToolGuardrails(entry, request) {
+    const guardrails = this.options.config.security.guardrails;
+    if (!guardrails.warnHost)
+      return;
+    if (entry.consecutiveToolErrors >= guardrails.consecutiveToolFailures) {
+      this.raiseAttention(entry, request, "consecutive_tool_failures", `${entry.consecutiveToolErrors} consecutive tool calls failed (${entry.toolErrors} of ${entry.toolCalls} observed).`, { consecutiveToolErrors: entry.consecutiveToolErrors }, { nudge: true });
+    }
+    if (entry.toolCalls >= guardrails.minCallsForRatio && entry.toolErrors / entry.toolCalls >= guardrails.failureRatio) {
+      const ratio = Math.round(entry.toolErrors / entry.toolCalls * 100);
+      this.raiseAttention(entry, request, "failure_ratio_high", `${entry.toolErrors} of ${entry.toolCalls} observed tool calls failed (${ratio}%).`, {}, { nudge: true });
+    }
+  }
+  /** Arm one timer per configured budget fraction; every timer is cleared on teardown. */
+  armBudgetWarnings(entry, request) {
+    const guardrails = this.options.config.security.guardrails;
+    const budget = request.timeoutMs;
+    if (!guardrails.warnHost || typeof budget !== "number" || budget <= 0)
+      return;
+    const fractions = [...new Set(guardrails.budgetFractions)].sort((a, b2) => a - b2);
+    const highest = fractions[fractions.length - 1];
+    for (const fraction of fractions) {
+      const delay = Math.max(0, Math.round(budget * fraction) - (Date.now() - entry.startedAt));
+      entry.budgetTimers.push(setTimeout(() => {
+        this.raiseAttention(entry, request, "budget_fraction", `${Math.round(fraction * 100)}% of the execution budget used with no result yet.`, { budgetFractionUsed: fraction, toolCalls: entry.toolCalls, toolErrors: entry.toolErrors }, { nudge: fraction === highest });
+      }, delay));
+    }
+  }
+  clearBudgetWarnings(entry) {
+    for (const timer of entry?.budgetTimers ?? [])
+      clearTimeout(timer);
   }
   /** Tool arguments reach the stream only when the operator turned redaction off. */
   toolArgumentSummary(args) {
@@ -319395,7 +319625,14 @@ var PiExpertRuntime = class _PiExpertRuntime {
         model: request.model,
         abortRequested: false,
         stopRequested: false,
-        timedOut: false
+        timedOut: false,
+        toolCalls: 0,
+        toolErrors: 0,
+        consecutiveToolErrors: 0,
+        attention: [],
+        nudgesSent: 0,
+        budgetTimers: [],
+        timeoutMs: request.timeoutMs
       };
       this.activeSessions.set(executionKey, entry);
       const available = await this.listAvailableModels();
@@ -319575,9 +319812,22 @@ Apply this decision and continue the assigned task now. If the decision changed 
       entry.onceTools = /* @__PURE__ */ new Set();
       entry.unsubscribe = session.subscribe?.((event) => {
         const e2 = event;
-        if (e2?.type === "tool_execution_end" && e2.toolName && entry.onceTools?.has(e2.toolName)) {
-          entry.onceTools.delete(e2.toolName);
-          this.deactivateTool(entry, e2.toolName);
+        if (e2?.type === "tool_execution_end" && e2.toolName) {
+          const interactionTool = e2.toolName === "report_and_stop" || e2.toolName === "request_decision" || e2.toolName === "request_tool";
+          if (!interactionTool) {
+            entry.toolCalls += 1;
+            if (e2.isError === true) {
+              entry.toolErrors += 1;
+              entry.consecutiveToolErrors += 1;
+            } else {
+              entry.consecutiveToolErrors = 0;
+            }
+            this.evaluateToolGuardrails(entry, request);
+          }
+          if (entry.onceTools?.has(e2.toolName)) {
+            entry.onceTools.delete(e2.toolName);
+            this.deactivateTool(entry, e2.toolName);
+          }
         }
         if (this.observabilityActive(request.executionId)) {
           if (e2?.type === "tool_execution_start" && e2.toolName) {
@@ -319611,6 +319861,7 @@ Apply this decision and continue the assigned task now. If the decision changed 
         await session.prompt(prompt);
         await session.waitForIdle?.();
       })();
+      this.armBudgetWarnings(entry, request);
       void execution2.catch(() => void 0);
       let forceSettle;
       const abortSettled = new Promise((resolve17) => {
@@ -319719,6 +319970,14 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
       };
     } finally {
       entry?.unsubscribe?.();
+      this.clearBudgetWarnings(entry);
+      if (entry) {
+        this.lastGuardrails.set(executionKey, {
+          toolCalls: entry.toolCalls,
+          toolErrors: entry.toolErrors,
+          attention: entry.attention.map((item) => ({ ...item }))
+        });
+      }
       this.activeSessions.delete(executionKey);
       session?.dispose();
     }
@@ -319883,6 +320142,10 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
       workspace: entry.workspace.root,
       isolated: entry.workspace.isolated,
       ...entry.pendingInteraction ? { pendingInteraction: entry.pendingInteraction } : {},
+      toolCalls: entry.toolCalls,
+      toolErrors: entry.toolErrors,
+      ...typeof entry.timeoutMs === "number" && entry.timeoutMs > 0 ? { budgetFractionUsed: Math.min(1, (Date.now() - entry.startedAt) / entry.timeoutMs) } : {},
+      ...entry.attention.length ? { attention: entry.attention.map((item) => ({ ...item })) } : {},
       ...filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}
     };
   }
@@ -320300,7 +320563,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.8.4" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.8.5" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

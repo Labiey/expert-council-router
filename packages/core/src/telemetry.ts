@@ -20,6 +20,18 @@ export function sanitizeOutcome(outcome: ExpertOutcome): ExpertOutcome {
     ...(typeof outcome.interactionRounds === "number"
       ? { interactionRounds: Math.max(0, Math.floor(outcome.interactionRounds)) }
       : {}),
+    // Observed failing tool calls (a real count, not the old 0/1 attempt flag) and the
+    // terminal failure type, which aggregation needs in order to keep infrastructure
+    // faults out of a model's reliability signal. Both must be listed in this
+    // whitelist or they vanish silently on the way to disk.
+    ...(typeof outcome.toolErrorsObserved === "number"
+      ? { toolErrorsObserved: Math.max(0, Math.floor(outcome.toolErrorsObserved)) }
+      : {}),
+    ...(outcome.failureType ? { failureType: outcome.failureType } : {}),
+    // Same whitelist hazard again: any new ExpertOutcome field must be listed here or
+    // it is silently dropped on the way to disk.
+    ...(typeof outcome.toolCalls === "number" ? { toolCalls: Math.max(0, Math.floor(outcome.toolCalls)) } : {}),
+    ...(outcome.attentionCodes?.length ? { attentionCodes: outcome.attentionCodes.slice(0, 8) } : {}),
     escalationCount: Math.max(0, outcome.escalationCount),
     attempts: Math.max(1, outcome.attempts),
     hostType: outcome.hostType,
@@ -27,10 +39,21 @@ export function sanitizeOutcome(outcome: ExpertOutcome): ExpertOutcome {
   };
 }
 
+/**
+ * Failures that are not attributable to the model's own capability. A supplier
+ * outage or a dropped connection says nothing about whether the model is good at the
+ * role, so those samples are excluded instead of being scored as losses: counting
+ * them would punish exactly the models that happen to be routed during an outage.
+ */
+const LEARNING_NEUTRAL_FAILURE_TYPES = new Set<string>(["provider_error"]);
+
 export function aggregateOutcomes(outcomes: readonly ExpertOutcome[]): TelemetryAggregate[] {
+  const attributable = outcomes.filter(
+    (outcome) => !(outcome.failureType && LEARNING_NEUTRAL_FAILURE_TYPES.has(outcome.failureType)),
+  );
   const latestByExecution = new Map<string, ExpertOutcome>();
   const anonymous: ExpertOutcome[] = [];
-  for (const outcome of outcomes) {
+  for (const outcome of attributable) {
     if (outcome.executionId) latestByExecution.set(outcome.executionId, outcome);
     else anonymous.push(outcome);
   }

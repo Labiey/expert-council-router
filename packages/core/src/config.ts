@@ -248,6 +248,41 @@ export const councilConfigSchema = z.object({
           redactToolArgs: z.boolean().default(true),
         })
         .default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
+      /**
+       * Struggle detection. Non-blocking by construction: warnings reach the host, an
+       * optional bounded nudge reaches the expert, and nothing here ever aborts a run.
+       * A false positive costs one wasted look; an auto-abort would destroy good work,
+       * so the mechanism stops short of it.
+       */
+      guardrails: z
+        .object({
+          /** Surface stall and budget warnings in running views (and native host notices). */
+          warnHost: z.boolean().default(true),
+          /** Steer the expert itself with a bounded nudge when it appears to be struggling. */
+          nudgeExpert: z.boolean().default(true),
+          /** Consecutive failing tool calls that count as struggling. */
+          consecutiveToolFailures: z.number().int().min(2).max(50).default(3),
+          /** Minimum observed tool calls before the failure-ratio rule may fire. */
+          minCallsForRatio: z.number().int().min(4).max(200).default(8),
+          /** Failure fraction, over at least `minCallsForRatio` calls, that counts as struggling. */
+          failureRatio: z.number().min(0.2).max(0.95).default(0.5),
+          /** Budget fractions at which the host is warned; the expert is nudged at the highest one. */
+          budgetFractions: z.array(z.number().min(0.1).max(0.99)).min(1).max(4).default([0.6, 0.85]),
+          /**
+           * Aggregate wall-clock ceiling across ALL attempts of one delegation. Unset means
+           * unlimited, which is the historical behaviour: a per-attempt timeout multiplied by
+           * `retry.maxAttempts` let one mechanical delegation cost ~59 minutes unnoticed.
+           */
+          maxTotalWallMs: z.number().int().min(1_000).max(6 * 3_600_000).optional(),
+        })
+        .default({
+          warnHost: true,
+          nudgeExpert: true,
+          consecutiveToolFailures: 3,
+          minCallsForRatio: 8,
+          failureRatio: 0.5,
+          budgetFractions: [0.6, 0.85],
+        }),
       workspaceProvisioning: z
         .object({
           mode: z.enum(["auto", "none", "custom"]).default("none"),
@@ -279,6 +314,14 @@ export const councilConfigSchema = z.object({
       toolGrants: {},
       expertLifetime: "host-bound",
       observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
+      guardrails: {
+        warnHost: true,
+        nudgeExpert: true,
+        consecutiveToolFailures: 3,
+        minCallsForRatio: 8,
+        failureRatio: 0.5,
+        budgetFractions: [0.6, 0.85],
+      },
       workspaceProvisioning: {
         mode: "none",
         strategy: "auto",

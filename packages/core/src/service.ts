@@ -85,6 +85,7 @@ import type {
   ProviderLimits,
   ProviderLimitsView,
   UsageLedger,
+  AttemptRecord,
 } from "./types.js";
 
 type ExecutionState = ExecutionStateSnapshot;
@@ -339,6 +340,14 @@ export class ExpertCouncilService implements ExpertCouncil {
           expertWindow: this.config.security.observability.expertWindow,
           streamToHost: this.config.security.observability.streamToHost,
           redactToolArgs: this.config.security.observability.redactToolArgs,
+        },
+        guardrails: {
+          warnHost: this.config.security.guardrails.warnHost,
+          nudgeExpert: this.config.security.guardrails.nudgeExpert,
+          consecutiveToolFailures: this.config.security.guardrails.consecutiveToolFailures,
+          ...(this.config.security.guardrails.maxTotalWallMs !== undefined
+            ? { maxTotalWallMs: this.config.security.guardrails.maxTotalWallMs }
+            : {}),
         },
       },
       warnings: [
@@ -633,6 +642,9 @@ export class ExpertCouncilService implements ExpertCouncil {
     // a timed-out attempt proves that budget was too small, so the loop scales
     // it up instead of re-running the same impossible specification.
     let currentTimeoutMs = request.timeoutMs;
+    const delegationWallStart = Date.now();
+    let observedToolCalls = 0;
+    let observedToolErrors = 0;
     const cumulativeUsage: NonNullable<ExpertOutcome["approximateUsage"]> = {};
     const maxAttempts = this.config.retry.maxAttempts;
 
@@ -646,6 +658,20 @@ export class ExpertCouncilService implements ExpertCouncil {
           role: request.role,
           model: current.model,
           summary: `Execution aborted by the Main Agent before the next attempt${state.abortReason ? `. Reason: ${state.abortReason}` : ""}; completed work is preserved.`,
+        };
+        break;
+      }
+      // A per-attempt budget multiplied by maxAttempts is not a budget anybody chose.
+      // When an aggregate ceiling is configured, stop retrying rather than silently
+      // spending, say, three 25-minute attempts on one mechanical delegation.
+      const totalCeiling = this.config.security.guardrails.maxTotalWallMs;
+      if (lastResult && totalCeiling !== undefined && state.attempts > 1 && Date.now() - delegationWallStart >= totalCeiling) {
+        lastResult = {
+          ...lastResult,
+          risks: [
+            `Delegation stopped at the aggregate ceiling security.guardrails.maxTotalWallMs=${totalCeiling}ms after ${state.attempts} attempt(s); the last attempt's own failure stands.`,
+            ...(lastResult.risks ?? []),
+          ].slice(0, 20),
         };
         break;
       }
@@ -736,6 +762,8 @@ export class ExpertCouncilService implements ExpertCouncil {
         });
       }
       await this.persistState();
+      observedToolCalls += typeof lastResult.executionMetadata?.toolCalls === "number" ? lastResult.executionMetadata.toolCalls : 0;
+      observedToolErrors += typeof lastResult.executionMetadata?.toolErrors === "number" ? lastResult.executionMetadata.toolErrors : 0;
       const attemptUsage = approximateUsage(lastResult);
       if (attemptUsage) {
         for (const [key, value] of Object.entries(attemptUsage)) {
@@ -869,6 +897,24 @@ export class ExpertCouncilService implements ExpertCouncil {
     if (capBreaches.length) {
       result.risks = [...capBreaches, ...(result.risks ?? [])].slice(0, 20);
     }
+    // Surface what happened on every attempt, bounded, so the host never has to read
+    // a state file to learn which model failed how - a dig that was impossible with
+    // read-only expert tools because the persisted state is stored as one long line.
+    const attemptHistory: AttemptRecord[] = (state.attemptHistory ?? [])
+      .slice(-5)
+      .map((attempt) => ({
+        attempt: attempt.attempt,
+        model: attempt.model,
+        status: attempt.status,
+        ...(attempt.failureType ? { failureType: attempt.failureType } : {}),
+        ...(attempt.startedAt && attempt.finishedAt
+          ? { durationMs: Math.max(0, Date.parse(attempt.finishedAt) - Date.parse(attempt.startedAt)) }
+          : {}),
+        ...(attempt.summary ? { summary: attempt.summary.slice(0, 300) } : {}),
+      }));
+    if (attemptHistory.length > 1) {
+      result.executionMetadata = { ...result.executionMetadata, attemptHistory };
+    }
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);
     if (result.status === "success") {
@@ -883,7 +929,12 @@ export class ExpertCouncilService implements ExpertCouncil {
       taskCategory: classifyTask(request.task, this.config.routing.taskClassification),
       success: result.status === "success",
       firstPass: result.status === "success" && state.attempts === 1,
-      toolErrors: failures.filter((failure) => failure.type === "tool_call_error").length,
+      // The runtime's observed count is authoritative when a runtime can observe it; the
+      // historical attempt-level classification stays only as a fallback, because it was
+      // a 0/1 flag masquerading as a count and starved the tool-error learning term.
+      toolErrors: observedToolErrors || failures.filter((failure) => failure.type === "tool_call_error").length,
+      ...(observedToolErrors ? { toolErrorsObserved: observedToolErrors } : {}),
+      ...(result.executionMetadata?.failureType ? { failureType: result.executionMetadata.failureType } : {}),
       retryCount: Math.max(0, state.attempts - 1),
       timedOut: failures.some((failure) => failure.type === "timeout"),
       ...(result.status === "aborted" ? { aborted: true } : {}),
@@ -891,6 +942,10 @@ export class ExpertCouncilService implements ExpertCouncil {
       attempts: Math.max(1, state.attempts),
       hostType: runtimeCapabilities.hostType,
       ...(typeof result.executionMetadata?.interactionRounds === "number" ? { interactionRounds: result.executionMetadata.interactionRounds } : {}),
+      ...(typeof result.executionMetadata?.toolCalls === "number" ? { toolCalls: result.executionMetadata.toolCalls } : {}),
+      ...(result.executionMetadata?.attention?.length
+        ? { attentionCodes: [...new Set(result.executionMetadata.attention.map((item) => item.code))] }
+        : {}),
       ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
     });
     return result;
@@ -1460,8 +1515,17 @@ export class ExpertCouncilService implements ExpertCouncil {
       return {
         ...view,
         ...(progress.pendingInteraction ? { pendingInteraction: progress.pendingInteraction } : {}),
+        ...(progress.attention?.length ? { attention: progress.attention } : {}),
         ...(showProgress
-          ? { progress: { messageCount: progress.messageCount, ...(progress.lastAssistantText ? { lastActivity: progress.lastAssistantText } : {}) } }
+          ? {
+            progress: {
+              messageCount: progress.messageCount,
+              ...(progress.lastAssistantText ? { lastActivity: progress.lastAssistantText } : {}),
+              ...(typeof progress.toolCalls === "number" ? { toolCalls: progress.toolCalls } : {}),
+              ...(typeof progress.toolErrors === "number" ? { toolErrors: progress.toolErrors } : {}),
+              ...(typeof progress.budgetFractionUsed === "number" ? { budgetFractionUsed: progress.budgetFractionUsed } : {}),
+            },
+          }
           : {}),
       };
     }));

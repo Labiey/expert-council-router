@@ -10,6 +10,7 @@ import {
   type AvailableModel,
   type CouncilConfig,
   type ExpertExecutionRequest,
+  type ExpertAttention,
   type ExpertEventKind,
   type ExpertObservabilityEvent,
   type ExpertResult,
@@ -468,6 +469,17 @@ interface ActiveExpertSession {
   stopRequested: boolean;
   /** Bounces already spent on a contentless stop report (at most one, never a loop). */
   stopRejections?: number;
+  /** Tool calls and failures the runtime actually observed, not what the expert reported. */
+  toolCalls: number;
+  toolErrors: number;
+  consecutiveToolErrors: number;
+  /** Non-blocking struggle warnings raised so far, oldest first, capped. */
+  attention: ExpertAttention[];
+  /** Steers already injected into this session (hard cap 2). */
+  nudgesSent: number;
+  /** Budget-fraction timers; always cleared on teardown so nothing can outlive the run. */
+  budgetTimers: NodeJS.Timeout[];
+  timeoutMs?: number;
   reason?: string;
   /** Resolved by abortExecution to force the execution race to settle. */
   forceSettle?: () => void;
@@ -496,6 +508,8 @@ export class PiExpertRuntime implements ExpertRuntime {
   private readonly lastHostResponded = new Map<string, boolean>();
   /** Per-execution state for the interactive observability event stream. */
   private readonly observabilityStreams = new Map<string, ObservabilityStreamState>();
+  /** Guardrail observations kept past the entry's lifetime so the result can carry them. */
+  private readonly lastGuardrails = new Map<string, { toolCalls: number; toolErrors: number; attention: ExpertAttention[] }>();
   private skillDiscoveryWarning?: string;
 
   private constructor(
@@ -527,28 +541,31 @@ export class PiExpertRuntime implements ExpertRuntime {
    * closed with exactly one terminal event and flushed before returning.
    */
   async executeExpert(input: ExpertExecutionRequest): Promise<ExpertResult> {
-    // The stream is keyed by execution id, so a delegation that arrives without one
-    // is given a stable id at this boundary, before any event is written and before
-    // the inner execution reads it: both must agree or the file cannot be followed.
-    const request: ExpertExecutionRequest = input.executionId ? input : { ...input, executionId: `exec-${Date.now()}` };
+    // The stream and the guardrail bookkeeping are both keyed by execution id, so a
+    // delegation that arrives without one is given a stable id here, before any event
+    // is written and before the inner execution reads it: both must agree.
+    const executionId = input.executionId ?? `exec-${Date.now()}`;
+    const request: ExpertExecutionRequest = { ...input, executionId };
     this.openObservabilityStream(request);
     let result: ExpertResult;
     try {
       result = await this.executeExpertInner(request);
     } catch (error) {
-      this.emitObservability(request.executionId, request.role, request.model, "failed", {
+      this.lastGuardrails.delete(executionId);
+      this.emitObservability(executionId, request.role, request.model, "failed", {
         status: "failed",
         text: boundedText(error instanceof Error ? error.message : String(error)),
       });
-      await this.closeObservabilityStream(request.executionId);
+      await this.closeObservabilityStream(executionId);
       throw error;
     }
-    this.emitObservability(request.executionId, request.role, request.model ?? result.model, terminalKindFor(result), {
+    result = this.withGuardrailEvidence(executionId, result);
+    this.emitObservability(executionId, request.role, request.model ?? result.model, terminalKindFor(result), {
       status: result.status,
       ...(result.executionMetadata?.failureType ? { failureType: String(result.executionMetadata.failureType) } : {}),
       ...(typeof result.executionMetadata?.durationMs === "number" ? { durationMs: result.executionMetadata.durationMs } : {}),
     });
-    await this.closeObservabilityStream(request.executionId);
+    await this.closeObservabilityStream(executionId);
     return result;
   }
 
@@ -636,6 +653,130 @@ export class PiExpertRuntime implements ExpertRuntime {
     if (!state) return;
     await state.chain;
     this.observabilityStreams.delete(executionId);
+  }
+
+  /**
+   * Fold the runtime's own guardrail observations into a finished result. The attempt
+   * summary is the expert's word; these numbers are what was actually seen, and the
+   * escalation and learning paths must not have to trust the former for the latter.
+   */
+  private withGuardrailEvidence(executionId: string | undefined, result: ExpertResult): ExpertResult {
+    if (executionId === undefined) return result;
+    const guardrails = this.lastGuardrails.get(executionId);
+    this.lastGuardrails.delete(executionId);
+    if (!guardrails) return result;
+    return {
+      ...result,
+      executionMetadata: {
+        ...result.executionMetadata,
+        toolCalls: guardrails.toolCalls,
+        toolErrors: guardrails.toolErrors,
+        ...(guardrails.attention.length ? { attention: guardrails.attention } : {}),
+      },
+    };
+  }
+
+  /**
+   * Record one non-blocking struggle warning. Each code fires at most once per execution
+   * (budget fractions are keyed by their own threshold) and the list is capped. Nothing
+   * here stops the expert: a false positive costs one wasted look, while an auto-abort
+   * would destroy good work, so the mechanism deliberately stops short of it.
+   */
+  private raiseAttention(
+    entry: ActiveExpertSession,
+    request: ExpertExecutionRequest,
+    code: ExpertAttention["code"],
+    detail: string,
+    extra: Partial<ExpertAttention> = {},
+    options: { nudge?: boolean } = {},
+  ): ExpertAttention | undefined {
+    const keyOf = (item: ExpertAttention) =>
+      item.code === "budget_fraction" ? `budget_fraction:${item.budgetFractionUsed ?? 0}` : item.code;
+    const key = code === "budget_fraction" ? `budget_fraction:${extra.budgetFractionUsed ?? 0}` : code;
+    if (entry.attention.some((item) => keyOf(item) === key)) return undefined;
+    const attention: ExpertAttention = {
+      code,
+      at: new Date().toISOString(),
+      detail: detail.slice(0, 500),
+      toolCalls: entry.toolCalls,
+      toolErrors: entry.toolErrors,
+      ...extra,
+    };
+    entry.attention = [...entry.attention.slice(-7), attention];
+    this.emitObservability(request.executionId, request.role, request.model, "attention", { text: attention.detail });
+    if (options.nudge) this.nudgeExpert(entry, request, attention);
+    return attention;
+  }
+
+  /** A bounded steer, at most twice per execution, and only if the session can take one. */
+  private nudgeExpert(entry: ActiveExpertSession, request: ExpertExecutionRequest, attention: ExpertAttention): void {
+    if (!this.options.config.security.guardrails.nudgeExpert) return;
+    if (entry.nudgesSent >= 2 || typeof entry.session?.steer !== "function") return;
+    entry.nudgesSent += 1;
+    attention.nudgedExpert = true;
+    const minutes = typeof request.timeoutMs === "number" ? Math.round(request.timeoutMs / 60_000) : undefined;
+    const budget = attention.budgetFractionUsed
+      ? ` You have used about ${Math.round(attention.budgetFractionUsed * 100)}%${minutes ? ` of a ${minutes}-minute` : ""} budget.`
+      : "";
+    void entry.session
+      .steer(
+        `Council guardrail: ${attention.detail}.${budget} Do not repeat an identical failing call. If the goal is still reachable with your assigned tools, say in one sentence what you will do differently and continue. If it is not reachable, call report_and_stop now with the exact blocker and at least one concrete finding. If the direction itself is ambiguous, call request_decision.`,
+      )
+      ?.catch(() => undefined);
+  }
+
+  private evaluateToolGuardrails(entry: ActiveExpertSession, request: ExpertExecutionRequest): void {
+    const guardrails = this.options.config.security.guardrails;
+    if (!guardrails.warnHost) return;
+    if (entry.consecutiveToolErrors >= guardrails.consecutiveToolFailures) {
+      this.raiseAttention(
+        entry,
+        request,
+        "consecutive_tool_failures",
+        `${entry.consecutiveToolErrors} consecutive tool calls failed (${entry.toolErrors} of ${entry.toolCalls} observed).`,
+        { consecutiveToolErrors: entry.consecutiveToolErrors },
+        { nudge: true },
+      );
+    }
+    if (entry.toolCalls >= guardrails.minCallsForRatio && entry.toolErrors / entry.toolCalls >= guardrails.failureRatio) {
+      const ratio = Math.round((entry.toolErrors / entry.toolCalls) * 100);
+      this.raiseAttention(
+        entry,
+        request,
+        "failure_ratio_high",
+        `${entry.toolErrors} of ${entry.toolCalls} observed tool calls failed (${ratio}%).`,
+        {},
+        { nudge: true },
+      );
+    }
+  }
+
+  /** Arm one timer per configured budget fraction; every timer is cleared on teardown. */
+  private armBudgetWarnings(entry: ActiveExpertSession, request: ExpertExecutionRequest): void {
+    const guardrails = this.options.config.security.guardrails;
+    const budget = request.timeoutMs;
+    if (!guardrails.warnHost || typeof budget !== "number" || budget <= 0) return;
+    const fractions = [...new Set(guardrails.budgetFractions)].sort((a, b) => a - b);
+    const highest = fractions[fractions.length - 1];
+    for (const fraction of fractions) {
+      const delay = Math.max(0, Math.round(budget * fraction) - (Date.now() - entry.startedAt));
+      entry.budgetTimers.push(
+        setTimeout(() => {
+          this.raiseAttention(
+            entry,
+            request,
+            "budget_fraction",
+            `${Math.round(fraction * 100)}% of the execution budget used with no result yet.`,
+            { budgetFractionUsed: fraction, toolCalls: entry.toolCalls, toolErrors: entry.toolErrors },
+            { nudge: fraction === highest },
+          );
+        }, delay),
+      );
+    }
+  }
+
+  private clearBudgetWarnings(entry: ActiveExpertSession | undefined): void {
+    for (const timer of entry?.budgetTimers ?? []) clearTimeout(timer);
   }
 
   /** Tool arguments reach the stream only when the operator turned redaction off. */
@@ -817,6 +958,13 @@ export class PiExpertRuntime implements ExpertRuntime {
         abortRequested: false,
         stopRequested: false,
         timedOut: false,
+        toolCalls: 0,
+        toolErrors: 0,
+        consecutiveToolErrors: 0,
+        attention: [],
+        nudgesSent: 0,
+        budgetTimers: [],
+        timeoutMs: request.timeoutMs,
       };
       this.activeSessions.set(executionKey, entry);
       const available = await this.listAvailableModels();
@@ -1059,9 +1207,26 @@ export class PiExpertRuntime implements ExpertRuntime {
           isError?: boolean;
           message?: { role?: string; content?: unknown };
         };
-        if (e?.type === "tool_execution_end" && e.toolName && entry!.onceTools?.has(e.toolName)) {
-          entry!.onceTools!.delete(e.toolName);
-          this.deactivateTool(entry!, e.toolName);
+        if (e?.type === "tool_execution_end" && e.toolName) {
+          // Struggle detection counts what the runtime itself observed. That is the only
+          // honest source: the expert's own account of how many calls failed cannot be
+          // verified, and it used to be the whole of our `toolErrors` telemetry, which
+          // was really a 0/1 flag for "was this attempt classed as a tool error".
+          const interactionTool = e.toolName === "report_and_stop" || e.toolName === "request_decision" || e.toolName === "request_tool";
+          if (!interactionTool) {
+            entry!.toolCalls += 1;
+            if (e.isError === true) {
+              entry!.toolErrors += 1;
+              entry!.consecutiveToolErrors += 1;
+            } else {
+              entry!.consecutiveToolErrors = 0;
+            }
+            this.evaluateToolGuardrails(entry!, request);
+          }
+          if (entry!.onceTools?.has(e.toolName)) {
+            entry!.onceTools!.delete(e.toolName);
+            this.deactivateTool(entry!, e.toolName);
+          }
         }
         // The interactive expert window: mirror activity into a bounded event file a
         // second terminal can follow. Read-only with respect to the run - it cannot
@@ -1098,6 +1263,9 @@ export class PiExpertRuntime implements ExpertRuntime {
         await session!.prompt(prompt);
         await session!.waitForIdle?.();
       })();
+      // Budget warnings are armed against the deadline the Main Agent chose, so a
+      // long quiet run is visible before it expires instead of only after.
+      this.armBudgetWarnings(entry, request);
       // After a forced abort settle the prompt promise may never resolve;
       // its rejection must not surface as an unhandled rejection.
       void execution.catch(() => undefined);
@@ -1222,6 +1390,17 @@ export class PiExpertRuntime implements ExpertRuntime {
       };
     } finally {
       entry?.unsubscribe?.();
+      this.clearBudgetWarnings(entry);
+      if (entry) {
+        // The entry is removed from activeSessions here, so the guardrail observations
+        // are handed off to the wrapper, which merges them into whichever result the
+        // inner path produced (success, partial, timeout, abort, or thrown error).
+        this.lastGuardrails.set(executionKey, {
+          toolCalls: entry.toolCalls,
+          toolErrors: entry.toolErrors,
+          attention: entry.attention.map((item) => ({ ...item })),
+        });
+      }
       this.activeSessions.delete(executionKey);
       session?.dispose();
     }
@@ -1412,6 +1591,12 @@ export class PiExpertRuntime implements ExpertRuntime {
       workspace: entry.workspace.root,
       isolated: entry.workspace.isolated,
       ...(entry.pendingInteraction ? { pendingInteraction: entry.pendingInteraction } : {}),
+      toolCalls: entry.toolCalls,
+      toolErrors: entry.toolErrors,
+      ...(typeof entry.timeoutMs === "number" && entry.timeoutMs > 0
+        ? { budgetFractionUsed: Math.min(1, (Date.now() - entry.startedAt) / entry.timeoutMs) }
+        : {}),
+      ...(entry.attention.length ? { attention: entry.attention.map((item) => ({ ...item })) } : {}),
       ...(filesChangedSoFar.length ? { filesChangedSoFar: filesChangedSoFar.slice(0, 200) } : {}),
     };
   }

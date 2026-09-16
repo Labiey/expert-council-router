@@ -1656,3 +1656,139 @@ describe("python host interpreter fallback", () => {
   });
 
 });
+
+describe("guardrails: observed tool failures, budget warnings, bounded nudges", () => {
+  type Harness = {
+    sdk: PiSdkLike;
+    modelRuntime: { getAvailable: () => unknown[]; getModel: () => unknown };
+    steers: string[];
+  };
+
+  function guardrailHarness(events: Array<Record<string, unknown>>, delayMs = 0): Harness {
+    const steers: string[] = [];
+    const state = {
+      messages: [] as Array<{ role: string; content: Array<Record<string, unknown>> }>,
+      model: { provider: "p", id: "m", name: "Mock", reasoning: true },
+    };
+    const modelRuntime = {
+      getAvailable: () => [
+        { provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+      ],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime } as unknown as PiSdkLike["ModelRuntime"],
+      SessionManager: { inMemory: () => ({}) } as unknown as PiSdkLike["SessionManager"],
+      createAgentSession: (async () => ({
+        session: {
+          prompt: async () => {
+            for (const event of events) {
+              (state as unknown as { fire?: (e: Record<string, unknown>) => void }).fire?.(event);
+            }
+            if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+            state.messages = [
+              { role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "Done.", findings: ["looked"] }) }] },
+            ];
+          },
+          waitForIdle: async () => {},
+          dispose: () => {},
+          subscribe: (listener: (event: unknown) => void) => {
+            (state as unknown as { fire?: (e: Record<string, unknown>) => void }).fire = listener;
+            return () => {};
+          },
+          setActiveToolsByName: () => {},
+          steer: async (text: string) => { steers.push(text); },
+          state,
+        },
+      })) as PiSdkLike["createAgentSession"],
+    };
+    return { sdk, modelRuntime: modelRuntime as unknown as Harness["modelRuntime"], steers };
+  }
+
+  async function runGuardrail(harness: Harness, overrides: Record<string, unknown> = {}) {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-guard-"));
+    try {
+      const runtime = await PiExpertRuntime.create({
+        cwd: dir,
+        config: parseCouncilConfig(overrides),
+        sdk: harness.sdk,
+        modelRuntime: harness.modelRuntime as never,
+        roleDirectory,
+        observabilityDir: dir,
+      });
+      return await runtime.executeExpert({
+        executionId: "exec_guard", role: "scout", task: "Trace it", model: "p/m",
+        tools: ["read"], skills: [], readOnly: true, workspace: dir, timeoutMs: 20_000, attempt: 1,
+      });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }
+
+  const failures = (count: number, okFirst = true) =>
+    Array.from({ length: count }, (_, i) => ({
+      type: "tool_execution_end", toolName: "bash", toolCallId: `c${i}`,
+      isError: okFirst ? i !== 0 : true,
+    }));
+
+  it("counts observed tool failures and raises one consecutive-failure warning with a bounded nudge", async () => {
+    const harness = guardrailHarness(failures(4, false));
+    const result = await runGuardrail(harness);
+    expect(result.executionMetadata?.toolCalls).toBe(4);
+    expect(result.executionMetadata?.toolErrors).toBe(4);
+    const attention = result.executionMetadata?.attention ?? [];
+    expect(attention.map((item) => item.code)).toEqual(["consecutive_tool_failures"]);
+    expect(attention[0]!.detail).toContain("consecutive tool calls failed");
+    expect(attention[0]!.nudgedExpert).toBe(true);
+    // One nudge, not one per failing call, and it names the real escape hatches.
+    expect(harness.steers).toHaveLength(1);
+    expect(harness.steers[0]).toContain("Council guardrail");
+    expect(harness.steers[0]).toContain("report_and_stop");
+  });
+
+  it("raises the failure-ratio rule once enough calls have been observed", async () => {
+    // Alternating success/failure never reaches three in a row, so only the ratio fires.
+    const alternating = Array.from({ length: 8 }, (_, i) => ({
+      type: "tool_execution_end", toolName: "bash", toolCallId: `a${i}`, isError: i % 2 === 1,
+    }));
+    const harness = guardrailHarness(alternating);
+    const result = await runGuardrail(harness);
+    const codes = (result.executionMetadata?.attention ?? []).map((item) => item.code);
+    expect(codes).toEqual(["failure_ratio_high"]);
+    expect(harness.steers).toHaveLength(1);
+  });
+
+  it("warns at each configured budget fraction and nudges only at the highest one", async () => {
+    // 60% and 85% of a 200ms budget, with a run that outlives both.
+    const harness = guardrailHarness([], 350);
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-guard-budget-"));
+    try {
+      const runtime = await PiExpertRuntime.create({
+        cwd: dir, config: parseCouncilConfig({}), sdk: harness.sdk,
+        modelRuntime: harness.modelRuntime as never, roleDirectory, observabilityDir: dir,
+      });
+      const result = await runtime.executeExpert({
+        executionId: "exec_guard_budget", role: "scout", task: "Trace it", model: "p/m",
+        tools: ["read"], skills: [], readOnly: true, workspace: dir, timeoutMs: 200, attempt: 1,
+      });
+      const budget = (result.executionMetadata?.attention ?? []).filter((item) => item.code === "budget_fraction");
+      expect(budget.map((item) => item.budgetFractionUsed)).toEqual([0.6, 0.85]);
+      expect(budget.filter((item) => item.nudgedExpert)).toHaveLength(1);
+      expect(harness.steers).toHaveLength(1);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("still counts tool calls when struggle detection is switched off", async () => {
+    const harness = guardrailHarness(failures(4, false));
+    const result = await runGuardrail(harness, {
+      security: { guardrails: { warnHost: false, nudgeExpert: true, consecutiveToolFailures: 3, minCallsForRatio: 8, failureRatio: 0.5, budgetFractions: [0.6, 0.85] } },
+    });
+    expect(result.executionMetadata?.toolCalls).toBe(4);
+    expect(result.executionMetadata?.toolErrors).toBe(4);
+    expect(result.executionMetadata?.attention ?? []).toEqual([]);
+    expect(harness.steers).toHaveLength(0);
+  });
+});
