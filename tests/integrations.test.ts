@@ -261,7 +261,73 @@ describe("CLI expert-window watch", () => {
       );
       expect(code).toBe(0);
       expect(Date.now() - started).toBeLessThan(5_000);
-      expect(err.join("")).toContain("stream closed (failed)");
+      expect(err.join("")).toContain("stream closed (failed, no final marker");
+    });
+  });
+
+  it("follows a retried delegation through both attempts and closes on the final marker", async () => {
+    const stream = [
+      line("started", { attempt: 1 }),
+      line("failed", { attempt: 1, status: "failed", failureType: "provider_error" }),
+      line("started", { attempt: 2, model: "p/other" }),
+      line("tool_started", { attempt: 2, tool: "grep" }),
+      line("completed", { attempt: 2, status: "success" }),
+      line("delegation_final", { role: "scout" }),
+    ].join("\n") + "\n";
+    await withStream(stream, async (dir) => {
+      const { io, out, err } = capture();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "8000"],
+        io, undefined, { formatEvent: (frame) => `${frame.kind}${frame.attempt ? `#${frame.attempt}` : ""}` },
+      );
+      expect(code).toBe(0);
+      expect(out.join("").trim().split("\n")).toEqual([
+        "started#1", "failed#1", "started#2", "tool_started#2", "completed#2", "delegation_final",
+      ]);
+      // A final marker is a fact; the quiet-period fallback must not have been needed.
+      expect(err.join("")).not.toContain("no final marker");
+    });
+  });
+
+  it("keeps the window open while a delegation escalates to another model", async () => {
+    // Defect #17: the first per-attempt terminal event used to end the follow, so an
+    // operator saw the failure and never saw the attempt that answered the task.
+    await withStream(`${line("started", { attempt: 1 })}
+${line("failed", { attempt: 1, status: "failed", failureType: "provider_error" })}
+`, async (dir) => {
+      const { io, out, err } = capture();
+      const { appendFile } = await import("node:fs/promises");
+      const file = path.join(dir, "exec_watch.jsonl");
+      const running = runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "8000"],
+        io, undefined, { formatEvent: (frame) => frame.kind },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      await appendFile(file, `${line("started", { attempt: 2 })}
+${line("completed", { attempt: 2, status: "success" })}
+${line("delegation_final")}
+`, { encoding: "utf8" });
+      expect(await running).toBe(0);
+      expect(out.join("")).toContain("delegation_final");
+      expect(out.join("")).toContain("completed");
+      expect(err.join("")).not.toContain("no final marker");
+    });
+  });
+
+  it("closes a legacy stream with no final marker once it stops growing", async () => {
+    await withStream(`${line("started")}
+${line("failed", { status: "failed", failureType: "timeout" })}
+`, async (dir) => {
+      const { io, err } = capture();
+      const started = Date.now();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "20000"],
+        io, undefined, { formatEvent: (frame) => frame.kind },
+      );
+      expect(code).toBe(0);
+      expect(err.join("")).toContain("no final marker and no growth for 750ms");
+      // Bounded by quiet detection, never by the 20-second ceiling.
+      expect(Date.now() - started).toBeLessThan(6_000);
     });
   });
 
@@ -411,7 +477,7 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json");
+      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json");
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -428,7 +494,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.5 --json");
+      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json");
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });

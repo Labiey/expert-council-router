@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -1815,5 +1815,78 @@ describe("guardrails: observed tool failures, budget warnings, bounded nudges", 
     expect(result.executionMetadata?.toolErrors).toBe(4);
     expect(result.executionMetadata?.attention ?? []).toEqual([]);
     expect(harness.steers).toHaveLength(0);
+  });
+});
+
+describe("observability stream marks attempts and can be closed by the council", () => {
+  it("carries the attempt number on every event and writes a delegation-level terminator", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-stream-"));
+    const state = {
+      messages: [] as Array<{ role: string; content: Array<Record<string, unknown>> }>,
+      model: { provider: "p", id: "m", name: "Mock", reasoning: true },
+    };
+    const modelRuntime = {
+      getAvailable: () => [
+        { provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+      ],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime } as unknown as PiSdkLike["ModelRuntime"],
+      SessionManager: { inMemory: () => ({}) } as unknown as PiSdkLike["SessionManager"],
+      createAgentSession: (async () => ({
+        session: {
+          prompt: async () => {
+            state.messages = [
+              { role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "Done.", findings: ["read it"] }) }] },
+            ];
+          },
+          waitForIdle: async () => {},
+          dispose: () => {},
+          subscribe: () => () => {},
+          setActiveToolsByName: () => {},
+          state,
+        },
+      })) as PiSdkLike["createAgentSession"],
+    };
+    try {
+      const runtime = await PiExpertRuntime.create({
+        cwd: dir,
+        config: parseCouncilConfig({ security: { observability: { expertWindow: "interactive", streamToHost: true, redactToolArgs: true } } }),
+        sdk,
+        modelRuntime: modelRuntime as never,
+        roleDirectory,
+        observabilityDir: dir,
+      });
+      const readEvents = async (file: string) =>
+        (await readFile(file, "utf8")).trim().split(/\r?\n/).map((line) => JSON.parse(line) as Record<string, unknown>);
+
+      const result = await runtime.executeExpert({
+        executionId: "exec_attempt_two", role: "scout", task: "Trace it", model: "p/m",
+        tools: ["read"], skills: [], readOnly: true, workspace: dir, timeoutMs: 20_000, attempt: 2,
+      });
+      expect(result.status).toBe("success");
+      const file = path.join(dir, "exec_attempt_two.jsonl");
+      const events = await readEvents(file);
+      // The attempt counter travels with every event of this attempt, so a window can
+      // tell an escalation apart from a fresh delegation.
+      expect(events.length).toBeGreaterThan(1);
+      expect(events.every((event) => event.attempt === 2)).toBe(true);
+      expect(events[0]!.kind).toBe("started");
+      expect(events[events.length - 1]!.kind).toBe("completed");
+
+      await runtime.finalizeDelegation("exec_attempt_two", "scout");
+      const closed = await readEvents(file);
+      expect(closed[closed.length - 1]).toMatchObject({ kind: "delegation_final", role: "scout" });
+      // The terminator belongs to the delegation, so it must not claim an attempt.
+      expect(closed[closed.length - 1]!.attempt).toBeUndefined();
+
+      // A delegation that never streamed must not gain a stray one-line file.
+      await runtime.finalizeDelegation("exec_never_ran", "scout");
+      expect(existsSync(path.join(dir, "exec_never_ran.jsonl"))).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

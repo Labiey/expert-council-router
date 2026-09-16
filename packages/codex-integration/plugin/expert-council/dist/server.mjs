@@ -312513,7 +312513,19 @@ var ExpertCouncilService = class {
       ...result.executionMetadata?.attention?.length ? { attentionCodes: [...new Set(result.executionMetadata.attention.map((item) => item.code))] } : {},
       ...approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}
     });
+    await this.finalizeObservability(id, result.role);
     return result;
+  }
+  /**
+   * Let observers close their windows on a fact. Best-effort by contract: observability
+   * must never change an outcome, so a runtime that cannot (or will not) mark the end is
+   * simply ignored, and a watcher falls back to its quiet-period rule.
+   */
+  async finalizeObservability(executionId2, role2) {
+    try {
+      await this.runtime.finalizeDelegation?.(executionId2, role2);
+    } catch {
+    }
   }
   /**
    * Record the current runtime status of a model into the shared assessment:
@@ -319357,11 +319369,13 @@ var PiExpertRuntime = class _PiExpertRuntime {
     const state2 = this.observabilityState(request.executionId);
     if (!state2 || request.executionId === void 0)
       return;
+    state2.attempt = request.attempt;
     this.appendObservability(state2, {
       t: (/* @__PURE__ */ new Date()).toISOString(),
       executionId: request.executionId,
       role: request.role,
       ...request.model ? { model: request.model } : {},
+      ...request.attempt === void 0 ? {} : { attempt: request.attempt },
       kind: "started"
     });
   }
@@ -319387,6 +319401,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       executionId: executionId2,
       role: role2,
       ...model ? { model } : {},
+      ...state2.attempt === void 0 ? {} : { attempt: state2.attempt },
       kind,
       ...fields
     });
@@ -319410,6 +319425,29 @@ var PiExpertRuntime = class _PiExpertRuntime {
       return;
     await state2.chain;
     this.observabilityStreams.delete(executionId2);
+  }
+  /**
+   * Tell observers that the delegation has ended, so a window can close on a fact rather
+   * than on a guess. Writes only when this process actually streamed the execution: a
+   * delegation that failed before any attempt ran has nothing for an observer to conclude,
+   * and it must not gain a stray one-line file.
+   */
+  async finalizeDelegation(executionId2, role2) {
+    const state2 = this.observabilityState(executionId2);
+    if (!state2)
+      return;
+    try {
+      await stat11(state2.file);
+    } catch {
+      return;
+    }
+    this.appendObservability(state2, {
+      t: (/* @__PURE__ */ new Date()).toISOString(),
+      executionId: executionId2,
+      role: role2,
+      kind: "delegation_final"
+    });
+    await this.closeObservabilityStream(executionId2);
   }
   /**
    * Fold the runtime's own guardrail observations into a finished result. The attempt
@@ -320592,7 +320630,7 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.8.5" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: "0.8.6" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

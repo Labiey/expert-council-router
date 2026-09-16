@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatExpertEvent,
   presentCouncilPlan,
   presentResourceInventory,
   type CouncilPlan,
@@ -103,5 +104,32 @@ describe("compact host presentation", () => {
     expect(compact.experts[0]).not.toHaveProperty("alternatives");
     expect(compact.experts[0]).not.toHaveProperty("score");
     expect(presentCouncilPlan(plan, "full")).toBe(plan);
+  });
+});
+
+describe("formatExpertEvent - the renderer shipped in core, not a CLI stub", () => {
+  const at = "2026-09-16T11:18:05.123Z";
+  const base = { t: at, executionId: "exec_1" };
+
+  it("renders tool activity, narration, and waits with the model that produced them", () => {
+    expect(formatExpertEvent({ ...base, role: "scout", model: "p/m", kind: "tool_started", tool: "grep" })).toBe("11:18:05 [scout p/m] tool grep");
+    expect(formatExpertEvent({ ...base, role: "scout", model: "p/m", kind: "tool_finished", tool: "grep", ok: false })).toBe("11:18:05 [scout p/m] tool grep FAILED");
+    expect(formatExpertEvent({ ...base, role: "scout", model: "p/m", kind: "assistant_text", text: "checking the build" })).toBe("11:18:05 [scout p/m] says: checking the build");
+    expect(formatExpertEvent({ ...base, role: "scout", model: "p/m", kind: "interaction_opened", text: "which one?" })).toContain("WAITING FOR HOST");
+  });
+
+  it("labels an attempt only once a delegation has more than one", () => {
+    expect(formatExpertEvent({ ...base, role: "scout", model: "p/m", kind: "started" })).toBe("11:18:05 [scout p/m] started");
+    expect(formatExpertEvent({ ...base, role: "scout", model: "p/m", kind: "started", attempt: 1 })).toBe("11:18:05 [scout p/m] started");
+    expect(formatExpertEvent({ ...base, role: "worker", model: "p/other", kind: "started", attempt: 2 })).toBe("11:18:05 [worker p/other #2] started");
+  });
+
+  it("names the delegation-level terminator", () => {
+    expect(formatExpertEvent({ ...base, role: "worker", kind: "delegation_final" })).toContain("delegation finished");
+  });
+
+  it("never lets one event occupy more than a single terminal line", () => {
+    const noisy = formatExpertEvent({ ...base, role: "scout", kind: "assistant_text", text: "first line\nsecond line" });
+    expect(noisy.includes("\n")).toBe(false);
   });
 });

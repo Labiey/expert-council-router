@@ -1828,3 +1828,35 @@ describe("delegation forensics: attempt history, aggregate ceiling, attention vi
     await handle.result;
   });
 });
+
+describe("delegation lifetime is reported to observers", () => {
+  it("tells the runtime once when a delegation ends, even after a retry", async () => {
+    const runtime = new MockRuntime([model("cheap", "one"), model("quality", "two")], [
+      {
+        status: "failed", role: "reviewer", model: "cheap/one", summary: "gate failed",
+        executionMetadata: { failureType: "test_failure" },
+      },
+      { status: "success", role: "reviewer", model: "quality/two", summary: "reviewed" },
+    ]);
+    const finalized: string[] = [];
+    (runtime as unknown as { finalizeDelegation?: (id: string, role: string) => Promise<void> }).finalizeDelegation =
+      async (executionId: string) => { finalized.push(executionId); };
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles }, retry: { maxAttempts: 3 } });
+    const result = await service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 }).result;
+    expect(result.status).toBe("success");
+    // One marker for the delegation, not one per attempt: that is the whole point of it.
+    expect(finalized).toEqual([result.executionMetadata?.executionId]);
+  });
+
+  it("never lets an observability failure change a delegation's outcome", async () => {
+    const runtime = new MockRuntime([model("cheap", "one")], [
+      { status: "success", role: "reviewer", model: "cheap/one", summary: "reviewed" },
+    ]);
+    (runtime as unknown as { finalizeDelegation?: (id: string, role: string) => Promise<void> }).finalizeDelegation =
+      async () => { throw new Error("stream on fire"); };
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const result = await service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 }).result;
+    expect(result.status).toBe("success");
+    expect(result.summary).toBe("reviewed");
+  });
+});

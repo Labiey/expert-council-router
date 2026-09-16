@@ -12,6 +12,7 @@ import {
   type CouncilConfig,
   type ExpertExecutionRequest,
   type ExpertAttention,
+  type ExpertRole,
   type ExpertEventKind,
   type ExpertObservabilityEvent,
   type ExpertResult,
@@ -86,6 +87,8 @@ interface ObservabilityStreamState {
   truncated?: boolean;
   /** Serializes appends so events cannot interleave or be lost. */
   chain: Promise<void>;
+  /** Attempt number carried onto every event, so a retry is visible in the window. */
+  attempt?: number;
 }
 
 /** Collapse a value to one bounded line: no control characters, no multi-line sprawl on disk. */
@@ -597,11 +600,14 @@ export class PiExpertRuntime implements ExpertRuntime {
   private openObservabilityStream(request: ExpertExecutionRequest): void {
     const state = this.observabilityState(request.executionId);
     if (!state || request.executionId === undefined) return;
+    // Each attempt re-opens the same file, so the counter travels with the events it writes.
+    state.attempt = request.attempt;
     this.appendObservability(state, {
       t: new Date().toISOString(),
       executionId: request.executionId,
       role: request.role,
       ...(request.model ? { model: request.model } : {}),
+      ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
       kind: "started",
     });
   }
@@ -633,6 +639,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       executionId,
       role,
       ...(model ? { model } : {}),
+      ...(state.attempt === undefined ? {} : { attempt: state.attempt }),
       kind,
       ...fields,
     });
@@ -657,6 +664,29 @@ export class PiExpertRuntime implements ExpertRuntime {
     if (!state) return;
     await state.chain;
     this.observabilityStreams.delete(executionId);
+  }
+
+  /**
+   * Tell observers that the delegation has ended, so a window can close on a fact rather
+   * than on a guess. Writes only when this process actually streamed the execution: a
+   * delegation that failed before any attempt ran has nothing for an observer to conclude,
+   * and it must not gain a stray one-line file.
+   */
+  async finalizeDelegation(executionId: string, role: ExpertRole): Promise<void> {
+    const state = this.observabilityState(executionId);
+    if (!state) return;
+    try {
+      await stat(state.file);
+    } catch {
+      return;
+    }
+    this.appendObservability(state, {
+      t: new Date().toISOString(),
+      executionId,
+      role,
+      kind: "delegation_final",
+    });
+    await this.closeObservabilityStream(executionId);
   }
 
   /**

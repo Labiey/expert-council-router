@@ -133,9 +133,22 @@ export function presentCouncilPlan(plan: CouncilPlan, detail: PresentationDetail
  * Deliberately ANSI-free and single-line: it must survive Windows pipes, redirect
  * to a file, and interleaving with other sources without corrupting output.
  */
+/**
+ * Render one expert event as a single terminal line. The clamp at the end is deliberate:
+ * text fields are bounded where the runtime writes them, but a hand-edited, truncated, or
+ * future-versioned stream must never push a second line into an operator's window and
+ * desynchronise it from the rest of the tail.
+ */
 export function formatExpertEvent(event: ExpertObservabilityEvent): string {
+  return formatExpertEventLine(event)
+    .replace(/[\u0000-\u001f\u007f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function formatExpertEventLine(event: ExpertObservabilityEvent): string {
   const clock = typeof event.t === "string" && event.t.length >= 19 ? event.t.slice(11, 19) : "--:--:--";
-  const head = `${clock} [${event.role}${event.model ? ` ${event.model}` : ""}]`;
+  const head = `${clock} [${event.role}${event.model ? ` ${event.model}` : ""}${typeof event.attempt === "number" && event.attempt > 1 ? ` #${event.attempt}` : ""}]`;
   switch (event.kind) {
     case "started":
       return `${head} started`;
@@ -145,6 +158,8 @@ export function formatExpertEvent(event: ExpertObservabilityEvent): string {
       return `${head} tool ${event.tool ?? "?"} ${event.ok === false ? "FAILED" : "ok"}`;
     case "assistant_text":
       return `${head} says: ${event.text ?? ""}`;
+    case "delegation_final":
+      return `${head} delegation finished (no further attempts)`;
     case "interaction_opened":
       return `${head} WAITING FOR HOST: ${event.text ?? ""}`;
     case "interaction_answered":

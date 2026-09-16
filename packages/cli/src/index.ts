@@ -32,6 +32,8 @@ export interface ExpertEventFrame {
   /** `kind` is intentionally widened: a future event kind must not break the tail. */
   kind: string;
   model?: string;
+  /** Attempt number, when the runtime recorded one (a delegation can span several). */
+  attempt?: number;
   tool?: string;
   ok?: boolean;
   text?: string;
@@ -124,6 +126,15 @@ function human(command: string, value: unknown): string {
 
 /** Kinds that close a stream; `watch --follow` must stop at the first one it sees. */
 const WATCH_TERMINAL_KINDS = new Set(["completed", "failed", "stopped", "stream_truncated"]);
+/** Written by a runtime that knows the delegation, not merely one attempt, has ended. */
+const WATCH_FINAL_KIND = "delegation_final";
+/**
+ * A stream that cannot write a final marker is judged closed only after it has stopped
+ * growing for this long. Stopping at the first per-attempt terminal event cut observers off
+ * mid-delegation - which is precisely what a retried or escalated run looks like - and a
+ * runtime that died without writing anything is bounded by --timeout-ms instead.
+ */
+const WATCH_QUIET_MS = 750;
 const WATCH_STREAM_SUFFIX = ".jsonl";
 /** Why an operator sees nothing: the prerequisite is a configuration the runtime honoured at start. */
 const WATCH_PREREQUISITE_HINT = 'The runtime writes this stream only for a run started while security.observability.expertWindow is "interactive" (the default "off" writes nothing).';
@@ -266,6 +277,7 @@ function parseExpertEvent(line: string): ExpertEventFrame | undefined {
     ...(text("status") !== undefined ? { status: text("status") } : {}),
     ...(text("failureType") !== undefined ? { failureType: text("failureType") } : {}),
     ...(typeof frame.durationMs === "number" ? { durationMs: frame.durationMs } : {}),
+    ...(typeof frame.attempt === "number" ? { attempt: frame.attempt } : {}),
   };
 }
 
@@ -295,6 +307,9 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   // lets the partial-line carry-over compile.
   let pending: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let terminal: string | undefined;
+  let finalSeen = false;
+  let lastGrowthAt = Date.now();
+  let legacyClose = false;
   let vanished = false;
   let malformed = 0;
   let printed = 0;
@@ -325,7 +340,8 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
         const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
         if (line.trim() === "") continue;
         const event = parseExpertEvent(line);
-        if (event !== undefined && WATCH_TERMINAL_KINDS.has(event.kind)) terminal ??= event.kind;
+        if (event !== undefined && event.kind === WATCH_FINAL_KIND) finalSeen = true;
+        else if (event !== undefined && WATCH_TERMINAL_KINDS.has(event.kind)) terminal ??= event.kind;
         if (json) {
           io.stdout.write(`${line}\n`);
           printed += 1;
@@ -337,8 +353,16 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
         }
       }
     }
-    if (terminal !== undefined) break;
+    if (finalSeen) break;
     if (!follow) break;
+    // A per-attempt terminal is not the end of the story: the council may escalate to
+    // another model, which keeps appending to this same stream. Only a file that has
+    // stopped growing counts as finished when no final marker was written.
+    if (chunk.data.length > 0) lastGrowthAt = Date.now();
+    else if (terminal !== undefined && Date.now() - lastGrowthAt >= WATCH_QUIET_MS) {
+      legacyClose = true;
+      break;
+    }
     if (Date.now() >= deadline) {
       io.stderr.write(`[watch] ${executionId}: stopped after --timeout-ms ${timeoutMs} (${printed} event line(s) shown)\n`);
       break;
@@ -350,7 +374,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
     return 1;
   }
   if (terminal !== undefined) {
-    io.stderr.write(`[watch] ${executionId}: stream closed (${terminal})\n`);
+    io.stderr.write(`[watch] ${executionId}: stream closed (${terminal}${legacyClose ? `, no final marker and no growth for ${WATCH_QUIET_MS}ms` : ""})\n`);
   }
   if (!follow && pending.length > 0) {
     io.stderr.write(`[watch] ${executionId}: held back ${pending.length} trailing byte(s) with no newline yet (still being written)\n`);

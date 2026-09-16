@@ -140,7 +140,13 @@ export type ExpertEventKind =
   | "stopped"
   | "completed"
   | "failed"
-  | "stream_truncated";
+  | "stream_truncated"
+  /**
+   * Written once, when the delegation itself is over. A per-attempt terminal event cannot
+   * say that: a retried or escalated delegation emits one per attempt, so a watcher that
+   * stopped on the first would close its window exactly when the interesting part begins.
+   */
+  | "delegation_final";
 
 /**
  * A single line of the cross-process observability stream written when
@@ -154,6 +160,8 @@ export interface ExpertObservabilityEvent {
   executionId: string;
   role: string;
   model?: string;
+  /** Which attempt of this delegation produced the event (1-based; absent on delegation-level events). */
+  attempt?: number;
   kind: ExpertEventKind;
   tool?: string;
   ok?: boolean;
@@ -301,6 +309,12 @@ export interface ExpertRuntime {
   /** Resolve a running expert's pending interaction (decision or tool approval) so its turn continues. */
   respondToInteraction?(executionId: string, response: InteractionResponse): Promise<RespondToInteractionResult>;
   cleanupExecution?(executionId: string): Promise<Omit<ExpertCleanupResult, "executionId">>;
+  /**
+   * Mark a delegation finished for observers, after its last attempt has been delivered.
+   * Optional: a runtime that cannot supply it degrades to the watcher's quiet-period rule
+   * rather than leaving a window open forever.
+   */
+  finalizeDelegation?(executionId: string, role: ExpertRole): Promise<void> | void;
 }
 
 export interface RuntimeBillingDiscovery {

@@ -85,6 +85,7 @@ import type {
   ProviderLimits,
   ProviderLimitsView,
   UsageLedger,
+  ExpertRole,
   AttemptRecord,
 } from "./types.js";
 
@@ -948,7 +949,21 @@ export class ExpertCouncilService implements ExpertCouncil {
         : {}),
       ...(approximateUsage(result) ? { approximateUsage: approximateUsage(result) } : {}),
     });
+    await this.finalizeObservability(id, result.role);
     return result;
+  }
+
+  /**
+   * Let observers close their windows on a fact. Best-effort by contract: observability
+   * must never change an outcome, so a runtime that cannot (or will not) mark the end is
+   * simply ignored, and a watcher falls back to its quiet-period rule.
+   */
+  private async finalizeObservability(executionId: string, role: ExpertRole): Promise<void> {
+    try {
+      await this.runtime.finalizeDelegation?.(executionId, role);
+    } catch {
+      // Never let a stream write change a delegation's result.
+    }
   }
 
   /**
