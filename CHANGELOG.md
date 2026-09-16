@@ -260,7 +260,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
   the log line - not the green bar - was what revealed it.
 
 ### Added
-- **Opt-in observer windows per delegation (defect #39's requested feature).**
+- **Opt-in observer windows per delegation (acceptance found defects #39 and #40).**
   `security.observability.autoOpenWindow` (default `false`, requires `expertWindow:`
   `"interactive"` - validated at config load with the reason in the message) opens a terminal of
   its own for each delegation running the already-tested `expert-council watch --follow`, which is
@@ -278,7 +278,14 @@ All notable changes to Expert Council are documented here. Versions follow seman
   unresolvable-host situation produces one limitation line and no window - never a failed
   delegation. `@expert-council/pi-package` now depends on the CLI, because without it a Pi-package
   install could never open a window at all.
-  Proven by 14 launcher tests plus two runtime wiring tests (one window across a retried delegation,
+  Opening a real window found two defects that every injected-fake test passed over.
+  **defect #39**: the command line quoted the interpreter as its *first* token, and cmd reports a
+  quoted first token as "not recognized" - the window opened empty; the interpreter is now
+  invoked by bare name with its own directory prepended to the child's PATH. **defect #40**: the
+  CLI resolved to `cli/dist/index.js`, which exists but is the library surface and exits silently
+  when run - also an empty window; resolution now prefers the executable `cli/dist/bin.js`. Both
+  re-verified live: a real console rendered a finished 467-event delegation tail and waited.
+  Proven by 16 launcher tests plus two runtime wiring tests (one window across a retried delegation,
   none while off) that inject a fake spawner, so the suite never opens a real window. Falsified six
   ways: removing the dedupe, the key-wait, the budget scaling, the config rule, the failure-not-
   recorded rule, and the runtime call each redden exactly the tests that own them - and a deliberate
@@ -422,7 +429,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
   README（三处）与 SECURITY.md（三处）措辞随之改为与代码一致，中英双份。这份检出里并不构成实际暴露：本机只装了 `npm`、仓库锁文件是 `package-lock.json`，真实执行的命令本来就带着 flag——而这恰恰是这类声称能在评审里一路活下来的原因。防护是一条走查全部十三驱动、任何未声明等级即失败的测试，加上 env 透传与 limitation 两条。三处修复都做了反证：摘掉 bun 的 flag、去掉 scrub 后的 env 合并、把 uv 误标成安全——每次都恰好只弄红一条。本次改动里我自己犯的一个错也留档：用正则重写断言时丢了 `await`，三处 plan 比较变成**没人认领的浮动 promise**，vitest 照样报 55 passed 却在日志里打了一条无人认领的 rejection——揭穿它的不是绿色进度条，而是那行日志。
 
 ### 新增
-- **每次委派一个可选的观察窗口（缺陷 #39 所请求的功能）。** `security.observability.autoOpenWindow`
+- **每次委派一个可选的观察窗口（验收现形缺陷 #39、#40）。** `security.observability.autoOpenWindow`
   （默认 `false`，且要求 `expertWindow` 为 `"interactive"`——配置加载期即校验并把理由写进报错）。开启后
   每次委派拥有自己的终端，跑的就是已带测试的 `expert-council watch --follow`，与你亲手在另一个终端敲的
   那条完全一致；专家本体、工作区、工具、期限一概不动，窗口只读那个流文件。两条规则按你的要求定：
@@ -433,8 +440,9 @@ All notable changes to Expert Council are documented here. Versions follow seman
   CLI 天花板），不可能比所观察的工作先过期。窗口只读：决策与工具授权仍归宿主。装了 Windows Terminal 就用它，
   否则退回经典控制台；`EXPERT_COUNCIL_CLI` / `EXPERT_COUNCIL_TERMINAL` 可覆盖；非 Windows 或找不到宿主时
   只给一条 limitation 且不弹窗，绝不让委派失败。`@expert-council/pi-package` 现在依赖 CLI——否则只装 Pi 包的
-  用户永远弹不出窗。测试：14 条 launcher 测试 + 2 条运行时接线测试（重试的委派仍只有一个窗；关闭时一个都不开），
-  全部注入假 spawner，套件永不真开窗。反证六次：摘去重、摘按键等待、摘预算缩放、摘配置规则、让失败的开窗也记账、
+  用户永远弹不出窗。测试：16 条 launcher 测试 + 2 条运行时接线测试（重试的委派仍只有一个窗；关闭时一个都不开），
+  全部注入假 spawner，套件永不真开窗。真机验收抓出两个假 spawner 永远测不出的缺陷：**#39** 命令行把解释器作为*第一个* token 加了引号，而 cmd 对引号开头的首 token 直接报「不是内部或外部命令」，窗口开出来是空的——现在解释器用裸名调用，并把其所在目录前置进子进程 PATH；**#40** CLI 解析到 `cli/dist/index.js`，它确实存在但只是库入口、直接运行静默退出，同样是空窗——现在优先解析可执行的 `cli/dist/bin.js`。两条都在真机上重验：真实控制台渲染出某次已完成委派的 467 条事件尾部并等键。
+  套件永不真开窗被反证八次。反证八次：摘去重、摘按键等待、摘预算缩放、摘配置规则、让失败的开窗也记账、把解释器改回带引号的首个 token、
   摘掉运行时调用——各自恰好弄红属于自己的测试；另外故意放了一个空改动作对照，它必须不红而确实没红，说明反证在度量改动本身。
 - **渲染器的防漂移守卫。** 每个事件种类现在都必须在 `ExpertEventKind` 联合类型上的一个 `Record` 里登记——漏登就编译失败并点名缺的键；另有一条表驱动测试要求每个种类都有渲染断言。两半都用注入法验证过：加种类不登记会打断 `tsc`，登记却不测则守卫变红。
 - **每个可观测事件都带尝试序号**，重试或升级的尝试渲染为 `[role model #2]`。单次尝试的普通运行保持原样。
