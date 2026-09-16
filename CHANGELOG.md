@@ -28,6 +28,30 @@ All notable changes to Expert Council are documented here. Versions follow seman
   counters were lost at both ends of the same pipe. Both ends were fixed together and tested separately,
   because "the field exists" and "the field survives the projection" are different bugs - the same lesson as
   `interactionRounds` in 0.8.4 and `attempt` in 0.8.6.
+- **The test suite was never type-checked (defect #24).** The root tsconfig is a solution-style project -
+  `"files": []` plus package references - so `npm run typecheck` only ever looked at `packages/*`. Every
+  type-level guard written inside a test was therefore decorative, including two added that same day:
+  `Record<keyof ExpertOutcome, ...>` and the `EVENT_KIND_COVERAGE` Record. `tsconfig.tests.json` now extends
+  `tsconfig.base.json` - deliberately, so the suite faces the project's real strictness
+  (`noUncheckedIndexedAccess`, `verbatimModuleSyntax`) rather than a softer copy that under-reported by
+  eight errors - and `typecheck` runs both halves. All 59 reported errors were fixture-level and are fixed.
+- **A green test was not testing anything (defect #25).** `does not mark transient provider failures such as
+  rate limits` asserted the opposite of the shipped contract, and passed only because its persistence stub
+  referenced `current` - a type-annotation name, not a runtime binding - so it threw `ReferenceError` on
+  every call into the best-effort `catch` in `service.ts`, which left nothing recorded. Rate limits DO mark,
+  on purpose: on the 2-minute `MODEL_RATE_LIMIT_MARKER_TTL_MS` window rather than the blackout window, with
+  provider siblings included, which is what the repo's rate-limit fix depends on. The test now pins that
+  real contract, its fixture reports its own errors so a broken stub can never satisfy an assertion again,
+  and expiry is proven through the imported constants. Non-vacuity was demonstrated in both directions:
+  suppressing rate-limit evidence fails the marker assertions, and throttling on the blackout TTL fails the
+  expiry assertions.
+- **Best-effort persistence is no longer invisible (defect #26).** The silent `catch` was the enabling
+  condition for #25. A marker that could not be written means the next delegation repeats a failure this one
+  already learned about, so it is now recorded as `executionMetadata.persistenceErrors` and surfaced as a
+  risk line - while still never aborting a delegation, which was the point of the catch.
+- **`routePolicy` was read as optional although the type requires it (defect #27).** Five `?.` chains in
+  `presentResourceInventory` implied a null case `ResourceInventory` has never allowed; nothing in the repo
+  casts around that requirement, so the view reads it directly now.
 - **The quiet-period fallback mistook an expert's silence for a dead stream (defect #23).** Seen live on the
   first run of the fixed window: a three-attempt delegation wrote its `delegation_final` marker on time, and
   the follower had already left 13 seconds earlier because 750ms had passed with nothing appended - an
@@ -147,6 +171,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **首次尝试的挣扎不再因为重试成功而消失（缺陷 #20）。** 交付的 `executionMetadata` 带的是运行时**最后一次**尝试所见：第 1 次尝试反复工具失败烧光预算后，只要第 2 次干净完成，结果里就一条警告都不剩；遥测又把累加的 `toolErrors` 与单次尝试的 `toolCalls` 混在一起。现在由 Council 折算整条委派的总量：`toolCalls`、`toolErrors`、以及跨尝试按 code 去重的 `attention`（末 8 条）。
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
 - **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
+- **测试目录从来没被类型检查（缺陷 #24）。** 根 tsconfig 是 solution 式工程（`"files": []` + 包引用），所以 `npm run typecheck` 只看 `packages/*`。写在测试里的类型级守卫因此全是装饰——包括同一天刚加的两条：`Record<keyof ExpertOutcome, ...>` 与 `EVENT_KIND_COVERAGE`。`tsconfig.tests.json` 现在刻意 extends `tsconfig.base.json`，让测试面对项目**真实**严格度（`noUncheckedIndexedAccess`、`verbatimModuleSyntax`）而不是一份更宽松、少报 8 条的副本；`typecheck` 两半都跑。报出的 59 条全部属于夹具层，已清零。
+- **有一条绿灯其实什么都没测（缺陷 #25）。** `does not mark transient provider failures such as rate limits` 断言的恰恰是已发布契约的**反面**，而它之所以通过，是因为它的持久化 stub 引用了 `current`——那只是类型标注名、不是运行时绑定——于是每次调用都抛 `ReferenceError`，落进 `service.ts` 里那个尽力而为的 `catch`，什么也没记下来。限流**确实**会标记，而且是故意的：走 2 分钟的 `MODEL_RATE_LIMIT_MARKER_TTL_MS` 窗口而非封锁窗口、并连同 provider 兄弟模型一起标，仓库那次限流修复正是依赖此。现在这条测试钉的是真实契约；它的夹具会自报异常，坏掉的 stub 再也不可能把断言喂绿；过期时间也用导入常量证明。双向反证：让限流不再算证据 → 标记断言红；让限流用封锁 TTL → 过期断言红。
+- **尽力而为的持久化不再隐形（缺陷 #26）。** 那个静默 `catch` 正是 #25 能藏住的使能条件。标记没能落盘，意味着下一次委派会重演这一次已经撞过的失败，所以现在记为 `executionMetadata.persistenceErrors` 并作为 risk 上报——同时仍然绝不中断委派，那才是这个 catch 的本意。
+- **`routePolicy` 明明必填却按可选读（缺陷 #27）。** `presentResourceInventory` 里五处 `?.` 暗示了一个 `ResourceInventory` 从来不允许的空值场景；全仓也没有绕过该必填的 cast，现在直读。
 - **静默兜底把专家的沉默误判成流已死（缺陷 #23）。** 修好后的窗口首跑就看到了：一次三次尝试的委派按时写出 `delegation_final`，而观察者早在 13 秒前就离开——只因 750ms 内没有新行；那不过是模型在思考或构建在跑的普通停顿。兜底阈值改为默认 15 秒，可用 `--quiet-ms` 调整；真正的信号仍是那条标记，或运维者自己设的 `--timeout-ms`。
 - **`watch` 关闭时报告的结局是错的（缺陷 #19）。** 一次先失败后成功的委派会自称 `stream closed (failed)`，因为观察者记住了它看到的**第一个**终止事件。现在它记住最后一个；由委派级标记驱动的关闭会说 `stream closed (delegation finished)`——收尾那行再也不能和自己上面的输出相矛盾。
 - **出厂的事件渲染器此前完全没有测试（缺陷 #18）。** 0.8.4 那条"格式化器"测试注入的是桩，测试通过而 core 里真正的 `formatExpertEvent` 从未被断言过。现在它有直接测试，并且当场抓到一个真 bug：一条事件可以渲染成两行终端输出，会让运维者的 tail 与流失步。渲染已强制压成单行。

@@ -272,6 +272,13 @@ export interface ExpertResult {
     attention?: ExpertAttention[];
     /** Per-attempt record of this delegation, so the host never has to dig through state files. */
     attemptHistory?: AttemptRecord[];
+    /**
+     * Availability-marker writes that failed during this delegation. Persistence is
+     * best-effort, but a marker that never reached disk means the next delegation will
+     * repeat a failure this one already learned about - which is the host's business, not
+     * something to swallow (defect #25 hid behind exactly such a catch).
+     */
+    persistenceErrors?: Array<{ model: string; detail: string }>;
     /** Outcome of runtime worktree provisioning for this attempt. */
     provisioning?: {
       status: "ready" | "skipped" | "failed";

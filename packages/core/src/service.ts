@@ -632,6 +632,8 @@ export class ExpertCouncilService implements ExpertCouncil {
 
     const failures: EscalationRequest["previousFailures"] = [];
     const unavailableMarked: string[] = [];
+    // Marker writes that failed. Best-effort must not mean invisible - see #26.
+    const persistenceErrors: Array<{ model: string; detail: string }> = [];
     const capBreaches: string[] = [];
     let current = ranked.candidates[0]!;
     let retriesForCurrent = 0;
@@ -846,8 +848,16 @@ export class ExpertCouncilService implements ExpertCouncil {
             // remaining candidates in this delegation immediately.
             ranked.candidates = ranked.candidates.filter((candidate) => parseModelKey(candidate.model).provider !== provider);
           }
-        } catch {
-          // Marker persistence is best-effort; escalation and telemetry still record the failure.
+        } catch (error) {
+          // Marker persistence is best-effort: escalation and telemetry still record the
+          // failure, and a broken store must never abort a delegation. It is still recorded
+          // here, because an un-persisted marker means the next run repeats a failure this
+          // one already knew about, and because a silent catch is exactly what let a
+          // fake-green test survive (defect #25).
+          persistenceErrors.push({
+            model: current.model,
+            detail: String(error instanceof Error ? error.message : error).slice(0, 200),
+          });
         }
       }
       const decision = decideEscalation(
@@ -906,6 +916,17 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
     if (capBreaches.length) {
       result.risks = [...capBreaches, ...(result.risks ?? [])].slice(0, 20);
+    }
+    if (persistenceErrors.length) {
+      const affected = [...new Set(persistenceErrors.map((item) => item.model))].slice(0, 5);
+      result.executionMetadata = {
+        ...result.executionMetadata,
+        persistenceErrors: persistenceErrors.slice(0, 5),
+      };
+      result.risks = [
+        `${persistenceErrors.length} model availability marker(s) could not be persisted (${affected.join(", ")}); routing may repeat a failure this delegation already saw.`,
+        ...(result.risks ?? []),
+      ].slice(0, 20);
     }
     // Surface what happened on every attempt, bounded, so the host never has to read
     // a state file to learn which model failed how - a dig that was impossible with

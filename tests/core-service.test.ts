@@ -727,6 +727,39 @@ describe("runtime availability marking", () => {
       .toEqual([]);
   });
 
+  it("keeps the delegation alive but records the swallowed failure", async () => {
+    // The catch around marker persistence exists so a broken store can never abort a
+    // delegation - that part is correct. What was wrong is that it was silent: defect #25
+    // hid behind it, and an un-persisted marker means the next delegation repeats a
+    // failure this one already learned about, which is the host's business.
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "Provider returned 429 rate limit exceeded.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: initialState(assessment),
+      persistence: {
+        save: async () => {},
+        updateModelAssessment: async () => {
+          throw new Error("disk on fire");
+        },
+      },
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+
+    expect(result.status).toBe("success");
+    expect(result.executionMetadata?.persistenceErrors).toEqual([{ model: "p/dead", detail: "disk on fire" }]);
+    const risks = (result.risks ?? []).join(" ");
+    expect(risks).toContain("could not be persisted");
+    expect(risks).toContain("p/dead");
+  });
+
   it("warns about active markers during inspection and preserves them across a fresh audit", async () => {
     const marked = withModelAvailabilityMarker(assessment, "p/dead", "model_not_found", new Date().toISOString());
     const runtime = new MockRuntime(models);

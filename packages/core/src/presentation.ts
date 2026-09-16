@@ -92,11 +92,14 @@ export function presentResourceInventory(inventory: ResourceInventory, detail: P
             refreshHint: "A current web-audited modelAssessment is required before expert_build can assemble a council.",
           },
     routePolicy: {
-      sessionKey: inventory.routePolicy?.sessionKey ?? "default",
-      effective: inventory.routePolicy?.effective ?? {},
-      ...(inventory.routePolicy?.system ? { system: inventory.routePolicy.system } : {}),
-      ...(inventory.routePolicy?.session ? { session: inventory.routePolicy.session } : {}),
-      ...(inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}),
+      // `routePolicy` is required on ResourceInventory, so it is read directly. The
+      // optional chaining here implied a null case the type never allowed, and a suite
+      // nobody typechecked could not notice the difference (defect #27).
+      sessionKey: inventory.routePolicy.sessionKey ?? "default",
+      effective: inventory.routePolicy.effective ?? {},
+      ...(inventory.routePolicy.system ? { system: inventory.routePolicy.system } : {}),
+      ...(inventory.routePolicy.session ? { session: inventory.routePolicy.session } : {}),
+      ...(inventory.routePolicy.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}),
     },
     ...(inventory.compositions ? { compositions: inventory.compositions } : {}),
     ...(inventory.operatorConfig ? { operatorConfig: inventory.operatorConfig } : {}),

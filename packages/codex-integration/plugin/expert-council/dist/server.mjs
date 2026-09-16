@@ -311287,7 +311287,7 @@ function markerTtlMs(kind, defaultTtlMs) {
   if (kind === "quota-exhausted")
     return MODEL_QUOTA_MARKER_TTL_MS;
   if (kind === "rate-limited")
-    return defaultTtlMs;
+    return MODEL_RATE_LIMIT_MARKER_TTL_MS;
   return defaultTtlMs;
 }
 function activeModelAvailability(assessment, now = /* @__PURE__ */ new Date(), ttlMs = MODEL_AVAILABILITY_MARKER_TTL_MS) {
@@ -311526,11 +311526,14 @@ function presentResourceInventory(inventory, detail2 = "compact") {
       refreshHint: "A current web-audited modelAssessment is required before expert_build can assemble a council."
     },
     routePolicy: {
-      sessionKey: inventory.routePolicy?.sessionKey ?? "default",
-      effective: inventory.routePolicy?.effective ?? {},
-      ...inventory.routePolicy?.system ? { system: inventory.routePolicy.system } : {},
-      ...inventory.routePolicy?.session ? { session: inventory.routePolicy.session } : {},
-      ...inventory.routePolicy?.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}
+      // `routePolicy` is required on ResourceInventory, so it is read directly. The
+      // optional chaining here implied a null case the type never allowed, and a suite
+      // nobody typechecked could not notice the difference (defect #27).
+      sessionKey: inventory.routePolicy.sessionKey ?? "default",
+      effective: inventory.routePolicy.effective ?? {},
+      ...inventory.routePolicy.system ? { system: inventory.routePolicy.system } : {},
+      ...inventory.routePolicy.session ? { session: inventory.routePolicy.session } : {},
+      ...inventory.routePolicy.sourcePath ? { sourcePath: inventory.routePolicy.sourcePath } : {}
     },
     ...inventory.compositions ? { compositions: inventory.compositions } : {},
     ...inventory.operatorConfig ? { operatorConfig: inventory.operatorConfig } : {},
@@ -312280,6 +312283,7 @@ var ExpertCouncilService = class {
     }
     const failures = [];
     const unavailableMarked = [];
+    const persistenceErrors = [];
     const capBreaches = [];
     let current = ranked.candidates[0];
     let retriesForCurrent = 0;
@@ -312445,7 +312449,11 @@ var ExpertCouncilService = class {
           if (marked.kind === "quota-exhausted") {
             ranked.candidates = ranked.candidates.filter((candidate2) => parseModelKey(candidate2.model).provider !== provider);
           }
-        } catch {
+        } catch (error61) {
+          persistenceErrors.push({
+            model: current.model,
+            detail: String(error61 instanceof Error ? error61.message : error61).slice(0, 200)
+          });
         }
       }
       const decision = decideEscalation({ role: request.role, task: request.task, currentModel: current.model, previousFailures: failures }, ranked.candidates, this.config.retry.correctedRetriesPerModel);
@@ -312491,6 +312499,17 @@ var ExpertCouncilService = class {
     }
     if (capBreaches.length) {
       result.risks = [...capBreaches, ...result.risks ?? []].slice(0, 20);
+    }
+    if (persistenceErrors.length) {
+      const affected = [...new Set(persistenceErrors.map((item) => item.model))].slice(0, 5);
+      result.executionMetadata = {
+        ...result.executionMetadata,
+        persistenceErrors: persistenceErrors.slice(0, 5)
+      };
+      result.risks = [
+        `${persistenceErrors.length} model availability marker(s) could not be persisted (${affected.join(", ")}); routing may repeat a failure this delegation already saw.`,
+        ...result.risks ?? []
+      ].slice(0, 20);
     }
     const attemptHistory = (state2.attemptHistory ?? []).slice(-5).map((attempt3) => ({
       attempt: attempt3.attempt,

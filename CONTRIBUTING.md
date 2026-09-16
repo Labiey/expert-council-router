@@ -14,6 +14,17 @@ npm run typecheck
 npm run pack:check
 ```
 
+Worktrees share the root `node_modules`, and `tsc -b` trusts
+`node_modules/.cache/expert-council/*.tsbuildinfo`. A cache copied from another checkout
+makes `tsc -b` exit 0 while emitting nothing at all, after which `npm test` misreads as
+broken - `@expert-council/*` fails to resolve and far fewer tests are collected. If a
+fresh worktree's suite cannot resolve the workspace packages, clear that cache and
+rebuild before suspecting the code:
+
+```bash
+rm -rf node_modules/.cache/expert-council && npm run build
+```
+
 Normal tests must never invoke a paid model. Put live provider tests behind `EXPERT_COUNCIL_LIVE_TESTS=1`, make their expected spend explicit, and keep them out of `npm test`.
 
 When changing routing, add deterministic tests for the intended ordering and rejection reason. Do not encode subjective model rankings as universal defaults. Use example presets or user configuration.
