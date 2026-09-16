@@ -8,15 +8,6 @@ import type { ExpertResult, FailureType } from "./types.js";
  * budget growth reserved for timeouts, and - worst - a supplier outage charged
  * against that model's own reliability record in local learning. Observed live:
  * an attempt whose last text was "Connection error." recorded `failureType: unknown`.
- */
-/**
- * Transport-level upstream faults. These are checked before the generic `timeout`
- * branch, because "gateway timeout" is the provider's failure, not our budget
- * expiring. Without them a dropped provider connection was classified `unknown`,
- * which cost three things at once: no availability marking, none of the bounded
- * budget growth reserved for timeouts, and - worst - a supplier outage charged
- * against that model's own reliability record in local learning. Observed live:
- * an attempt whose last text was "Connection error." recorded `failureType: unknown`.
  *
  * Every marker here is message-shaped on purpose. A bare "502" or "overloaded" is not:
  * the same classifier is also handed an expert's own report (see

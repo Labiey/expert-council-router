@@ -340,7 +340,6 @@ export interface RuntimeBillingDiscovery {
   reason: string;
 }
 
-/** Bounded progress snapshot for a running expert execution. */
 /** Why the council thinks an expert is struggling rather than merely busy. */
 export type AttentionCode =
   | "consecutive_tool_failures"
@@ -550,7 +549,6 @@ export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension
   overrideUnavailableMarker?: boolean;
 }
 
-/** Runtime-observed evidence that a model listed by the host can no longer be called. */
 /**
  * Why a model is currently marked non-callable. `unavailable` means the model
  * itself is gone or the subscription lacks it; `quota-exhausted` means access
@@ -559,6 +557,7 @@ export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension
  */
 export type AvailabilityMarkerKind = "unavailable" | "quota-exhausted" | "rate-limited";
 
+/** Runtime-observed evidence that a model listed by the host can no longer be called. */
 export interface ModelAvailabilityObservation {
   callable: false;
   kind?: AvailabilityMarkerKind;

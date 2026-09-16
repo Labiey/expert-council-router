@@ -1647,16 +1647,13 @@ export class PiExpertRuntime implements ExpertRuntime {
   }
 
   /**
-   * Files this expert can honestly claim as its own work. A read-only execution
-   * runs in the main workspace and cannot mutate anything, so any git-dirty file
-   * there belongs to the Main Agent; reporting it as the expert's change fabricates
-   * authorship and can make the host try to "integrate" its own uncommitted edits.
-   */
-  /**
-   * Which files this expert changed - and whether that question could be answered at all.
-   * An empty list and a failed diff are different facts: collapsing them lets a mutation
-   * workspace whose `git diff` broke (the `$GIT_DIR` too big class, defect #11) report
-   * "the expert changed nothing", which is how correct work gets thrown away (defect #28).
+   * Files this expert can honestly claim as its own work - and whether that question could
+   * be answered at all. A read-only execution runs in the main workspace and cannot mutate
+   * anything, so any git-dirty file there belongs to the Main Agent; reporting it as the
+   * expert's change fabricates authorship. An empty list and a failed diff are also
+   * different facts: collapsing them lets a mutation workspace whose `git diff` broke (the
+   * `$GIT_DIR` too big class, defect #11) report "the expert changed nothing", which is how
+   * correct work gets thrown away (defect #28).
    */
   private async expertChangedFiles(workspace: PreparedWorkspace): Promise<{ files: string[]; error?: string }> {
     if (workspace.strategy === "read-only") return { files: [] };

@@ -28,6 +28,17 @@ All notable changes to Expert Council are documented here. Versions follow seman
   counters were lost at both ends of the same pipe. Both ends were fixed together and tested separately,
   because "the field exists" and "the field survives the projection" are different bugs - the same lesson as
   `interactionRounds` in 0.8.4 and `attempt` in 0.8.6.
+- **Six orphaned documentation blocks, one of which actively lied (defect #30).** Found by a delegated
+  scout while an operator watched it work, not by reading the diff: the same classifier had two verbatim
+  copies of its own doc comment, stacked `*/` against `/**`. The cause was my own habit of inserting a new
+  declaration between an existing doc comment and the code it described. Six sites, each repaired:
+  `failures.ts`, `presentation.ts` (the renderer lost its doc to the coverage guard I added above it),
+  `types.ts` twice (one orphan restored to `ModelAvailabilityObservation`, one stale duplicate removed),
+  `pi-runtime.ts`, and `config.ts`, where a stale block still claimed "No tool arguments are ever surfaced,
+  so there is nothing to redact here" after 0.8.4 shipped real argument redaction - documentation that reads
+  as current and is wrong is worse than none. A source-hygiene test now fails on any `*/` immediately
+  followed by `/**` under `packages/`, naming the file and line; proven by injecting a pair and watching it
+  report `index.ts:21`.
 - **An unreadable workspace diff no longer pretends to be a clean tree (defect #28).**
   `WorkspaceBoundary.changedFiles` swallowed its own `git status` failure and returned `[]`, so a mutation
   expert whose diff could not be read - the `$GIT_DIR` too big class from defect #11 is exactly this - was
@@ -185,6 +196,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **首次尝试的挣扎不再因为重试成功而消失（缺陷 #20）。** 交付的 `executionMetadata` 带的是运行时**最后一次**尝试所见：第 1 次尝试反复工具失败烧光预算后，只要第 2 次干净完成，结果里就一条警告都不剩；遥测又把累加的 `toolErrors` 与单次尝试的 `toolCalls` 混在一起。现在由 Council 折算整条委派的总量：`toolCalls`、`toolErrors`、以及跨尝试按 code 去重的 `attention`（末 8 条）。
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
 - **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
+- **六处与代码脱钩的文档块，其中一处还在说谎（缺陷 #30）。** 这是派出去的一名 scout 在被运维者实时旁观工作时发现的，不是我看 diff 看出来的：同一个分类器带了两份逐字相同的文档注释，`*/` 紧挨 `/**`。成因是我自己的手法——习惯把新声明插在“已有文档块”和它所描述的代码中间。六处逐一修复：`failures.ts`、`presentation.ts`（渲染器的注释被我在它上方插入覆盖表时挤掉了）、`types.ts` 两处（一处归还给 `ModelAvailabilityObservation`，一处陈旧重复删除）、`pi-runtime.ts`，以及 `config.ts`——那里一份过期注释仍写着“从不透出工具参数，所以这里没什么可脱敏”，而 0.8.4 早已实现真实的参数脱敏：**读起来像现行说明却是错的文档，比没有文档更糟**。现在新增一条源码卫生测试：`packages/` 下任何紧接 `/**` 的 `*/` 都会失败并点名文件与行号；用注入一对注释验证，它报出 `index.ts:21`。
 - **读不出来的工作区 diff 不再冒充“工作树是干净的”（缺陷 #28）。** `WorkspaceBoundary.changedFiles` 会把自身的 `git status` 失败吞掉并返回 `[]`，于是一个可写专家只要 diff 读不出来——#11 那类 `$GIT_DIR` too big 正走这条路——就被报成“什么都没改”；照 `filesChanged` 做集成的宿主于是把真实成果集成为零。“无法判断”现在是一个独立的答案：所有会收集文件的交付路径（成功、超时、会话错误、抛错、中止、专家自停）都会给出 `executionMetadata.filesChangedError` 加一条 risk。并按这一族把全仓扫了一遍：70 个 `catch`、其中 15 个块内没有任何语句，逐个读过——其余都是有意为之（可选的 Pi 能力探测、竞态删除、宿主拒收的通知、拆除阶段），并把理由写在了代码旁边。
 - **把“试过了”当成“送出了”的计数器（缺陷 #29）。** `watchForInteractions` 在调用宿主之前就 `sent += 1`，于是宿主每次都拒绝时它仍报告送出了一条——而且旧测试断言的正是这个谎。现在只统计宿主真正接受的条数，与护栏计数顺序一致；测试是**加强**而非削弱：额外钉住“拒绝的宿主也只会被试一次”，因为去重键在发送失败时同样已被消费。
 - **测试目录从来没被类型检查（缺陷 #24）。** 根 tsconfig 是 solution 式工程（`"files": []` + 包引用），所以 `npm run typecheck` 只看 `packages/*`。写在测试里的类型级守卫因此全是装饰——包括同一天刚加的两条：`Record<keyof ExpertOutcome, ...>` 与 `EVENT_KIND_COVERAGE`。`tsconfig.tests.json` 现在刻意 extends `tsconfig.base.json`，让测试面对项目**真实**严格度（`noUncheckedIndexedAccess`、`verbatimModuleSyntax`）而不是一份更宽松、少报 8 条的副本；`typecheck` 两半都跑。报出的 59 条全部属于夹具层，已清零。

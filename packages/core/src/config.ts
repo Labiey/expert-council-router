@@ -230,12 +230,6 @@ export const councilConfigSchema = z.object({
        */
       toolGrants: z.partialRecord(expertRoleSchema, z.array(z.string().min(1).max(60)).max(20)).default({}),
       expertLifetime: z.enum(["host-bound", "detached"]).default("host-bound"),
-      /** Expert progress visibility. The pendingInteraction channel is always on (correctness). */
-      /**
-       * Expert progress visibility. `pendingInteraction` is always surfaced
-       * (correctness channel); this governs the optional live progress block.
-       * No tool arguments are ever surfaced, so there is nothing to redact here.
-       */
       /**
        * Expert progress visibility. `pendingInteraction` is always surfaced
        * (correctness channel); this governs the optional live progress block and,

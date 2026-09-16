@@ -310118,12 +310118,6 @@ var councilConfigSchema = external_exports.object({
      */
     toolGrants: external_exports.partialRecord(expertRoleSchema, external_exports.array(external_exports.string().min(1).max(60)).max(20)).default({}),
     expertLifetime: external_exports.enum(["host-bound", "detached"]).default("host-bound"),
-    /** Expert progress visibility. The pendingInteraction channel is always on (correctness). */
-    /**
-     * Expert progress visibility. `pendingInteraction` is always surfaced
-     * (correctness channel); this governs the optional live progress block.
-     * No tool arguments are ever surfaced, so there is nothing to redact here.
-     */
     /**
      * Expert progress visibility. `pendingInteraction` is always surfaced
      * (correctness channel); this governs the optional live progress block and,
@@ -320287,16 +320281,13 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     };
   }
   /**
-   * Files this expert can honestly claim as its own work. A read-only execution
-   * runs in the main workspace and cannot mutate anything, so any git-dirty file
-   * there belongs to the Main Agent; reporting it as the expert's change fabricates
-   * authorship and can make the host try to "integrate" its own uncommitted edits.
-   */
-  /**
-   * Which files this expert changed - and whether that question could be answered at all.
-   * An empty list and a failed diff are different facts: collapsing them lets a mutation
-   * workspace whose `git diff` broke (the `$GIT_DIR` too big class, defect #11) report
-   * "the expert changed nothing", which is how correct work gets thrown away (defect #28).
+   * Files this expert can honestly claim as its own work - and whether that question could
+   * be answered at all. A read-only execution runs in the main workspace and cannot mutate
+   * anything, so any git-dirty file there belongs to the Main Agent; reporting it as the
+   * expert's change fabricates authorship. An empty list and a failed diff are also
+   * different facts: collapsing them lets a mutation workspace whose `git diff` broke (the
+   * `$GIT_DIR` too big class, defect #11) report "the expert changed nothing", which is how
+   * correct work gets thrown away (defect #28).
    */
   async expertChangedFiles(workspace) {
     if (workspace.strategy === "read-only")

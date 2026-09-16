@@ -132,11 +132,6 @@ export function presentCouncilPlan(plan: CouncilPlan, detail: PresentationDetail
 }
 
 /**
- * Render one observability event as a single bounded line for a terminal or log.
- * Deliberately ANSI-free and single-line: it must survive Windows pipes, redirect
- * to a file, and interleaving with other sources without corrupting output.
- */
-/**
  * Every event kind, enumerated through a `Record` over the union so that adding a kind to
  * `ExpertEventKind` without listing it here fails the build rather than falling through to
  * the renderer's default branch. Defect #21 was exactly that class: `attention` had no
@@ -165,7 +160,9 @@ export const EXPERT_EVENT_KINDS: readonly ExpertEventKind[] = Object.keys(EVENT_
  * Render one expert event as a single terminal line. The clamp at the end is deliberate:
  * text fields are bounded where the runtime writes them, but a hand-edited, truncated, or
  * future-versioned stream must never push a second line into an operator's window and
- * desynchronise it from the rest of the tail.
+ * desynchronise it from the rest of the tail. Deliberately ANSI-free and single-line:
+ * it has to survive Windows pipes, redirection to a file, and interleaving with other
+ * sources without corrupting output.
  */
 export function formatExpertEvent(event: ExpertObservabilityEvent): string {
   return formatExpertEventLine(event)
