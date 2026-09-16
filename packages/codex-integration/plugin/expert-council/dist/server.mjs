@@ -320135,7 +320135,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
         model: request.model,
         summary,
         ...evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {},
-        ...workspace?.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {},
+        ...risksWithDiffNote(evidence.filesChangedError, workspace?.limitations),
         executionMetadata: {
           attempts: request.attempt,
           failureType: inferFailureType(error61),
