@@ -311561,6 +311561,21 @@ function presentCouncilPlan(plan, detail2 = "compact") {
     fullDetailHint: "Call expert_build with detail='full' only when alternatives, scores, tools, or skills are required."
   };
 }
+var EVENT_KIND_COVERAGE = {
+  started: true,
+  tool_started: true,
+  tool_finished: true,
+  assistant_text: true,
+  attention: true,
+  interaction_opened: true,
+  interaction_answered: true,
+  stopped: true,
+  completed: true,
+  failed: true,
+  stream_truncated: true,
+  delegation_final: true
+};
+var EXPERT_EVENT_KINDS = Object.keys(EVENT_KIND_COVERAGE);
 
 // packages/core/dist/result-clamp.js
 var MAX_SUMMARY = 4e3;
@@ -319404,6 +319419,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
           t: (/* @__PURE__ */ new Date()).toISOString(),
           executionId: executionId2,
           role: role2,
+          ...state2.attempt === void 0 ? {} : { attempt: state2.attempt },
           kind: "stream_truncated",
           text: `${OBSERVABILITY_MAX_EVENTS} events / ${OBSERVABILITY_MAX_BYTES} bytes reached; further events dropped.`
         });

@@ -628,6 +628,7 @@ export class PiExpertRuntime implements ExpertRuntime {
           t: new Date().toISOString(),
           executionId,
           role,
+          ...(state.attempt === undefined ? {} : { attempt: state.attempt }),
           kind: "stream_truncated",
           text: `${OBSERVABILITY_MAX_EVENTS} events / ${OBSERVABILITY_MAX_BYTES} bytes reached; further events dropped.`,
         });

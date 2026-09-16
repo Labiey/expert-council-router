@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  EXPERT_EVENT_KINDS,
   formatExpertEvent,
   presentCouncilPlan,
   presentResourceInventory,
@@ -165,5 +166,39 @@ describe("struggle warnings reach the window with their meaning", () => {
   it("still renders a warning that carries no counters", () => {
     expect(formatExpertEvent({ t: at, executionId: "exec_1", role: "scout", kind: "attention" }))
       .toBe("11:38:41 [scout] WARNING: struggle detected");
+  });
+});
+
+import type { ExpertEventKind, ExpertObservabilityEvent } from "../packages/core/src/index.js";
+
+describe("every event kind the stream can carry renders meaningfully", () => {
+  const at = "2026-09-16T11:38:41.000Z";
+
+  const cases: Array<{ kind: ExpertEventKind; event: Partial<ExpertObservabilityEvent>; expected: string }> = [
+    { kind: "started", event: {}, expected: "started" },
+    { kind: "tool_started", event: { tool: "read" }, expected: "tool read" },
+    { kind: "tool_finished", event: { tool: "read", ok: true }, expected: "tool read ok" },
+    { kind: "assistant_text", event: { text: "looking now" }, expected: "says: looking now" },
+    { kind: "attention", event: { text: "budget spent", toolErrors: 1, toolCalls: 2 }, expected: "WARNING: budget spent" },
+    { kind: "interaction_opened", event: { text: "pick one" }, expected: "WAITING FOR HOST: pick one" },
+    { kind: "interaction_answered", event: { text: "chose ls" }, expected: "host answered: chose ls" },
+    { kind: "stopped", event: { status: "partial", failureType: "missing_context" }, expected: "stopped by expert: partial (missing_context)" },
+    { kind: "completed", event: { status: "success", durationMs: 3000 }, expected: "completed: success in 3s" },
+    { kind: "failed", event: { status: "failed", failureType: "timeout", durationMs: 9000 }, expected: "failed: failed (timeout) in 9s" },
+    { kind: "stream_truncated", event: { text: "too many events" }, expected: "stream truncated: too many events" },
+    { kind: "delegation_final", event: {}, expected: "delegation finished" },
+  ];
+
+  it("covers exactly the kinds the union defines, so a new one cannot skip the renderer", () => {
+    // Drift guard for defect #21: an unlisted kind still compiles and still streams, but
+    // it falls through to the default branch and prints a bare word. The `Record` over the
+    // union in core makes an unlisted kind a build failure; this makes an untested one red.
+    expect([...EXPERT_EVENT_KINDS].sort()).toEqual(cases.map((item) => item.kind).sort());
+  });
+
+  it.each(cases)("renders $kind with its own wording, on one line", ({ kind, event, expected }) => {
+    const rendered = formatExpertEvent({ t: at, executionId: "exec_1", role: "scout", model: "p/m", kind, ...event });
+    expect(rendered).toContain(expected);
+    expect(rendered.includes(String.fromCharCode(10))).toBe(false);
   });
 });

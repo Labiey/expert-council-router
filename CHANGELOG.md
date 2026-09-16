@@ -41,6 +41,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
   `interactionRounds` in 0.8.4, caught here by a test written against the parser rather than the stub.
 
 ### Added
+- **A drift guard for the renderer.** Every event kind must now be listed in a `Record` over the
+  `ExpertEventKind` union - an unlisted kind fails the build with the property name - and a table-driven test
+  requires a rendering expectation for each one. Both halves were proven by injection: adding a kind with no
+  coverage entry broke `tsc`, and covering it without testing it reddened the guard.
 - **Attempt numbers on every observability event**, rendered as `[role model #2]` for a retried or escalated
   attempt. Ordinary single-attempt runs are unchanged.
 ## 0.8.5 - 2026-09-16
@@ -143,6 +147,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **CLI 的流读取器会丢掉新的 `attempt` 字段。** 它的帧解析只复制自己认识的字段，尝试序号因此在到达渲染器之前就被静默丢弃——与 0.8.4 的 `interactionRounds` 同类的白名单陷阱，这次靠"对解析器而不是对桩"写的测试抓到。
 
 ### 新增
+- **渲染器的防漂移守卫。** 每个事件种类现在都必须在 `ExpertEventKind` 联合类型上的一个 `Record` 里登记——漏登就编译失败并点名缺的键；另有一条表驱动测试要求每个种类都有渲染断言。两半都用注入法验证过：加种类不登记会打断 `tsc`，登记却不测则守卫变红。
 - **每个可观测事件都带尝试序号**，重试或升级的尝试渲染为 `[role model #2]`。单次尝试的普通运行保持原样。
 ## 0.8.5（中文）
 

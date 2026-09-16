@@ -1,4 +1,4 @@
-import type { CouncilPlan, ExpertObservabilityEvent, ResourceInventory } from "./types.js";
+import type { CouncilPlan, ExpertEventKind, ExpertObservabilityEvent, ResourceInventory } from "./types.js";
 
 export type PresentationDetail = "compact" | "full";
 
@@ -133,6 +133,31 @@ export function presentCouncilPlan(plan: CouncilPlan, detail: PresentationDetail
  * Deliberately ANSI-free and single-line: it must survive Windows pipes, redirect
  * to a file, and interleaving with other sources without corrupting output.
  */
+/**
+ * Every event kind, enumerated through a `Record` over the union so that adding a kind to
+ * `ExpertEventKind` without listing it here fails the build rather than falling through to
+ * the renderer's default branch. Defect #21 was exactly that class: `attention` had no
+ * case, so live warnings reached an operator's terminal as a bare word with the sentence
+ * and the numbers dropped on the floor.
+ */
+const EVENT_KIND_COVERAGE: Record<ExpertEventKind, true> = {
+  started: true,
+  tool_started: true,
+  tool_finished: true,
+  assistant_text: true,
+  attention: true,
+  interaction_opened: true,
+  interaction_answered: true,
+  stopped: true,
+  completed: true,
+  failed: true,
+  stream_truncated: true,
+  delegation_final: true,
+};
+
+/** The full set of renderable event kinds, for tests that must stay in step with it. */
+export const EXPERT_EVENT_KINDS: readonly ExpertEventKind[] = Object.keys(EVENT_KIND_COVERAGE) as ExpertEventKind[];
+
 /**
  * Render one expert event as a single terminal line. The clamp at the end is deliberate:
  * text fields are bounded where the runtime writes them, but a hand-edited, truncated, or
