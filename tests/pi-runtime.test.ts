@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -23,6 +23,31 @@ import {
 } from "../packages/pi-runtime/src/index.js";
 
 const roleDirectory = path.resolve("packages/core/src/roles/prompts");
+
+/**
+ * Mutation experts run inside an isolated worktree whose SOURCE is the repository the
+ * suite is standing in. When the suite itself runs inside a worktree - which is exactly
+ * what happens when the council delegates a mutation expert - git refuses to add a
+ * nested worktree (`fatal: '$GIT_DIR' too big`), and the verification gate then reports a
+ * false failure for work that is actually fine. tests/global-setup.ts clones the main
+ * checkout to a short path in that case; every test that needs a real git source branches
+ * from it instead of from `process.cwd()`, so it exercises the same code path a normal
+ * checkout would. Ordinary checkouts leave the variable unset and behave as before.
+ */
+const gitSource = process.env.EXPERT_COUNCIL_TEST_WORKSPACE ?? publishedTestWorkspace() ?? process.cwd();
+
+/**
+ * The clone path published by tests/global-setup.ts. Read from a file rather than the
+ * environment because a globalSetup's `process.env` changes never reach vitest workers.
+ */
+function publishedTestWorkspace(): string | undefined {
+  try {
+    const value = readFileSync(path.join(tmpdir(), "ecwt", "git-source.txt"), "utf8").trim();
+    return value.length > 0 ? value : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 class SafeResourceLoader {
   constructor(_options: Record<string, unknown>) {}
@@ -259,7 +284,7 @@ describe("Pi runtime adapter", () => {
       },
     };
     const runtime = await PiExpertRuntime.create({
-      cwd: process.cwd(),
+      cwd: gitSource,
       config: parseCouncilConfig({}),
       sdk,
       modelRuntime,
@@ -274,7 +299,7 @@ describe("Pi runtime adapter", () => {
       skills: [],
       reasoningLevel: "low",
       readOnly: false,
-      workspace: process.cwd(),
+      workspace: gitSource,
       timeoutMs: 1_000,
       attempt: 1,
     });
@@ -485,7 +510,7 @@ describe("Pi runtime adapter", () => {
       },
     };
     const runtime = await PiExpertRuntime.create({
-      cwd: process.cwd(),
+      cwd: gitSource,
       config: parseCouncilConfig({}),
       sdk,
       modelRuntime,
@@ -499,7 +524,7 @@ describe("Pi runtime adapter", () => {
       skills: [],
       reasoningLevel: "low",
       readOnly: false,
-      workspace: process.cwd(),
+      workspace: gitSource,
       timeoutMs: 5_000,
       attempt: 1,
     });
@@ -547,7 +572,7 @@ describe("Pi runtime adapter", () => {
       },
     };
     const runtime = await PiExpertRuntime.create({
-      cwd: process.cwd(),
+      cwd: gitSource,
       config: parseCouncilConfig({}),
       sdk,
       modelRuntime,
@@ -563,7 +588,7 @@ describe("Pi runtime adapter", () => {
       skills: [],
       reasoningLevel: "low",
       readOnly: false,
-      workspace: process.cwd(),
+      workspace: gitSource,
       timeoutMs: 20_000,
       attempt: 1,
     });
@@ -623,7 +648,7 @@ describe("Pi runtime adapter", () => {
         }),
       };
       const runtime = await PiExpertRuntime.create({
-        cwd: process.cwd(),
+        cwd: gitSource,
         config: parseCouncilConfig({ security: { observability: { expertWindow: "interactive", redactToolArgs } } }),
         sdk,
         modelRuntime,
@@ -639,7 +664,7 @@ describe("Pi runtime adapter", () => {
         skills: [],
         reasoningLevel: "low",
         readOnly: false,
-        workspace: process.cwd(),
+        workspace: gitSource,
         timeoutMs: 30_000,
         attempt: 1,
       });
@@ -768,7 +793,7 @@ describe("Pi runtime adapter", () => {
       },
     };
     const runtime = await PiExpertRuntime.create({
-      cwd: process.cwd(),
+      cwd: gitSource,
       config: parseCouncilConfig({}),
       sdk,
       modelRuntime,
@@ -784,7 +809,7 @@ describe("Pi runtime adapter", () => {
       skills: [],
       reasoningLevel: "low",
       readOnly: false,
-      workspace: process.cwd(),
+      workspace: gitSource,
       timeoutMs: 20_000,
       attempt: 1,
     });
@@ -861,11 +886,11 @@ describe("Pi runtime adapter", () => {
         };
       },
     };
-    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const runtime = await PiExpertRuntime.create({ cwd: gitSource, config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const executionId = "exec_tool_once";
     const running = runtime.executeExpert({
       executionId, role: "implementation-worker", task: "Build it", model: "p/m",
-      tools: ["read", "edit", "write"], skills: [], readOnly: false, workspace: process.cwd(), timeoutMs: 20_000, attempt: 1,
+      tools: ["read", "edit", "write"], skills: [], readOnly: false, workspace: gitSource, timeoutMs: 20_000, attempt: 1,
     });
     let progress = await runtime.inspectExecution(executionId);
     for (let i = 0; i < 50 && !progress?.pendingInteraction; i += 1) {
@@ -952,10 +977,10 @@ describe("Pi runtime adapter", () => {
         },
       }),
     };
-    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const runtime = await PiExpertRuntime.create({ cwd: gitSource, config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "implementation-worker", task: "hang", model: "p/m", tools: ["read"], skills: [],
-      reasoningLevel: "low", readOnly: false, workspace: process.cwd(), timeoutMs: 1_500, attempt: 1,
+      reasoningLevel: "low", readOnly: false, workspace: gitSource, timeoutMs: 1_500, attempt: 1,
     });
     expect(result.status).toBe("failed");
     expect(result.executionMetadata?.failureType).toBe("timeout");
@@ -982,10 +1007,10 @@ describe("Pi runtime adapter", () => {
         },
       }),
     };
-    const runtime = await PiExpertRuntime.create({ cwd: process.cwd(), config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
+    const runtime = await PiExpertRuntime.create({ cwd: gitSource, config: parseCouncilConfig({}), sdk, modelRuntime, roleDirectory });
     const result = await runtime.executeExpert({
       role: "implementation-worker", task: "throw", model: "p/m", tools: ["read"], skills: [],
-      reasoningLevel: "low", readOnly: false, workspace: process.cwd(), timeoutMs: 5_000, attempt: 1,
+      reasoningLevel: "low", readOnly: false, workspace: gitSource, timeoutMs: 5_000, attempt: 1,
     });
     expect(result.status).toBe("failed");
     expect(result.summary).toContain("boom");
