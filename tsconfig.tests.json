@@ -1,0 +1,12 @@
+{
+  "//": "Typechecks the test suite. The root tsconfig is a solution-style project (files: [] referencing package projects only), so nothing ever typechecked tests - which left the compile-time half of guards like `Record<keyof ExpertOutcome, unknown>` and the EVENT_KIND_COVERAGE Record inert. Extends tsconfig.base.json deliberately: the suite must face the project's real strictness (noUncheckedIndexedAccess, verbatimModuleSyntax), not a softer copy of it.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false
+  },
+  "include": ["tests/**/*.ts"]
+}

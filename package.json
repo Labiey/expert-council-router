@@ -19,7 +19,7 @@
   "scripts": {
     "build": "tsc -b && node scripts/sync-shared-assets.mjs && node scripts/build-codex-plugin.mjs",
     "clean": "tsc -b --clean",
-    "typecheck": "tsc -b --pretty false",
+    "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
     "test": "vitest run",
     "test:watch": "vitest",
     "pack:check": "npm run build && npm pack --workspaces --dry-run",
