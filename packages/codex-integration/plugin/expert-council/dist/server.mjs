@@ -312275,6 +312275,7 @@ var ExpertCouncilService = class {
     const delegationWallStart = Date.now();
     let observedToolCalls = 0;
     let observedToolErrors = 0;
+    const observedAttention = [];
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
     while (state2.attempts < maxAttempts) {
@@ -312367,6 +312368,11 @@ var ExpertCouncilService = class {
       await this.persistState();
       observedToolCalls += typeof lastResult.executionMetadata?.toolCalls === "number" ? lastResult.executionMetadata.toolCalls : 0;
       observedToolErrors += typeof lastResult.executionMetadata?.toolErrors === "number" ? lastResult.executionMetadata.toolErrors : 0;
+      for (const item of lastResult.executionMetadata?.attention ?? []) {
+        if (!observedAttention.some((seen) => seen.code === item.code && seen.budgetFractionUsed === item.budgetFractionUsed)) {
+          observedAttention.push({ ...item });
+        }
+      }
       const attemptUsage = approximateUsage(lastResult);
       if (attemptUsage) {
         for (const [key, value3] of Object.entries(attemptUsage)) {
@@ -312481,6 +312487,14 @@ var ExpertCouncilService = class {
     }));
     if (attemptHistory.length > 1) {
       result.executionMetadata = { ...result.executionMetadata, attemptHistory };
+    }
+    if (observedToolCalls || observedToolErrors || observedAttention.length) {
+      result.executionMetadata = {
+        ...result.executionMetadata,
+        ...observedToolCalls ? { toolCalls: observedToolCalls } : {},
+        ...observedToolErrors ? { toolErrors: observedToolErrors } : {},
+        ...observedAttention.length ? { attention: observedAttention.slice(-8) } : {}
+      };
     }
     Object.assign(state2, { status: result.status, model: result.model, finishedAt: (/* @__PURE__ */ new Date()).toISOString() });
     const parsed = parseModelKey(result.model);
@@ -319491,7 +319505,13 @@ var PiExpertRuntime = class _PiExpertRuntime {
       ...extra
     };
     entry.attention = [...entry.attention.slice(-7), attention];
-    this.emitObservability(request.executionId, request.role, request.model, "attention", { text: attention.detail });
+    this.emitObservability(request.executionId, request.role, request.model, "attention", {
+      text: attention.detail,
+      ...attention.toolCalls === void 0 ? {} : { toolCalls: attention.toolCalls },
+      ...attention.toolErrors === void 0 ? {} : { toolErrors: attention.toolErrors },
+      ...attention.budgetFractionUsed === void 0 ? {} : { budgetFractionUsed: attention.budgetFractionUsed },
+      ...attention.nudgedExpert ? { nudgedExpert: true } : {}
+    });
     if (options.nudge)
       this.nudgeExpert(entry, request, attention);
     return attention;

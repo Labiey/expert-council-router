@@ -737,7 +737,13 @@ export class PiExpertRuntime implements ExpertRuntime {
       ...extra,
     };
     entry.attention = [...entry.attention.slice(-7), attention];
-    this.emitObservability(request.executionId, request.role, request.model, "attention", { text: attention.detail });
+    this.emitObservability(request.executionId, request.role, request.model, "attention", {
+      text: attention.detail,
+      ...(attention.toolCalls === undefined ? {} : { toolCalls: attention.toolCalls }),
+      ...(attention.toolErrors === undefined ? {} : { toolErrors: attention.toolErrors }),
+      ...(attention.budgetFractionUsed === undefined ? {} : { budgetFractionUsed: attention.budgetFractionUsed }),
+      ...(attention.nudgedExpert ? { nudgedExpert: true } : {}),
+    });
     if (options.nudge) this.nudgeExpert(entry, request, attention);
     return attention;
   }

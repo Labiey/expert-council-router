@@ -1860,3 +1860,57 @@ describe("delegation lifetime is reported to observers", () => {
     expect(result.summary).toBe("reviewed");
   });
 });
+
+describe("cross-attempt evidence survives a successful retry", () => {
+  it("keeps a struggling first attempt visible, and reports delegation totals", async () => {
+    const runtime = new MockRuntime([model("cheap", "one"), model("quality", "two")], [
+      {
+        status: "failed",
+        role: "reviewer",
+        model: "cheap/one",
+        summary: "gate failed",
+        executionMetadata: {
+          failureType: "test_failure" as const,
+          toolCalls: 6,
+          toolErrors: 5,
+          attention: [{
+            code: "consecutive_tool_failures" as const,
+            at: "2026-09-16T00:00:00.000Z",
+            detail: "3 consecutive tool calls failed (5 of 6 observed).",
+            toolCalls: 6,
+            toolErrors: 5,
+            nudgedExpert: true,
+          }],
+        },
+      },
+      {
+        status: "success",
+        role: "reviewer",
+        model: "quality/two",
+        summary: "reviewed cleanly",
+        executionMetadata: { toolCalls: 2, toolErrors: 0 },
+      },
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles }, retry: { maxAttempts: 3 } });
+    const result = await service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 }).result;
+
+    expect(result.status).toBe("success");
+    // Defect #20: these came from the runtime, which only ever reports its own last
+    // attempt, so a clean retry erased the struggle - and telemetry mixed an accumulated
+    // toolErrors with a single-attempt toolCalls.
+    expect(result.executionMetadata?.toolCalls).toBe(8);
+    expect(result.executionMetadata?.toolErrors).toBe(5);
+    expect(result.executionMetadata?.attention?.map((item) => item.code)).toEqual(["consecutive_tool_failures"]);
+    expect(result.executionMetadata?.attention?.[0]?.nudgedExpert).toBe(true);
+  });
+
+  it("does not invent totals for a single-attempt run", async () => {
+    const runtime = new MockRuntime([model("cheap", "one")], [
+      { status: "success", role: "reviewer", model: "cheap/one", summary: "reviewed" },
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const result = await service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 }).result;
+    expect(result.executionMetadata?.toolCalls).toBeUndefined();
+    expect(result.executionMetadata?.attention).toBeUndefined();
+  });
+});

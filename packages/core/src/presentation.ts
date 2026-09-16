@@ -158,6 +158,16 @@ function formatExpertEventLine(event: ExpertObservabilityEvent): string {
       return `${head} tool ${event.tool ?? "?"} ${event.ok === false ? "FAILED" : "ok"}`;
     case "assistant_text":
       return `${head} says: ${event.text ?? ""}`;
+    case "attention": {
+      // A struggle warning is the one event an operator acts on, so it must arrive with
+      // its detail and its numbers rather than as a bare kind name.
+      const facts = [
+        typeof event.budgetFractionUsed === "number" ? `budget ${Math.round(event.budgetFractionUsed * 100)}%` : undefined,
+        typeof event.toolErrors === "number" ? `tool errors ${event.toolErrors}/${event.toolCalls ?? 0}` : undefined,
+        event.nudgedExpert ? "expert steered" : undefined,
+      ].filter((fact): fact is string => fact !== undefined);
+      return `${head} WARNING: ${event.text ?? "struggle detected"}${facts.length ? ` (${facts.join(", ")})` : ""}`;
+    }
     case "delegation_final":
       return `${head} delegation finished (no further attempts)`;
     case "interaction_opened":

@@ -34,6 +34,11 @@ export interface ExpertEventFrame {
   model?: string;
   /** Attempt number, when the runtime recorded one (a delegation can span several). */
   attempt?: number;
+  /** Guardrail counters carried on an `attention` event; dropped if not copied here. */
+  toolCalls?: number;
+  toolErrors?: number;
+  budgetFractionUsed?: number;
+  nudgedExpert?: boolean;
   tool?: string;
   ok?: boolean;
   text?: string;
@@ -278,6 +283,10 @@ function parseExpertEvent(line: string): ExpertEventFrame | undefined {
     ...(text("failureType") !== undefined ? { failureType: text("failureType") } : {}),
     ...(typeof frame.durationMs === "number" ? { durationMs: frame.durationMs } : {}),
     ...(typeof frame.attempt === "number" ? { attempt: frame.attempt } : {}),
+    ...(typeof frame.toolCalls === "number" ? { toolCalls: frame.toolCalls } : {}),
+    ...(typeof frame.toolErrors === "number" ? { toolErrors: frame.toolErrors } : {}),
+    ...(typeof frame.budgetFractionUsed === "number" ? { budgetFractionUsed: frame.budgetFractionUsed } : {}),
+    ...(typeof frame.nudgedExpert === "boolean" ? { nudgedExpert: frame.nudgedExpert } : {}),
   };
 }
 

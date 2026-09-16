@@ -14,6 +14,20 @@ All notable changes to Expert Council are documented here. Versions follow seman
   really over, and `watch` closes on that; a stream without the marker (an older runtime, or a process that
   died) closes after 750ms without growth, and `--timeout-ms` still bounds every wait. Verified by
   falsification: restoring the old rule reddens three watch tests, including the escalation case.
+- **A struggling first attempt stopped vanishing when a retry succeeded (defect #20).** The delivered
+  `executionMetadata` carried whatever the runtime's *last* attempt saw, so a delegation whose first attempt
+  burned its budget on repeated tool failures reported no warnings at all once attempt two ran cleanly - and
+  telemetry mixed an accumulated `toolErrors` with a single-attempt `toolCalls`. The council now folds
+  delegation-wide totals: `toolCalls`, `toolErrors`, and `attention` deduplicated across attempts (last 8).
+- **A struggle warning reached the operator's terminal with its sentence thrown away (defect #21).**
+  `formatExpertEvent` had no `attention` case, so it fell through to the default branch and printed the bare
+  kind name - observed live, two `attention` lines explained nothing. It renders
+  `WARNING: <detail> (budget 60%, tool errors 1/2, expert steered)` now.
+- **Guardrail counters never made it onto the stream, and would have been dropped if they had (defect #22).**
+  The runtime wrote only the warning text, and the CLI's frame reader copies only fields it knows, so
+  counters were lost at both ends of the same pipe. Both ends were fixed together and tested separately,
+  because "the field exists" and "the field survives the projection" are different bugs - the same lesson as
+  `interactionRounds` in 0.8.4 and `attempt` in 0.8.6.
 - **`watch` reported the wrong outcome when it closed (defect #19).** A delegation that failed once and then
   succeeded announced itself as `stream closed (failed)`, because the watcher kept the first terminal event it
   had seen. It now keeps the last one, and a close driven by the delegation-level marker says
@@ -121,6 +135,9 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### 修复
 - **专家窗口不再在委派中途关闭（缺陷 #17）。** 现场发现于第一次跨进程演示：一个 scout 的首次尝试死于供应商故障，Council 升级到另一个模型并成功完成任务，而 `expert-council watch --follow` 早已打印 `stream closed (failed)` 退出——运维者只看到失败，永远看不到真正完成的那次尝试。根因是每次尝试都会写自己的终止事件，而 watch 把任意终止事件当成了流的尽头。现在 Council 在委派真正结束时写一条委派级 `delegation_final` 标记，watch 认它关闭；没有该标记的流（旧运行时、或进程已死）改为在 750ms 无增长后关闭，`--timeout-ms` 仍然是所有等待的上界。反证已做：恢复旧规则会让 3 条 watch 用例变红，其中正是升级那一条。
+- **首次尝试的挣扎不再因为重试成功而消失（缺陷 #20）。** 交付的 `executionMetadata` 带的是运行时**最后一次**尝试所见：第 1 次尝试反复工具失败烧光预算后，只要第 2 次干净完成，结果里就一条警告都不剩；遥测又把累加的 `toolErrors` 与单次尝试的 `toolCalls` 混在一起。现在由 Council 折算整条委派的总量：`toolCalls`、`toolErrors`、以及跨尝试按 code 去重的 `attention`（末 8 条）。
+- **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
+- **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
 - **`watch` 关闭时报告的结局是错的（缺陷 #19）。** 一次先失败后成功的委派会自称 `stream closed (failed)`，因为观察者记住了它看到的**第一个**终止事件。现在它记住最后一个；由委派级标记驱动的关闭会说 `stream closed (delegation finished)`——收尾那行再也不能和自己上面的输出相矛盾。
 - **出厂的事件渲染器此前完全没有测试（缺陷 #18）。** 0.8.4 那条"格式化器"测试注入的是桩，测试通过而 core 里真正的 `formatExpertEvent` 从未被断言过。现在它有直接测试，并且当场抓到一个真 bug：一条事件可以渲染成两行终端输出，会让运维者的 tail 与流失步。渲染已强制压成单行。
 - **CLI 的流读取器会丢掉新的 `attempt` 字段。** 它的帧解析只复制自己认识的字段，尝试序号因此在到达渲染器之前就被静默丢弃——与 0.8.4 的 `interactionRounds` 同类的白名单陷阱，这次靠"对解析器而不是对桩"写的测试抓到。

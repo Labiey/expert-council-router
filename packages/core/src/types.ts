@@ -167,6 +167,11 @@ export interface ExpertObservabilityEvent {
   ok?: boolean;
   /** Bounded expert-authored text, or an interaction/terminal detail. */
   text?: string;
+  /** Guardrail counters, carried so an operator's terminal shows what the host notice shows. */
+  toolCalls?: number;
+  toolErrors?: number;
+  budgetFractionUsed?: number;
+  nudgedExpert?: boolean;
   /** Bounded argument summary; present only when redactToolArgs is false. */
   argsSummary?: string;
   status?: string;

@@ -1890,3 +1890,68 @@ describe("observability stream marks attempts and can be closed by the council",
     }
   });
 });
+
+describe("attention events carry their counters into the stream", () => {
+  it("writes toolCalls, toolErrors and the attempt alongside the warning", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-attn-"));
+    let fire: ((event: unknown) => void) | undefined;
+    const state = {
+      messages: [] as Array<{ role: string; content: Array<Record<string, unknown>> }>,
+      model: { provider: "p", id: "m", name: "Mock", reasoning: true },
+    };
+    const modelRuntime = {
+      getAvailable: () => [
+        { provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+      ],
+      getModel: () => ({ provider: "p", id: "m" }),
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime } as unknown as PiSdkLike["ModelRuntime"],
+      SessionManager: { inMemory: () => ({}) } as unknown as PiSdkLike["SessionManager"],
+      createAgentSession: (async () => ({
+        session: {
+          prompt: async () => {
+            for (let i = 0; i < 3; i += 1) {
+              fire?.({ type: "tool_execution_end", toolName: "bash", toolCallId: `c${i}`, isError: true });
+            }
+            state.messages = [
+              { role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "Done.", findings: ["looked"] }) }] },
+            ];
+          },
+          waitForIdle: async () => {},
+          dispose: () => {},
+          subscribe: (listener: (event: unknown) => void) => { fire = listener; return () => {}; },
+          setActiveToolsByName: () => {},
+          state,
+        },
+      })) as PiSdkLike["createAgentSession"],
+    };
+    const NL = String.fromCharCode(10);
+    try {
+      const runtime = await PiExpertRuntime.create({
+        cwd: dir,
+        config: parseCouncilConfig({ security: { observability: { expertWindow: "interactive", streamToHost: true, redactToolArgs: true } } }),
+        sdk,
+        modelRuntime: modelRuntime as never,
+        roleDirectory,
+        observabilityDir: dir,
+      });
+      await runtime.executeExpert({
+        executionId: "exec_attn", role: "scout", task: "Trace it", model: "p/m",
+        tools: ["read"], skills: [], readOnly: true, workspace: dir, timeoutMs: 20_000, attempt: 1,
+      });
+      const rows = (await readFile(path.join(dir, "exec_attn.jsonl"), "utf8"))
+        .trim().split(NL).map((text) => JSON.parse(text) as Record<string, unknown>);
+      const warning = rows.find((row) => row.kind === "attention");
+      expect(warning).toBeDefined();
+      // Defect #22: the warning used to carry only its sentence, so an operator tailing
+      // the stream could see that something was wrong and nothing about how wrong.
+      expect(warning).toMatchObject({ toolCalls: 3, toolErrors: 3, attempt: 1 });
+      expect(typeof warning!.text).toBe("string");
+      expect((warning!.text as string)).toContain("consecutive tool calls failed");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

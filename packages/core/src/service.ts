@@ -86,6 +86,7 @@ import type {
   ProviderLimitsView,
   UsageLedger,
   ExpertRole,
+  ExpertAttention,
   AttemptRecord,
 } from "./types.js";
 
@@ -646,6 +647,9 @@ export class ExpertCouncilService implements ExpertCouncil {
     const delegationWallStart = Date.now();
     let observedToolCalls = 0;
     let observedToolErrors = 0;
+    // Struggle warnings raised by ANY attempt, deduplicated, so a clean second attempt
+    // cannot erase the fact that the first one was thrashing.
+    const observedAttention: ExpertAttention[] = [];
     const cumulativeUsage: NonNullable<ExpertOutcome["approximateUsage"]> = {};
     const maxAttempts = this.config.retry.maxAttempts;
 
@@ -765,6 +769,11 @@ export class ExpertCouncilService implements ExpertCouncil {
       await this.persistState();
       observedToolCalls += typeof lastResult.executionMetadata?.toolCalls === "number" ? lastResult.executionMetadata.toolCalls : 0;
       observedToolErrors += typeof lastResult.executionMetadata?.toolErrors === "number" ? lastResult.executionMetadata.toolErrors : 0;
+      for (const item of lastResult.executionMetadata?.attention ?? []) {
+        if (!observedAttention.some((seen) => seen.code === item.code && seen.budgetFractionUsed === item.budgetFractionUsed)) {
+          observedAttention.push({ ...item });
+        }
+      }
       const attemptUsage = approximateUsage(lastResult);
       if (attemptUsage) {
         for (const [key, value] of Object.entries(attemptUsage)) {
@@ -915,6 +924,18 @@ export class ExpertCouncilService implements ExpertCouncil {
       }));
     if (attemptHistory.length > 1) {
       result.executionMetadata = { ...result.executionMetadata, attemptHistory };
+    }
+    // Cross-attempt totals belong on the delivered result too. The runtime reports what
+    // its own last attempt saw; a host reading a retried delegation needs the whole
+    // delegation, and telemetry must not mix an accumulated `toolErrors` with a
+    // single-attempt `toolCalls`.
+    if (observedToolCalls || observedToolErrors || observedAttention.length) {
+      result.executionMetadata = {
+        ...result.executionMetadata,
+        ...(observedToolCalls ? { toolCalls: observedToolCalls } : {}),
+        ...(observedToolErrors ? { toolErrors: observedToolErrors } : {}),
+        ...(observedAttention.length ? { attention: observedAttention.slice(-8) } : {}),
+      };
     }
     Object.assign(state, { status: result.status, model: result.model, finishedAt: new Date().toISOString() });
     const parsed = parseModelKey(result.model);

@@ -317,6 +317,37 @@ ${line("delegation_final")}
     });
   });
 
+  it("copies guardrail counters on an attention frame rather than dropping them", async () => {
+    const frame = line("attention", {
+      toolCalls: 7,
+      toolErrors: 4,
+      budgetFractionUsed: 0.85,
+      nudgedExpert: true,
+      text: "4 of 7 observed tool calls failed.",
+    });
+    await withStream(frame + String.fromCharCode(10), async (dir) => {
+      const { io, out } = capture();
+      const seen: Array<Record<string, unknown>> = [];
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir],
+        io,
+        undefined,
+        { formatEvent: (received) => { seen.push({ ...(received as unknown as Record<string, unknown>) }); return received.kind; } },
+      );
+      expect(code).toBe(0);
+      // Defect #22: the reader copies only fields it knows, so the counters were silently
+      // lost between the file and the renderer - the same whitelist hazard as `attempt`.
+      expect(seen[0]).toMatchObject({
+        kind: "attention",
+        toolCalls: 7,
+        toolErrors: 4,
+        budgetFractionUsed: 0.85,
+        nudgedExpert: true,
+      });
+      expect(out.join("")).toBe("attention" + String.fromCharCode(10));
+    });
+  });
+
   it("closes a legacy stream with no final marker once it stops growing", async () => {
     await withStream(`${line("started")}
 ${line("failed", { status: "failed", failureType: "timeout" })}

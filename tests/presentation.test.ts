@@ -133,3 +133,37 @@ describe("formatExpertEvent - the renderer shipped in core, not a CLI stub", () 
     expect(noisy.includes("\n")).toBe(false);
   });
 });
+
+describe("struggle warnings reach the window with their meaning", () => {
+  const at = "2026-09-16T11:38:41.000Z";
+
+  it("renders an attention event as a warning carrying detail and numbers, not a bare kind name", () => {
+    const rendered = formatExpertEvent({
+      t: at,
+      executionId: "exec_1",
+      role: "scout",
+      model: "p/m",
+      kind: "attention",
+      attempt: 1,
+      text: "60% of the execution budget used with no result yet.",
+      toolCalls: 2,
+      toolErrors: 1,
+      budgetFractionUsed: 0.6,
+      nudgedExpert: true,
+    });
+    // Defect #21: there was no `attention` case at all, so the shared renderer fell through
+    // to its default branch and printed the bare kind name - the window said `attention`
+    // and threw the sentence away. Observed live.
+    expect(rendered).toContain("WARNING");
+    expect(rendered).toContain("60% of the execution budget used with no result yet.");
+    expect(rendered).toContain("budget 60%");
+    expect(rendered).toContain("tool errors 1/2");
+    expect(rendered).toContain("expert steered");
+    expect(rendered).not.toBe("11:38:41 [scout p/m] attention");
+  });
+
+  it("still renders a warning that carries no counters", () => {
+    expect(formatExpertEvent({ t: at, executionId: "exec_1", role: "scout", kind: "attention" }))
+      .toBe("11:38:41 [scout] WARNING: struggle detected");
+  });
+});
