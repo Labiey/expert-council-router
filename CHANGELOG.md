@@ -37,6 +37,14 @@ All notable changes to Expert Council are documented here. Versions follow seman
   the actual parser, so the next kind added to the union cannot skip the schema again; restoring the old
   narrow enums reproduces the original `Invalid option` rejection verbatim. The read error also gained a
   recovery hint naming the file and the safe way out, because an unreadable assessment used to be a dead end.
+- **A read-only `partial` is delivered instead of paid for twice (defect #32).** The escalation rule was
+  `status !== "success"`, so every incomplete-but-usable report bought a second full attempt on another
+  model - observed live, a scout whose 25-second partial answer triggered a 44-second re-run of the same
+  investigation. `partial` from a read-only role now terminates the loop, keeping `status: "partial"` and
+  adding a risk line that says the council chose not to re-run. Mutation roles are unchanged, and an expert
+  that stopped for missing context still escalates, because that is the one case a different model can
+  genuinely fix. Falsified by disabling the condition: exactly the scout test reddens, while both
+  escalate-anyway tests stay green.
 - **Supplier faults now reach the axis routing actually reads (defect #31).** `provider_error` was excluded
   from the model's reliability record in 0.8.5 - correct, and kept - but nothing picked the signal up, and a
   connection fault is not model-death evidence so it produced no availability marker either. The result: a
@@ -218,6 +226,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
 - **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
 - **一条落盘的标记能让共享评估文件变得不可读（缺陷 #33）。** `rate-limited` 在标记联合类型里、也由标记写入函数写出，但 `config.ts` 的持久化状态枚举仍然只有 `unavailable` 与 `quota-exhausted`——于是**第一次正常的瞬时限流标记**就让 `model-assessment.json` 对**之后每一个进程**校验失败：`load()` 与 `update()` 双双抛错，而 factory 启动时的 `persistence.load()` 没有 try 包裹。我拿真实文件的副本做了端到端验证，不是推断出来的。现在两个枚举都覆盖全部 kind，并有一条测试用**真正的解析器**遍历 `AVAILABILITY_MARKER_KINDS`，所以下一个新 kind 不可能再绕过 schema；把旧的窄枚举改回去，会逐字重现当初的 `Invalid option` 拒绝。读盘错误也补上了恢复提示（点名文件与安全的出路），因为一份坏掉的评估文件过去就是死胡同。
+- **只读角色的 `partial` 直接交付，不再付两遍钱（缺陷 #32）。** 升级规则原本是 `status !== "success"`，于是每一份"不完整但可用"的答复都会换来另一次整额尝试——现场就看到了：scout 25 秒给出的 partial，触发了对同一次调查的 44 秒重跑。现在只读角色的 `partial` 会终止循环，保留 `status: "partial"`，并加一条说明"Council 选择不重跑"的 risk。可写角色不变；而因缺上下文主动停止的专家依然会升级——那是换更强模型确实能解决的情形。反证：把接受条件摘掉，只有 scout 那条变红，两条"照旧升级"的测试保持绿。
 - **供应商故障终于进入路由真正会读的那条轴（缺陷 #31）。** 0.8.5 把 `provider_error` 从模型可靠性记录里剔除——这件事是对的，也保留了——但没有任何一端接手这个信号，而连接错误又不是“模型已死”的证据，所以连可用性标记都不产生。结果是：一条 5 次里掉线 4 次的线路，始终是路由的首选，每次委派都要付一次注定失败的尝试去重新发现这件事。现在 `classifyAvailabilityEvidence` 对它**本来就拥有**的传输标记返回 `transport-unstable`（不新建标记清单），给最短的标记窗口（5 分钟），并在“模型不存在”那组之前判它，因此 "503 Service Unavailable" 绝不会被读成模型消失；而且**只标坏掉的那条线路**、不连坐同 provider 的兄弟模型——连接故障是单线路证据，账号级限流才是账户事实。两条轴的分离是刻意的：供应商故障仍然不进模型记录，只在窗口开着时暂被路由避开——正反都验过，包括窗口过去之后路由会重新选它。我们自己的超时依然什么都不标：预算用完不是供应商的错。
 - **六处与代码脱钩的文档块，其中一处还在说谎（缺陷 #30）。** 这是派出去的一名 scout 在被运维者实时旁观工作时发现的，不是我看 diff 看出来的：同一个分类器带了两份逐字相同的文档注释，`*/` 紧挨 `/**`。成因是我自己的手法——习惯把新声明插在“已有文档块”和它所描述的代码中间。六处逐一修复：`failures.ts`、`presentation.ts`（渲染器的注释被我在它上方插入覆盖表时挤掉了）、`types.ts` 两处（一处归还给 `ModelAvailabilityObservation`，一处陈旧重复删除）、`pi-runtime.ts`，以及 `config.ts`——那里一份过期注释仍写着“从不透出工具参数，所以这里没什么可脱敏”，而 0.8.4 早已实现真实的参数脱敏：**读起来像现行说明却是错的文档，比没有文档更糟**。现在新增一条源码卫生测试：`packages/` 下任何紧接 `/**` 的 `*/` 都会失败并点名文件与行号；用注入一对注释验证，它报出 `index.ts:21`。
 - **读不出来的工作区 diff 不再冒充“工作树是干净的”（缺陷 #28）。** `WorkspaceBoundary.changedFiles` 会把自身的 `git status` 失败吞掉并返回 `[]`，于是一个可写专家只要 diff 读不出来——#11 那类 `$GIT_DIR` too big 正走这条路——就被报成“什么都没改”；照 `filesChanged` 做集成的宿主于是把真实成果集成为零。“无法判断”现在是一个独立的答案：所有会收集文件的交付路径（成功、超时、会话错误、抛错、中止、专家自停）都会给出 `executionMetadata.filesChangedError` 加一条 risk。并按这一族把全仓扫了一遍：70 个 `catch`、其中 15 个块内没有任何语句，逐个读过——其余都是有意为之（可选的 Pi 能力探测、竞态删除、宿主拒收的通知、拆除阶段），并把理由写在了代码旁边。

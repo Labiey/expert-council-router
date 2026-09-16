@@ -312303,6 +312303,7 @@ var ExpertCouncilService = class {
     const delegationWallStart = Date.now();
     let observedToolCalls = 0;
     let observedToolErrors = 0;
+    let acceptedPartial = false;
     const observedAttention = [];
     const cumulativeUsage = {};
     const maxAttempts = this.config.retry.maxAttempts;
@@ -312440,6 +312441,10 @@ var ExpertCouncilService = class {
       }
       if (lastResult.status === "success")
         break;
+      if (lastResult.status === "partial" && !lastResult.executionMetadata?.stoppedByExpert && getRole(request.role).readOnly && (lastResult.summary ?? "").trim().length > 0) {
+        acceptedPartial = true;
+        break;
+      }
       if (lastResult.status === "aborted")
         break;
       const failure = failureTypeForResult(lastResult);
@@ -312508,6 +312513,12 @@ var ExpertCouncilService = class {
     }
     if (capBreaches.length) {
       result.risks = [...capBreaches, ...result.risks ?? []].slice(0, 20);
+    }
+    if (acceptedPartial) {
+      result.risks = [
+        "The council delivered a partial result from a read-only role rather than paying for a second attempt. Treat it as incomplete evidence, not as a verified answer - re-delegating is the Main Agent's call.",
+        ...result.risks ?? []
+      ].slice(0, 20);
     }
     if (persistenceErrors.length) {
       const affected = [...new Set(persistenceErrors.map((item) => item.model))].slice(0, 5);

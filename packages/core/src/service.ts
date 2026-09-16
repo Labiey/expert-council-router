@@ -27,7 +27,7 @@ import {
   withModelAvailabilityMarker,
   withModelStatus,
 } from "./model-assessment.js";
-import { listRoles } from "./roles.js";
+import { getRole, listRoles } from "./roles.js";
 import { parseRoutePolicyDocument, pruneRoutePolicyDocument, resolveEffectivePolicy, resolveProviderLimits, DEFAULT_PROVIDER_LIMITS } from "./route-policy.js";
 import { clampExpertResult } from "./result-clamp.js";
 import { effectiveCostMultiplier, rankModels, resolveBillingEntry, routePolicyExcludes } from "./routing.js";
@@ -650,6 +650,8 @@ export class ExpertCouncilService implements ExpertCouncil {
     const delegationWallStart = Date.now();
     let observedToolCalls = 0;
     let observedToolErrors = 0;
+    // Set when a read-only role's partial result was delivered instead of re-run (#32).
+    let acceptedPartial = false;
     // Struggle warnings raised by ANY attempt, deduplicated, so a clean second attempt
     // cannot erase the fact that the first one was thrashing.
     const observedAttention: ExpertAttention[] = [];
@@ -823,6 +825,21 @@ export class ExpertCouncilService implements ExpertCouncil {
       }
 
       if (lastResult.status === "success") break;
+      if (
+        lastResult.status === "partial"
+        && !lastResult.executionMetadata?.stoppedByExpert
+        && getRole(request.role).readOnly
+        && (lastResult.summary ?? "").trim().length > 0
+      ) {
+        // A read-only expert that says "incomplete" has still delivered its evidence. Re-running
+        // the whole investigation on another model costs the full budget again, and its outcome
+        // can only be judged by whoever has to accept it - so the council delivers the partial
+        // result and says so, leaving the retry decision with the Main Agent (defect #32). An
+        // expert that stopped for missing context is the opposite case: that is exactly what a
+        // stronger model can fix, so it still escalates.
+        acceptedPartial = true;
+        break;
+      }
       // A Main-Agent abort is deliberate: never classify, retry, or escalate it.
       if (lastResult.status === "aborted") break;
       const failure = failureTypeForResult(lastResult);
@@ -917,6 +934,12 @@ export class ExpertCouncilService implements ExpertCouncil {
     }
     if (capBreaches.length) {
       result.risks = [...capBreaches, ...(result.risks ?? [])].slice(0, 20);
+    }
+    if (acceptedPartial) {
+      result.risks = [
+        "The council delivered a partial result from a read-only role rather than paying for a second attempt. Treat it as incomplete evidence, not as a verified answer - re-delegating is the Main Agent's call.",
+        ...(result.risks ?? []),
+      ].slice(0, 20);
     }
     if (persistenceErrors.length) {
       const affected = [...new Set(persistenceErrors.map((item) => item.model))].slice(0, 5);

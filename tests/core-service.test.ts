@@ -2117,3 +2117,82 @@ describe("transport faults reach the routing eligibility axis (defect #31)", () 
     expect(revived.requests.map((request) => request.model)).toEqual(["p/dead"]);
   });
 });
+
+describe("a read-only partial is delivered rather than re-run (defect #32)", () => {
+  const models = [model("cheap", "one"), model("quality", "two")];
+
+  function partialOnFirst(status: "partial" = "partial", metadata: Record<string, unknown> = {}) {
+    return (request: { role: string; model: string }) => ({
+      status,
+      role: request.role as never,
+      model: request.model,
+      summary: "Found the two call sites but could not confirm the lock ordering.",
+      findings: ["packages/pi-runtime/src/pi-runtime.ts subscribes before pruning"],
+      executionMetadata: { attempts: 1, durationMs: 1_200, ...metadata },
+    }) as never;
+  }
+
+  it("stops after one attempt for a scout that reported itself incomplete", async () => {
+    const runtime = new MockRuntime(models, [
+      partialOnFirst(),
+      (request: { role: string; model: string }) => ({
+        status: "success",
+        role: request.role as never,
+        model: request.model,
+        summary: "second opinion",
+        executionMetadata: { attempts: 1, durationMs: 900 },
+      }) as never,
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const result = await service.delegate({ role: "scout", task: "Trace the pruning path", timeoutMs: 60_000 });
+
+    // The whole investigation would have been paid for twice to obtain an answer the host
+    // can judge better than the council can.
+    expect(runtime.requests).toHaveLength(1);
+    expect(result.status).toBe("partial");
+    expect(result.findings).toHaveLength(1);
+    expect((result.risks ?? []).join(" ")).toContain("read-only role");
+    expect(result.executionMetadata?.escalationCount).toBe(0);
+  });
+
+  it("still re-runs a partial from a role that mutates files", async () => {
+    const runtime = new MockRuntime(models, [
+      partialOnFirst(),
+      (request: { role: string; model: string }) => ({
+        status: "success",
+        role: request.role as never,
+        model: request.model,
+        summary: "implemented",
+        executionMetadata: { attempts: 1, durationMs: 900 },
+      }) as never,
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const result = await service.delegate({
+      role: "implementation-worker",
+      task: "Rename a local symbol across the package",
+      timeoutMs: 60_000,
+    });
+    expect(result.status).toBe("success");
+    expect(runtime.requests).toHaveLength(2);
+    expect((result.risks ?? []).join(" ")).not.toContain("read-only role");
+  });
+
+  it("still escalates when the expert stopped because it lacked context", async () => {
+    const runtime = new MockRuntime(models, [
+      partialOnFirst("partial", { stoppedByExpert: true, failureType: "reasoning_failure" }),
+      (request: { role: string; model: string }) => ({
+        status: "success",
+        role: request.role as never,
+        model: request.model,
+        summary: "answered with the missing context",
+        executionMetadata: { attempts: 1, durationMs: 900 },
+      }) as never,
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const result = await service.delegate({ role: "scout", task: "Trace the pruning path", timeoutMs: 60_000 });
+    // A self-declared stop is the case a different model can genuinely fix, so #32's
+    // acceptance must not swallow it.
+    expect(runtime.requests).toHaveLength(2);
+    expect(result.status).toBe("success");
+  });
+});
