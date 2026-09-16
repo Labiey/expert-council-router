@@ -341,7 +341,10 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
         if (line.trim() === "") continue;
         const event = parseExpertEvent(line);
         if (event !== undefined && event.kind === WATCH_FINAL_KIND) finalSeen = true;
-        else if (event !== undefined && WATCH_TERMINAL_KINDS.has(event.kind)) terminal ??= event.kind;
+        // Last terminal wins: a retried delegation's first attempt may have failed while
+        // the attempt that finished the job succeeded, and a closing line that reported the
+        // earlier one would contradict the output the operator just watched.
+        else if (event !== undefined && WATCH_TERMINAL_KINDS.has(event.kind)) terminal = event.kind;
         if (json) {
           io.stdout.write(`${line}\n`);
           printed += 1;
@@ -373,8 +376,16 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
     io.stderr.write(`watch: ${file} disappeared before the stream reached a terminal event. ${WATCH_PREREQUISITE_HINT}\n`);
     return 1;
   }
-  if (terminal !== undefined) {
-    io.stderr.write(`[watch] ${executionId}: stream closed (${terminal}${legacyClose ? `, no final marker and no growth for ${WATCH_QUIET_MS}ms` : ""})\n`);
+  const closeReason = finalSeen
+    ? "delegation finished"
+    : terminal !== undefined
+      ? legacyClose
+        ? `${terminal}, no final marker and no growth for ${WATCH_QUIET_MS}ms`
+        : terminal
+      : undefined;
+  if (closeReason !== undefined) {
+    io.stderr.write(`[watch] ${executionId}: stream closed (${closeReason})
+`);
   }
   if (!follow && pending.length > 0) {
     io.stderr.write(`[watch] ${executionId}: held back ${pending.length} trailing byte(s) with no newline yet (still being written)\n`);

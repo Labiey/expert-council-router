@@ -14,6 +14,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
   really over, and `watch` closes on that; a stream without the marker (an older runtime, or a process that
   died) closes after 750ms without growth, and `--timeout-ms` still bounds every wait. Verified by
   falsification: restoring the old rule reddens three watch tests, including the escalation case.
+- **`watch` reported the wrong outcome when it closed (defect #19).** A delegation that failed once and then
+  succeeded announced itself as `stream closed (failed)`, because the watcher kept the first terminal event it
+  had seen. It now keeps the last one, and a close driven by the delegation-level marker says
+  `stream closed (delegation finished)` - the closing line can no longer contradict the output above it.
 - **The shipped event renderer had no test at all (defect #18).** The 0.8.4 "formatter" test injected a stub
   and passed while the real `formatExpertEvent` in core was never asserted. It now has direct tests, and one
   of them found a real bug: one event could render across two terminal lines, which would desynchronise an
@@ -117,6 +121,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### 修复
 - **专家窗口不再在委派中途关闭（缺陷 #17）。** 现场发现于第一次跨进程演示：一个 scout 的首次尝试死于供应商故障，Council 升级到另一个模型并成功完成任务，而 `expert-council watch --follow` 早已打印 `stream closed (failed)` 退出——运维者只看到失败，永远看不到真正完成的那次尝试。根因是每次尝试都会写自己的终止事件，而 watch 把任意终止事件当成了流的尽头。现在 Council 在委派真正结束时写一条委派级 `delegation_final` 标记，watch 认它关闭；没有该标记的流（旧运行时、或进程已死）改为在 750ms 无增长后关闭，`--timeout-ms` 仍然是所有等待的上界。反证已做：恢复旧规则会让 3 条 watch 用例变红，其中正是升级那一条。
+- **`watch` 关闭时报告的结局是错的（缺陷 #19）。** 一次先失败后成功的委派会自称 `stream closed (failed)`，因为观察者记住了它看到的**第一个**终止事件。现在它记住最后一个；由委派级标记驱动的关闭会说 `stream closed (delegation finished)`——收尾那行再也不能和自己上面的输出相矛盾。
 - **出厂的事件渲染器此前完全没有测试（缺陷 #18）。** 0.8.4 那条"格式化器"测试注入的是桩，测试通过而 core 里真正的 `formatExpertEvent` 从未被断言过。现在它有直接测试，并且当场抓到一个真 bug：一条事件可以渲染成两行终端输出，会让运维者的 tail 与流失步。渲染已强制压成单行。
 - **CLI 的流读取器会丢掉新的 `attempt` 字段。** 它的帧解析只复制自己认识的字段，尝试序号因此在到达渲染器之前就被静默丢弃——与 0.8.4 的 `interactionRounds` 同类的白名单陷阱，这次靠"对解析器而不是对桩"写的测试抓到。
 

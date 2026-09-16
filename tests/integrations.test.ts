@@ -286,6 +286,9 @@ describe("CLI expert-window watch", () => {
       ]);
       // A final marker is a fact; the quiet-period fallback must not have been needed.
       expect(err.join("")).not.toContain("no final marker");
+      // Defect #19: the closing line used to report the first attempt's terminal event, so
+      // a delegation that failed once and then succeeded announced itself as "failed".
+      expect(err.join("")).toContain("stream closed (delegation finished)");
     });
   });
 
