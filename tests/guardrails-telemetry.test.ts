@@ -159,3 +159,44 @@ describe("guardrails configuration", () => {
     expect(config.security.guardrails.consecutiveToolFailures).toBe(3);
   });
 });
+
+describe("telemetry projection covers every field of the outcome record", () => {
+  it("keeps every key the outcome type can carry, enforced at compile time", () => {
+    // `Record<keyof ExpertOutcome, ...>` is the guard: adding a field to ExpertOutcome
+    // without listing it here fails the build, and listing it without registering it in
+    // sanitizeOutcome fails this test. Both halves matter - `interactionRounds` (0.8.4),
+    // `failureType`/`toolCalls`/`attentionCodes` (0.8.5) and `toolErrorsObserved` each
+    // reached the store as nothing at all because only one half was done.
+    const everyField: Record<keyof ExpertOutcome, unknown> = {
+      executionId: "exec_full",
+      timestamp: "2026-09-16T00:00:00.000Z",
+      model: "model",
+      provider: "test",
+      role: "reviewer",
+      taskCategory: "code-review",
+      success: false,
+      firstPass: false,
+      toolErrors: 4,
+      retryCount: 1,
+      timedOut: true,
+      aborted: true,
+      escalationCount: 2,
+      attempts: 3,
+      hostType: "test",
+      interactionRounds: 2,
+      toolErrorsObserved: 4,
+      failureType: "provider_error",
+      toolCalls: 12,
+      attentionCodes: ["budget_fraction", "consecutive_tool_failures"],
+      approximateUsage: { inputTokens: 10, outputTokens: 2 },
+      verificationPassed: false,
+    };
+    const written = sanitizeOutcome(outcome(everyField as Partial<ExpertOutcome>));
+    const dropped = Object.keys(everyField).filter((key) => !(key in written));
+    // Every field survives the whitelist projection. If a field is ever deliberately not
+    // persisted, it must be excluded here with a reason, not vanish silently.
+    expect(dropped).toEqual([]);
+    expect(written.attentionCodes).toEqual(["budget_fraction", "consecutive_tool_failures"]);
+    expect(written.failureType).toBe("provider_error");
+  });
+});

@@ -348,6 +348,43 @@ ${line("delegation_final")}
     });
   });
 
+  it("carries every field a real runtime writes, checked against live stream keys", async () => {
+    // Audit rather than hope: these are the keys actually observed in streams written by
+    // the runtime (plus `nudgedExpert` and `argsSummary`, which it can also emit). Every
+    // one must survive the CLI's frame parser, whose whole design is to copy only fields
+    // it knows - which is exactly how `attempt` and the guardrail counters were lost.
+    const full = {
+      model: "p/m",
+      attempt: 2,
+      tool: "bash",
+      ok: false,
+      status: "failed",
+      failureType: "tool_call_error",
+      durationMs: 9000,
+      text: "3 consecutive tool calls failed (3 of 3 observed).",
+      argsSummary: "cmd=npm test",
+      toolCalls: 3,
+      toolErrors: 3,
+      budgetFractionUsed: 0.85,
+      nudgedExpert: true,
+    };
+    const expectedKeys = ["t", "executionId", "role", "kind", ...Object.keys(full)];
+    await withStream(line("attention", full) + String.fromCharCode(10), async (dir) => {
+      const { io } = capture();
+      const frames: Array<Record<string, unknown>> = [];
+      const code = await runCli(["watch", "--exec", "exec_watch", "--dir", dir], io, undefined, {
+        formatEvent: (frame) => { frames.push({ ...(frame as unknown as Record<string, unknown>) }); return frame.kind; },
+      });
+      expect(code).toBe(0);
+      expect(frames).toHaveLength(1);
+      const received = frames[0]!;
+      const missing = expectedKeys.filter((key) => !(key in received));
+      expect(missing).toEqual([]);
+      expect(received.toolErrors).toBe(3);
+      expect(received.attempt).toBe(2);
+    });
+  });
+
   it("does not mistake an expert's silence for a dead stream (defect #23)", async () => {
     // A terminal event followed by a long pause is the ordinary shape of a model thinking
     // or a build running. Only the final marker, or the operator's own --timeout-ms, may
