@@ -318952,15 +318952,26 @@ var WorkspaceBoundary = class {
       };
     }
   }
+  /**
+   * Which files this workspace changed. A failed `git status` comes back as an error, not
+   * as an empty list: "nothing changed" and "cannot tell" are different facts, and
+   * collapsing them makes a mutation expert's real work invisible to the host - the host
+   * reads `filesChanged: []` on a successful run and integrates nothing (defect #28).
+   */
   async changedFiles(workspace) {
     try {
       const output2 = await git(workspace.root, ["status", "--porcelain=v1", "--untracked-files=all"]);
-      return output2.split(/\r?\n/).filter(Boolean).map((line) => {
-        const file2 = line.slice(2).trimStart();
-        return file2.split(" -> ").at(-1) ?? file2;
-      });
-    } catch {
-      return [];
+      return {
+        files: output2.split(/\r?\n/).filter(Boolean).map((line) => {
+          const file2 = line.slice(2).trimStart();
+          return file2.split(" -> ").at(-1) ?? file2;
+        })
+      };
+    } catch (error61) {
+      return {
+        files: [],
+        error: String(error61 instanceof Error ? error61.message : error61).slice(0, 200)
+      };
     }
   }
   async cleanupExecution(executionId2) {
@@ -320050,6 +320061,7 @@ ${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
             isolated: workspace.isolated,
             provisioning: workspace.provisioning,
             failureType: inferFailureType(sessionError),
+            ...evidence.filesChangedError ? { filesChangedError: evidence.filesChangedError } : {},
             durationMs: Date.now() - started,
             ...usage2 ? { usage: usage2 } : {}
           }
@@ -320059,13 +320071,19 @@ ${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
       if (workspace.strategy === "git-worktree" && !effectiveReadOnly && workspace.provisioning.status === "ready") {
         verification = await runVerification(workspace, this.options.config.security.workspaceProvisioning);
       }
-      const changedFiles = await this.expertChangedFiles(workspace);
-      let result = applyVerificationGate(normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session), verification));
-      if (workspace.limitations?.length) {
-        result = { ...result, risks: [...workspace.limitations, ...result.risks ?? []].slice(0, 20) };
+      const diff = await this.expertChangedFiles(workspace);
+      let result = applyVerificationGate(normalizeResult(extractJson(rawText), request, rawText, diff.files, workspace, sessionUsage(session), verification));
+      const notes = [];
+      if (workspace.limitations?.length)
+        notes.push(...workspace.limitations);
+      if (diff.error) {
+        notes.push(`The workspace diff could not be read, so filesChanged may be incomplete: ${diff.error}`);
       }
+      if (notes.length)
+        result = { ...result, risks: [...notes, ...result.risks ?? []].slice(0, 20) };
       result.executionMetadata = {
         ...result.executionMetadata,
+        ...diff.error ? { filesChangedError: diff.error } : {},
         durationMs: Date.now() - started,
         ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}
       };
@@ -320086,6 +320104,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
         executionMetadata: {
           attempts: request.attempt,
           failureType: inferFailureType(error61),
+          ...evidence.filesChangedError ? { filesChangedError: evidence.filesChangedError } : {},
           durationMs: Date.now() - started,
           ...workspace ? { workspace: workspace.root, isolated: workspace.isolated, provisioning: workspace.provisioning } : {}
         }
@@ -320247,11 +320266,7 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
     }
     const messages = entry.session.messages ?? entry.session.state?.messages ?? [];
     const text = finalAssistantText(entry.session);
-    let filesChangedSoFar = [];
-    try {
-      filesChangedSoFar = await this.expertChangedFiles(entry.workspace);
-    } catch {
-    }
+    const filesChangedSoFar = (await this.expertChangedFiles(entry.workspace)).files;
     return {
       executionId: executionId2,
       status: "running",
@@ -320277,10 +320292,23 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
    * there belongs to the Main Agent; reporting it as the expert's change fabricates
    * authorship and can make the host try to "integrate" its own uncommitted edits.
    */
+  /**
+   * Which files this expert changed - and whether that question could be answered at all.
+   * An empty list and a failed diff are different facts: collapsing them lets a mutation
+   * workspace whose `git diff` broke (the `$GIT_DIR` too big class, defect #11) report
+   * "the expert changed nothing", which is how correct work gets thrown away (defect #28).
+   */
   async expertChangedFiles(workspace) {
     if (workspace.strategy === "read-only")
-      return [];
-    return this.boundary.changedFiles(workspace);
+      return { files: [] };
+    try {
+      return await this.boundary.changedFiles(workspace);
+    } catch (error61) {
+      return {
+        files: [],
+        error: String(error61 instanceof Error ? error61.message : error61).slice(0, 200)
+      };
+    }
   }
   /**
    * Preserve failure evidence from a dead session: changed files from the
@@ -320289,16 +320317,16 @@ ${evidence.lastText}`.trim(), 4e3) ?? baseSummary : baseSummary;
    */
   async collectFailureEvidence(session, workspace) {
     let filesChanged;
+    let filesChangedError;
     if (workspace) {
-      try {
-        filesChanged = (await this.expertChangedFiles(workspace)).slice(0, 1e3);
-      } catch {
-        filesChanged = void 0;
-      }
+      const diff = await this.expertChangedFiles(workspace);
+      filesChanged = diff.files.slice(0, 1e3);
+      filesChangedError = diff.error;
     }
     const lastText = session ? finalAssistantText(session) : "";
     return {
       ...filesChanged?.length ? { filesChanged } : {},
+      ...filesChangedError ? { filesChangedError } : {},
       ...lastText ? { lastText } : {}
     };
   }
@@ -320318,6 +320346,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
       executionMetadata: {
         attempts: request.attempt,
         failureType: "timeout",
+        ...evidence.filesChangedError ? { filesChangedError: evidence.filesChangedError } : {},
         workspace: entry.workspace.root,
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
@@ -320330,11 +320359,8 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
   /** Build the preserved-progress result for a Main-Agent abort. */
   async buildAbortedResult(entry, request, started) {
     const rawText = finalAssistantText(entry.session);
-    let changedFiles = [];
-    try {
-      changedFiles = await this.expertChangedFiles(entry.workspace);
-    } catch {
-    }
+    const changed = await this.expertChangedFiles(entry.workspace);
+    const changedFiles = changed.files;
     const reason = entry.reason ? ` Abort reason: ${entry.reason}` : "";
     const summary = rawText ? safeText(`${rawText}
 
@@ -320352,6 +320378,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         failureType: "aborted",
+        ...changed.error ? { filesChangedError: changed.error } : {},
         durationMs: Date.now() - started,
         ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {},
         ...usage2 ? { usage: usage2 } : {}
@@ -320360,11 +320387,8 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
   }
   /** Build the preserved-progress result for an expert-initiated report_and_stop. */
   async buildStoppedResult(entry, request, started, report) {
-    let changedFiles = [];
-    try {
-      changedFiles = await this.expertChangedFiles(entry.workspace);
-    } catch {
-    }
+    const changed = await this.expertChangedFiles(entry.workspace);
+    const changedFiles = changed.files;
     const usage2 = sessionUsage(entry.session);
     const summary = safeText(`[Task stopped by expert] ${report.reason}
 
@@ -320384,6 +320408,7 @@ ${finalAssistantText(entry.session) ?? ""}`.trim(), 4e3) ?? `[Task stopped by ex
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         failureType: "missing_context",
+        ...changed.error ? { filesChangedError: changed.error } : {},
         stoppedByExpert: true,
         durationMs: Date.now() - started,
         ...entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {},

@@ -1379,7 +1379,8 @@ export class PiExpertRuntime implements ExpertRuntime {
             workspace: workspace.root,
             isolated: workspace.isolated,
             provisioning: workspace.provisioning,
-            failureType: inferFailureType(sessionError),
+        failureType: inferFailureType(sessionError),
+        ...(evidence.filesChangedError ? { filesChangedError: evidence.filesChangedError } : {}),
             durationMs: Date.now() - started,
             ...(usage ? { usage } : {}),
           },
@@ -1396,15 +1397,22 @@ export class PiExpertRuntime implements ExpertRuntime {
       ) {
         verification = await runVerification(workspace, this.options.config.security.workspaceProvisioning);
       }
-      const changedFiles = await this.expertChangedFiles(workspace);
+      const diff = await this.expertChangedFiles(workspace);
       let result = applyVerificationGate(
-        normalizeResult(extractJson(rawText), request, rawText, changedFiles, workspace, sessionUsage(session), verification),
+        normalizeResult(extractJson(rawText), request, rawText, diff.files, workspace, sessionUsage(session), verification),
       );
-      if (workspace.limitations?.length) {
-        result = { ...result, risks: [...workspace.limitations, ...(result.risks ?? [])].slice(0, 20) };
+      const notes: string[] = [];
+      if (workspace.limitations?.length) notes.push(...workspace.limitations);
+      if (diff.error) {
+        // A success that cannot list its own changes is only half a success. Without this
+        // the host reads an empty `filesChanged` on a mutation run and integrates nothing
+        // (defect #28) - the same damage #11 caused through the verification gate.
+        notes.push(`The workspace diff could not be read, so filesChanged may be incomplete: ${diff.error}`);
       }
+      if (notes.length) result = { ...result, risks: [...notes, ...(result.risks ?? [])].slice(0, 20) };
       result.executionMetadata = {
         ...result.executionMetadata,
+        ...(diff.error ? { filesChangedError: diff.error } : {}),
         durationMs: Date.now() - started,
         ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),
       };
@@ -1425,6 +1433,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         executionMetadata: {
           attempts: request.attempt,
           failureType: inferFailureType(error),
+          ...(evidence.filesChangedError ? { filesChangedError: evidence.filesChangedError } : {}),
           durationMs: Date.now() - started,
           ...(workspace ? { workspace: workspace.root, isolated: workspace.isolated, provisioning: workspace.provisioning } : {}),
         },
@@ -1614,12 +1623,7 @@ export class PiExpertRuntime implements ExpertRuntime {
     }
     const messages = entry.session.messages ?? entry.session.state?.messages ?? [];
     const text = finalAssistantText(entry.session);
-    let filesChangedSoFar: string[] = [];
-    try {
-      filesChangedSoFar = await this.expertChangedFiles(entry.workspace);
-    } catch {
-      // Best-effort progress; read-only workspaces have nothing to diff.
-    }
+    const filesChangedSoFar = (await this.expertChangedFiles(entry.workspace)).files;
     return {
       executionId,
       status: "running",
@@ -1648,9 +1652,22 @@ export class PiExpertRuntime implements ExpertRuntime {
    * there belongs to the Main Agent; reporting it as the expert's change fabricates
    * authorship and can make the host try to "integrate" its own uncommitted edits.
    */
-  private async expertChangedFiles(workspace: PreparedWorkspace): Promise<string[]> {
-    if (workspace.strategy === "read-only") return [];
-    return this.boundary.changedFiles(workspace);
+  /**
+   * Which files this expert changed - and whether that question could be answered at all.
+   * An empty list and a failed diff are different facts: collapsing them lets a mutation
+   * workspace whose `git diff` broke (the `$GIT_DIR` too big class, defect #11) report
+   * "the expert changed nothing", which is how correct work gets thrown away (defect #28).
+   */
+  private async expertChangedFiles(workspace: PreparedWorkspace): Promise<{ files: string[]; error?: string }> {
+    if (workspace.strategy === "read-only") return { files: [] };
+    try {
+      return await this.boundary.changedFiles(workspace);
+    } catch (error) {
+      return {
+        files: [],
+        error: String(error instanceof Error ? error.message : error).slice(0, 200),
+      };
+    }
   }
 
   /**
@@ -1661,18 +1678,18 @@ export class PiExpertRuntime implements ExpertRuntime {
   private async collectFailureEvidence(
     session?: PiSessionLike,
     workspace?: PreparedWorkspace,
-  ): Promise<{ filesChanged?: string[]; lastText?: string }> {
+  ): Promise<{ filesChanged?: string[]; filesChangedError?: string; lastText?: string }> {
     let filesChanged: string[] | undefined;
+    let filesChangedError: string | undefined;
     if (workspace) {
-      try {
-        filesChanged = (await this.expertChangedFiles(workspace)).slice(0, 1_000);
-      } catch {
-        filesChanged = undefined;
-      }
+      const diff = await this.expertChangedFiles(workspace);
+      filesChanged = diff.files.slice(0, 1_000);
+      filesChangedError = diff.error;
     }
     const lastText = session ? finalAssistantText(session) : "";
     return {
       ...(filesChanged?.length ? { filesChanged } : {}),
+      ...(filesChangedError ? { filesChangedError } : {}),
       ...(lastText ? { lastText } : {}),
     };
   }
@@ -1699,6 +1716,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       executionMetadata: {
         attempts: request.attempt,
         failureType: "timeout",
+        ...(evidence.filesChangedError ? { filesChangedError: evidence.filesChangedError } : {}),
         workspace: entry.workspace.root,
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
@@ -1716,12 +1734,8 @@ export class PiExpertRuntime implements ExpertRuntime {
     started: number,
   ): Promise<ExpertResult> {
     const rawText = finalAssistantText(entry.session);
-    let changedFiles: string[] = [];
-    try {
-      changedFiles = await this.expertChangedFiles(entry.workspace);
-    } catch {
-      // Read-only workspaces have no diff to preserve.
-    }
+    const changed = await this.expertChangedFiles(entry.workspace);
+    const changedFiles = changed.files;
     const reason = entry.reason ? ` Abort reason: ${entry.reason}` : "";
     const summary = rawText
       ? safeText(`${rawText}\n\n[Execution aborted by the Main Agent.${reason}]`, 4_000)
@@ -1739,6 +1753,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         failureType: "aborted",
+        ...(changed.error ? { filesChangedError: changed.error } : {}),
         durationMs: Date.now() - started,
         ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),
         ...(usage ? { usage } : {}),
@@ -1753,12 +1768,8 @@ export class PiExpertRuntime implements ExpertRuntime {
     started: number,
     report: ExpertStopReport,
   ): Promise<ExpertResult> {
-    let changedFiles: string[] = [];
-    try {
-      changedFiles = await this.expertChangedFiles(entry.workspace);
-    } catch {
-      // Read-only workspaces have no diff to preserve.
-    }
+    const changed = await this.expertChangedFiles(entry.workspace);
+    const changedFiles = changed.files;
     const usage = sessionUsage(entry.session);
     const summary = safeText(
       `[Task stopped by expert] ${report.reason}\n\n${finalAssistantText(entry.session) ?? ""}`.trim(),
@@ -1779,6 +1790,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         isolated: entry.workspace.isolated,
         provisioning: entry.workspace.provisioning,
         failureType: "missing_context",
+        ...(changed.error ? { filesChangedError: changed.error } : {}),
         stoppedByExpert: true,
         durationMs: Date.now() - started,
         ...(entry.interactionRounds ? { interactionRounds: entry.interactionRounds } : {}),

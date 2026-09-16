@@ -17,6 +17,24 @@ import {
 const execFileAsync = promisify(execFile);
 
 describe("workspace isolation", () => {
+  it("distinguishes a clean tree from a diff it could not read (defect #28)", async () => {
+    // A directory outside any repository is the cheapest honest way to make `git status`
+    // fail. The answer has to come back as "cannot tell": if it comes back as an empty
+    // list, a mutation expert whose diff failed looks like an expert that changed nothing,
+    // and a host that integrates from `filesChanged` silently throws real work away.
+    const outside = await mkdtemp(path.join(tmpdir(), "ec-nogit-"));
+    try {
+      const config = parseCouncilConfig({ security: { workspaceStrategy: "read-only" } });
+      const loose = new WorkspaceBoundary(outside, config.security);
+      const prepared = await loose.prepare(outside, true, "exec-nogit");
+      const result = await loose.changedFiles(prepared);
+      expect(result.files).toEqual([]);
+      expect(result.error).toContain("not a git repository");
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
   it("runs mutation in a detached Git worktree and reports changes", async () => {
     const repo = await mkdtemp(path.join(tmpdir(), "expert-council-repo-"));
     const isolated: string[] = [];
@@ -36,12 +54,12 @@ describe("workspace isolation", () => {
       expect(prepared.root).not.toBe(repo);
       expect(prepared.provisioning).toMatchObject({ status: "skipped" });
       await writeFile(path.join(prepared.cwd, "file.txt"), "after\n", "utf8");
-      expect(await boundary.changedFiles(prepared)).toEqual(["file.txt"]);
+      expect((await boundary.changedFiles(prepared)).files).toEqual(["file.txt"]);
       // A retry with the same execution id reuses the worktree and resets it to
       // the committed HEAD instead of paying for a fresh checkout again.
       const reused = await boundary.prepare(repo, false, executionId);
       expect(reused.root).toBe(prepared.root);
-      expect(await boundary.changedFiles(reused)).toEqual([]);
+      expect((await boundary.changedFiles(reused)).files).toEqual([]);
       const restartedBoundary = new WorkspaceBoundary(repo, config.security);
       const cleanup = await restartedBoundary.cleanupExecution(executionId);
       expect(cleanup).toMatchObject({ status: "cleaned", removedCount: 1 });

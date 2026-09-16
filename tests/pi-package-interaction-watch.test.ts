@@ -108,9 +108,10 @@ describe("pi-package interaction watcher", () => {
     ).toBe(0);
   });
 
-  it("survives a host that rejects the notice", async () => {
+  it("does not claim a notice the host rejected, and does not retry it every poll", async () => {
     let clock = 0;
     let poll = 0;
+    let attempts = 0;
     const sent = await watchForInteractions({
       listRunning: async () => {
         poll += 1;
@@ -122,10 +123,14 @@ describe("pi-package interaction watcher", () => {
       sleep: async () => {},
       now: () => (clock += 1_000),
       send: () => {
+        attempts += 1;
         throw new Error("session busy");
       },
     });
-    expect(sent).toBe(1);
+    // Nothing was delivered, so nothing may be counted as delivered (defect #29) - while
+    // the dedupe key is still consumed, so a rejecting host is not spammed every poll.
+    expect(sent).toBe(0);
+    expect(attempts).toBe(1);
   });
 
   it("builds a bounded decision notice without inventing options", () => {

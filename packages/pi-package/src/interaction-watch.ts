@@ -108,7 +108,9 @@ export function buildGuardrailNotification(
  * Guardrail warnings are reported through the same loop, because they share the one
  * thing that makes both useful: a cheap periodic read of the running view. Each
  * (execution, code, budget fraction) is sent at most once, and the return value counts
- * notices of either kind.
+ * notices of either kind that the host actually accepted - a rejected notice is reported
+ * as zero, because an operator who believes a notice appeared is worse off than one who
+ * knows none did (defect #29).
  */
 export async function watchForInteractions(options: InteractionWatchOptions): Promise<number> {
   const intervalMs = options.intervalMs ?? 2_500;
@@ -151,9 +153,11 @@ export async function watchForInteractions(options: InteractionWatchOptions): Pr
       const key = `${execution.id}:${pending.round}`;
       if (notified.has(key)) continue;
       notified.add(key);
-      sent += 1;
       try {
         options.send(buildInteractionNotification(execution, pending, options.labels?.[execution.id]));
+        // Counted after the send, like the guardrail counter above: a host that refused the
+        // notice did not receive it, and `sent` claims to mean notices delivered (defect #29).
+        sent += 1;
       } catch {
         // A host that refuses the notice still discovers it through expert_status.
       }

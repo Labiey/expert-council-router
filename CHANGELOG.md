@@ -28,6 +28,20 @@ All notable changes to Expert Council are documented here. Versions follow seman
   counters were lost at both ends of the same pipe. Both ends were fixed together and tested separately,
   because "the field exists" and "the field survives the projection" are different bugs - the same lesson as
   `interactionRounds` in 0.8.4 and `attempt` in 0.8.6.
+- **An unreadable workspace diff no longer pretends to be a clean tree (defect #28).**
+  `WorkspaceBoundary.changedFiles` swallowed its own `git status` failure and returned `[]`, so a mutation
+  expert whose diff could not be read - the `$GIT_DIR` too big class from defect #11 is exactly this - was
+  reported as an expert that changed nothing, and a host integrating from `filesChanged` integrated nothing
+  at all. "Cannot tell" is now its own answer: `executionMetadata.filesChangedError` plus a risk line on
+  every delivered path that gathers files (success, timeout, session error, thrown error, abort, expert
+  stop). Swept the whole repository for this family: 70 `catch` blocks, 15 with no statement in the body,
+  and every one of them read - the rest are deliberate (optional Pi capability probes, raced deletions,
+  notices a host refused, teardown), and their reasons are now recorded next to the code.
+- **A notice counter that counted attempts as deliveries (defect #29).** `watchForInteractions` incremented
+  `sent` before calling the host, so when the host rejected every notice the watcher still reported one
+  delivered - and the test asserted exactly that lie. It counts accepted notices now, matching the
+  guardrail counter's ordering, and the test was strengthened rather than loosened: it also pins that a
+  rejecting host is asked exactly once, since the dedupe key is consumed even when the send fails.
 - **The test suite was never type-checked (defect #24).** The root tsconfig is a solution-style project -
   `"files": []` plus package references - so `npm run typecheck` only ever looked at `packages/*`. Every
   type-level guard written inside a test was therefore decorative, including two added that same day:
@@ -171,6 +185,8 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **首次尝试的挣扎不再因为重试成功而消失（缺陷 #20）。** 交付的 `executionMetadata` 带的是运行时**最后一次**尝试所见：第 1 次尝试反复工具失败烧光预算后，只要第 2 次干净完成，结果里就一条警告都不剩；遥测又把累加的 `toolErrors` 与单次尝试的 `toolCalls` 混在一起。现在由 Council 折算整条委派的总量：`toolCalls`、`toolErrors`、以及跨尝试按 code 去重的 `attention`（末 8 条）。
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
 - **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
+- **读不出来的工作区 diff 不再冒充“工作树是干净的”（缺陷 #28）。** `WorkspaceBoundary.changedFiles` 会把自身的 `git status` 失败吞掉并返回 `[]`，于是一个可写专家只要 diff 读不出来——#11 那类 `$GIT_DIR` too big 正走这条路——就被报成“什么都没改”；照 `filesChanged` 做集成的宿主于是把真实成果集成为零。“无法判断”现在是一个独立的答案：所有会收集文件的交付路径（成功、超时、会话错误、抛错、中止、专家自停）都会给出 `executionMetadata.filesChangedError` 加一条 risk。并按这一族把全仓扫了一遍：70 个 `catch`、其中 15 个块内没有任何语句，逐个读过——其余都是有意为之（可选的 Pi 能力探测、竞态删除、宿主拒收的通知、拆除阶段），并把理由写在了代码旁边。
+- **把“试过了”当成“送出了”的计数器（缺陷 #29）。** `watchForInteractions` 在调用宿主之前就 `sent += 1`，于是宿主每次都拒绝时它仍报告送出了一条——而且旧测试断言的正是这个谎。现在只统计宿主真正接受的条数，与护栏计数顺序一致；测试是**加强**而非削弱：额外钉住“拒绝的宿主也只会被试一次”，因为去重键在发送失败时同样已被消费。
 - **测试目录从来没被类型检查（缺陷 #24）。** 根 tsconfig 是 solution 式工程（`"files": []` + 包引用），所以 `npm run typecheck` 只看 `packages/*`。写在测试里的类型级守卫因此全是装饰——包括同一天刚加的两条：`Record<keyof ExpertOutcome, ...>` 与 `EVENT_KIND_COVERAGE`。`tsconfig.tests.json` 现在刻意 extends `tsconfig.base.json`，让测试面对项目**真实**严格度（`noUncheckedIndexedAccess`、`verbatimModuleSyntax`）而不是一份更宽松、少报 8 条的副本；`typecheck` 两半都跑。报出的 59 条全部属于夹具层，已清零。
 - **有一条绿灯其实什么都没测（缺陷 #25）。** `does not mark transient provider failures such as rate limits` 断言的恰恰是已发布契约的**反面**，而它之所以通过，是因为它的持久化 stub 引用了 `current`——那只是类型标注名、不是运行时绑定——于是每次调用都抛 `ReferenceError`，落进 `service.ts` 里那个尽力而为的 `catch`，什么也没记下来。限流**确实**会标记，而且是故意的：走 2 分钟的 `MODEL_RATE_LIMIT_MARKER_TTL_MS` 窗口而非封锁窗口、并连同 provider 兄弟模型一起标，仓库那次限流修复正是依赖此。现在这条测试钉的是真实契约；它的夹具会自报异常，坏掉的 stub 再也不可能把断言喂绿；过期时间也用导入常量证明。双向反证：让限流不再算证据 → 标记断言红；让限流用封锁 TTL → 过期断言红。
 - **尽力而为的持久化不再隐形（缺陷 #26）。** 那个静默 `catch` 正是 #25 能藏住的使能条件。标记没能落盘，意味着下一次委派会重演这一次已经撞过的失败，所以现在记为 `executionMetadata.persistenceErrors` 并作为 risk 上报——同时仍然绝不中断委派，那才是这个 catch 的本意。

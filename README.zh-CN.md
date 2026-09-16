@@ -446,7 +446,7 @@ toolReliability bashReliability autonomousExecution speed
 
 微小任务只使用一个 Worker；普通任务使用 Worker 与 Verifier；复杂功能使用 Planner、Worker、Reviewer 与 Verifier；复杂调试使用 Scout、Debugger、Oracle 与 Verifier。`maxExperts` 会限制团队规模，主代理永远不会再被复制成一个多余的 `lead` 专家。
 
-只读专家在主工作区运行，因此**从不报告 `filesChanged`**：它们没得变更工具，所以那里的 git 脏文件属于主代理；把它们归给专家等于伪造作者身份。对这类运行调用 `expert_cleanup` 会答 `not-required`，因为并不存在 worktree。确实需要改代码时，请改派 implementation-worker 或 debugger，并审阅它独立的 worktree。
+只读专家在主工作区运行，因此**从不报告 `filesChanged`**：它们没得变更工具，所以那里的 git 脏文件属于主代理；把它们归给专家等于伪造作者身份。对这类运行调用 `expert_cleanup` 会答 `not-required`，因为并不存在 worktree。确实需要改代码时，请改派 implementation-worker 或 debugger，并审阅它独立的 worktree。 可写执行若**读不出** diff 则是另一种情况，并且会被如实标出：`executionMetadata.filesChangedError` 外加一条 risk。因为 `git status` 失败得来的空列表会被读成“专家什么都没改”，照这个列表做集成的宿主就会把真实成果丢成没有成果（缺陷 #28）。
 
 任务分类和全部评分运算都是确定性的。宿主可以在委派前检查已选模型、备选模型、分数和简明理由。组建 Council 时还会应用可配置的多样性惩罚；Reviewer 会在经济合理时优先选择与先前成员不同的 Provider 和推断模型家族，但角色适配度与硬约束仍然优先。
 

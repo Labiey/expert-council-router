@@ -279,6 +279,11 @@ export interface ExpertResult {
      * something to swallow (defect #25 hid behind exactly such a catch).
      */
     persistenceErrors?: Array<{ model: string; detail: string }>;
+    /**
+     * Set when the workspace diff could not be read, so an absent `filesChanged` means
+     * "unknown" rather than silently meaning "the expert changed nothing" (defect #28).
+     */
+    filesChangedError?: string;
     /** Outcome of runtime worktree provisioning for this attempt. */
     provisioning?: {
       status: "ready" | "skipped" | "failed";

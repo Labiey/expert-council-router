@@ -787,18 +787,29 @@ export class WorkspaceBoundary {
     }
   }
 
-  async changedFiles(workspace: PreparedWorkspace): Promise<string[]> {
+  /**
+   * Which files this workspace changed. A failed `git status` comes back as an error, not
+   * as an empty list: "nothing changed" and "cannot tell" are different facts, and
+   * collapsing them makes a mutation expert's real work invisible to the host - the host
+   * reads `filesChanged: []` on a successful run and integrates nothing (defect #28).
+   */
+  async changedFiles(workspace: PreparedWorkspace): Promise<{ files: string[]; error?: string }> {
     try {
       const output = await git(workspace.root, ["status", "--porcelain=v1", "--untracked-files=all"]);
-      return output
-        .split(/\r?\n/)
-        .filter(Boolean)
-        .map((line) => {
-          const file = line.slice(2).trimStart();
-          return file.split(" -> ").at(-1) ?? file;
-        });
-    } catch {
-      return [];
+      return {
+        files: output
+          .split(/\r?\n/)
+          .filter(Boolean)
+          .map((line) => {
+            const file = line.slice(2).trimStart();
+            return file.split(" -> ").at(-1) ?? file;
+          }),
+      };
+    } catch (error) {
+      return {
+        files: [],
+        error: String(error instanceof Error ? error.message : error).slice(0, 200),
+      };
     }
   }
 
