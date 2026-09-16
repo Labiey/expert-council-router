@@ -134,12 +134,14 @@ const WATCH_TERMINAL_KINDS = new Set(["completed", "failed", "stopped", "stream_
 /** Written by a runtime that knows the delegation, not merely one attempt, has ended. */
 const WATCH_FINAL_KIND = "delegation_final";
 /**
- * A stream that cannot write a final marker is judged closed only after it has stopped
- * growing for this long. Stopping at the first per-attempt terminal event cut observers off
- * mid-delegation - which is precisely what a retried or escalated run looks like - and a
- * runtime that died without writing anything is bounded by --timeout-ms instead.
+ * How long a stream with no final marker must stay silent before a follower concludes the
+ * writer is gone. Deliberately generous: silence is not death. An expert thinks between
+ * tool calls for seconds at a time, and a build or a `npm ci` can go quiet for minutes,
+ * so a short threshold closes the window mid-delegation - the same symptom as defect #17,
+ * arriving by another route. The reliable signal is the delegation-level marker; this is
+ * only the fallback for an older runtime or a process that died.
  */
-const WATCH_QUIET_MS = 750;
+const WATCH_QUIET_DEFAULT_MS = 15_000;
 const WATCH_STREAM_SUFFIX = ".jsonl";
 /** Why an operator sees nothing: the prerequisite is a configuration the runtime honoured at start. */
 const WATCH_PREREQUISITE_HINT = 'The runtime writes this stream only for a run started while security.observability.expertWindow is "interactive" (the default "off" writes nothing).';
@@ -303,6 +305,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   const json = args.includes("--json");
   const intervalMs = integerOption(args, "--interval-ms", 50, 60_000) ?? 1_000;
   const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000) ?? 300_000;
+  const quietMs = integerOption(args, "--quiet-ms", 250, 600_000) ?? WATCH_QUIET_DEFAULT_MS;
   const file = path.join(dir, `${executionId}${WATCH_STREAM_SUFFIX}`);
   if (!(await streamExists(file))) {
     const listed = describeStreams(dir, await listStreamExecutions(dir));
@@ -371,7 +374,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
     // another model, which keeps appending to this same stream. Only a file that has
     // stopped growing counts as finished when no final marker was written.
     if (chunk.data.length > 0) lastGrowthAt = Date.now();
-    else if (terminal !== undefined && Date.now() - lastGrowthAt >= WATCH_QUIET_MS) {
+    else if (terminal !== undefined && Date.now() - lastGrowthAt >= quietMs) {
       legacyClose = true;
       break;
     }
@@ -389,7 +392,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
     ? "delegation finished"
     : terminal !== undefined
       ? legacyClose
-        ? `${terminal}, no final marker and no growth for ${WATCH_QUIET_MS}ms`
+        ? `${terminal}, no final marker and no growth for ${quietMs}ms`
         : terminal
       : undefined;
   if (closeReason !== undefined) {

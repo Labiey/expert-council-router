@@ -254,7 +254,7 @@ describe("CLI expert-window watch", () => {
       const { io, err } = capture();
       const started = Date.now();
       const code = await runCli(
-        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "60000"],
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "60000", "--quiet-ms", "750"],
         io,
         undefined,
         { formatEvent: (frame) => frame.kind },
@@ -348,6 +348,43 @@ ${line("delegation_final")}
     });
   });
 
+  it("does not mistake an expert's silence for a dead stream (defect #23)", async () => {
+    // A terminal event followed by a long pause is the ordinary shape of a model thinking
+    // or a build running. Only the final marker, or the operator's own --timeout-ms, may
+    // end the follow; the quiet fallback has to be generous enough to survive silence.
+    await withStream(`${line("started")}` + String.fromCharCode(10) + line("failed", { status: "failed", failureType: "timeout" }) + String.fromCharCode(10), async (dir) => {
+      const { io, err } = capture();
+      const { appendFile } = await import("node:fs/promises");
+      let settled: number | undefined;
+      const running = runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "100", "--timeout-ms", "20000"],
+        io, undefined, { formatEvent: (frame) => frame.kind },
+      ).then((code) => { settled = code; return code; });
+      await new Promise((resolve) => setTimeout(resolve, 2_500));
+      expect(settled).toBeUndefined();
+      await appendFile(
+        path.join(dir, "exec_watch.jsonl"),
+        line("delegation_final") + String.fromCharCode(10),
+        { encoding: "utf8" },
+      );
+      expect(await running).toBe(0);
+      expect(err.join("")).toContain("stream closed (delegation finished)");
+      expect(err.join("")).not.toContain("no final marker");
+    });
+  });
+
+  it("rejects an unusable --quiet-ms", async () => {
+    await withStream(`${line("started")}` + String.fromCharCode(10), async (dir) => {
+      const { io, err } = capture();
+      // The CLI's contract for a bad option is a non-zero exit plus stderr, not a rejection.
+      const code = await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--quiet-ms", "50"], io, undefined, {
+        formatEvent: (frame) => frame.kind,
+      });
+      expect(code).not.toBe(0);
+      expect(err.join("")).toContain("--quiet-ms");
+    });
+  });
+
   it("closes a legacy stream with no final marker once it stops growing", async () => {
     await withStream(`${line("started")}
 ${line("failed", { status: "failed", failureType: "timeout" })}
@@ -355,7 +392,7 @@ ${line("failed", { status: "failed", failureType: "timeout" })}
       const { io, err } = capture();
       const started = Date.now();
       const code = await runCli(
-        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "20000"],
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50", "--timeout-ms", "20000", "--quiet-ms", "750"],
         io, undefined, { formatEvent: (frame) => frame.kind },
       );
       expect(code).toBe(0);

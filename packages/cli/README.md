@@ -335,7 +335,7 @@ expert-council watch --exec exec_abc123 --follow
 - Stream files are pruned after 7 days.
 - The stream is written by the process running the experts. An expert dispatched from your Pi session is followed by the `watch` command reading the same data directory, not by an unrelated checkout.
 - `expert_inspect` reports `runtimeCapabilities.eventStream`, so a Main Agent can tell whether the requested tier is actually available; `interactive` on a runtime that cannot write a stream degrades to `events` and says so in `warnings`.
-- `watch` closes when the council writes a delegation-level terminator (`delegation_final`), and reports the close as `delegation finished` rather than the first attempt's terminal event. That distinction exists because a retried or escalated delegation emits **one terminal event per attempt**: a watcher that stopped at the first would close on the failure and never show the attempt that actually answered the task. A stream from an older runtime, or one whose process died, instead closes after 750ms without growth, and `--timeout-ms` always bounds the wait.
+- `watch` closes when the council writes a delegation-level terminator (`delegation_final`), and reports the close as `delegation finished` rather than the first attempt's terminal event. That distinction exists because a retried or escalated delegation emits **one terminal event per attempt**: a watcher that stopped at the first would close on the failure and never show the attempt that actually answered the task. A stream from an older runtime, or one whose process died, instead closes only after it has been silent for a generous period (15s by default, tunable with `--quiet-ms`), because silence is not death: an expert thinks between tool calls for seconds and a build can go quiet for minutes. `--timeout-ms` always bounds the wait.
 - Every event carries the attempt number that produced it, and a retried attempt renders as `[role model #2]`, so an escalation is visible in the window itself. Event rendering is clamped to one line, because a second line from a single event would desynchronise the operator's tail.
 
 ### Struggle detection (guardrails)
@@ -569,7 +569,7 @@ Common flags:
 - `--telemetry`: custom local telemetry path.
 - `--state`: custom path for persisted plans, executions, and results.
 - `--timeout-ms`: expert execution timeout.
-- `watch` also takes `--dir` (event stream directory), `--interval-ms` (poll interval, default 1000), and `--timeout-ms` (maximum follow time, default 300000). It needs `security.observability.expertWindow: "interactive"` to be producing a stream.
+- `watch` also takes `--dir` (event stream directory), `--interval-ms` (poll interval, default 1000), and `--timeout-ms` (maximum follow time, default 300000), and `--quiet-ms` (how long a stream with no final marker must stay silent before the follower gives up, default 15000). It needs `security.observability.expertWindow: "interactive"` to be producing a stream.
 
 ## MCP Server
 

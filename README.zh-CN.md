@@ -362,7 +362,7 @@ expert-council watch --exec exec_abc123 --follow
 - 事件流文件 7 天后自动清理。
 - 事件流由**运行专家的那个进程**写入。同一数据目录下的 `watch` 才能看到它；换一个无关仓库去跟是看不到的。
 - `expert_inspect` 会报 `runtimeCapabilities.eventStream`，主代理由此能判断所请求的档位是否真可用；写入能力缺失时 `interactive` 降级为 `events`，并在 `warnings` 里说明。
-- `watch` 在 Council 写出委派级终止标记（`delegation_final`）时关闭，并把收尾报成 `delegation finished`，而不是拿第一次尝试的终止事件当结局。之所以要区分，是因为重试或升级后的委派**每次尝试都会写一个终止事件**：见到第一个就停的观察者会在失败那一刻关窗，永远看不到真正完成任务的那次尝试。旧运行时的流、或进程已死的流，改为在 750ms 无增长后关闭，而 `--timeout-ms` 始终给等待设上限。
+- `watch` 在 Council 写出委派级终止标记（`delegation_final`）时关闭，并把收尾报成 `delegation finished`，而不是拿第一次尝试的终止事件当结局。之所以要区分，是因为重试或升级后的委派**每次尝试都会写一个终止事件**：见到第一个就停的观察者会在失败那一刻关窗，永远看不到真正完成任务的那次尝试。旧运行时的流、或进程已死的流，改为在足够长的静默之后才关闭（默认 15 秒，可用 `--quiet-ms` 调整）——沉默不等于死亡：专家在工具调用之间会思考数秒，一次构建更能安静几分钟。`--timeout-ms` 始终给等待设上限。
 - 每个事件都带上产生它的那次尝试序号，重试后的尝试渲染成 `[role model #2]`，于是升级本身在窗口里就看得见。事件渲染被强制压成一行：一条事件吐出第二行会让运维者的 tail 与流失步。
 
 ### 挣扎检测（护栏）
@@ -552,7 +552,7 @@ expert-council watch --exec <execution-id> [--follow]
 - `--telemetry`：自定义本地遥测路径。
 - `--state`：自定义持久化计划、执行和结果状态路径。
 - `--timeout-ms`：专家执行超时。
-- `watch` 额外接受 `--dir`（事件流目录）、`--interval-ms`（轮询间隔，默认 1000）与 `--timeout-ms`（最长跟随时间，默认 300000）；它需要 `security.observability.expertWindow: "interactive"` 正在产生事件流。
+- `watch` 额外接受 `--dir`（事件流目录）、`--interval-ms`（轮询间隔，默认 1000）与 `--timeout-ms`（最长跟随时间，默认 300000）、`--quiet-ms`（没有终止标记的流需静默多久才放弃跟随，默认 15000）；它需要 `security.observability.expertWindow: "interactive"` 正在产生事件流。
 
 ## MCP Server
 

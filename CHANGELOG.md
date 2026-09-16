@@ -28,6 +28,11 @@ All notable changes to Expert Council are documented here. Versions follow seman
   counters were lost at both ends of the same pipe. Both ends were fixed together and tested separately,
   because "the field exists" and "the field survives the projection" are different bugs - the same lesson as
   `interactionRounds` in 0.8.4 and `attempt` in 0.8.6.
+- **The quiet-period fallback mistook an expert's silence for a dead stream (defect #23).** Seen live on the
+  first run of the fixed window: a three-attempt delegation wrote its `delegation_final` marker on time, and
+  the follower had already left 13 seconds earlier because 750ms had passed with nothing appended - an
+  ordinary pause while a model thinks or a build runs. The fallback is 15s by default and tunable with
+  `--quiet-ms`; the marker, or the operator's own `--timeout-ms`, remains the real signal.
 - **`watch` reported the wrong outcome when it closed (defect #19).** A delegation that failed once and then
   succeeded announced itself as `stream closed (failed)`, because the watcher kept the first terminal event it
   had seen. It now keeps the last one, and a close driven by the delegation-level marker says
@@ -142,6 +147,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **首次尝试的挣扎不再因为重试成功而消失（缺陷 #20）。** 交付的 `executionMetadata` 带的是运行时**最后一次**尝试所见：第 1 次尝试反复工具失败烧光预算后，只要第 2 次干净完成，结果里就一条警告都不剩；遥测又把累加的 `toolErrors` 与单次尝试的 `toolCalls` 混在一起。现在由 Council 折算整条委派的总量：`toolCalls`、`toolErrors`、以及跨尝试按 code 去重的 `attention`（末 8 条）。
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
 - **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
+- **静默兜底把专家的沉默误判成流已死（缺陷 #23）。** 修好后的窗口首跑就看到了：一次三次尝试的委派按时写出 `delegation_final`，而观察者早在 13 秒前就离开——只因 750ms 内没有新行；那不过是模型在思考或构建在跑的普通停顿。兜底阈值改为默认 15 秒，可用 `--quiet-ms` 调整；真正的信号仍是那条标记，或运维者自己设的 `--timeout-ms`。
 - **`watch` 关闭时报告的结局是错的（缺陷 #19）。** 一次先失败后成功的委派会自称 `stream closed (failed)`，因为观察者记住了它看到的**第一个**终止事件。现在它记住最后一个；由委派级标记驱动的关闭会说 `stream closed (delegation finished)`——收尾那行再也不能和自己上面的输出相矛盾。
 - **出厂的事件渲染器此前完全没有测试（缺陷 #18）。** 0.8.4 那条"格式化器"测试注入的是桩，测试通过而 core 里真正的 `formatExpertEvent` 从未被断言过。现在它有直接测试，并且当场抓到一个真 bug：一条事件可以渲染成两行终端输出，会让运维者的 tail 与流失步。渲染已强制压成单行。
 - **CLI 的流读取器会丢掉新的 `attempt` 字段。** 它的帧解析只复制自己认识的字段，尝试序号因此在到达渲染器之前就被静默丢弃——与 0.8.4 的 `interactionRounds` 同类的白名单陷阱，这次靠"对解析器而不是对桩"写的测试抓到。
