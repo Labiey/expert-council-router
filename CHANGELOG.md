@@ -5,6 +5,59 @@ All notable changes to Expert Council are documented here. Versions follow seman
 ## 0.8.6 - 2026-09-16
 
 ### Fixed
+- **Published packages no longer ship dead links (#38, found while sweeping the audit's
+  findings).** The per-package READMEs are generated mirrors that go inside the tarballs, and
+  three of their links pointed at repository-root files that were never packaged -
+  `SECURITY.md`, `shared/skills/expert-council/SKILL.md` and
+  `config/examples/balanced.example.json`, ten dead links per language across five packages -
+  plus a language switcher aimed at a `README.zh-CN.md` that no sync step ever copied. The
+  mirror step now ships the Chinese README alongside the English one and rewrites, at
+  generation time, only the relative links that cannot resolve inside the package, turning
+  them into repository URLs; every other byte of the mirror is unchanged and the source
+  README keeps plain relative links for offline reading. A guard test walks every shipped
+  README and fails on any relative link that escapes its own package, and the fix was
+  falsified by reverting the rewrite - which produced exactly three named offenders - and by
+  checking that the regeneration actually ran before trusting the result.
+- **Documentation accuracy sweep (defects #34-#38 audit follow-ups, English and Chinese).**
+  Seven statements described behaviour the code does not have, and one example did not run:
+  - README claimed "transient provider failures such as rate limits or authentication errors
+    never create markers". They do, on purpose, since 0.8.5: throttling writes a 2-minute
+    `rate-limited` marker covering the provider's siblings, an unreachable transport writes a
+    5-minute `transport-unstable` marker for the failing route only, quota exhaustion a
+    6-hour one, and a plan-level 403 access denial a 24-hour `unavailable` marker - none of
+    which counts against the model's reliability record. The sentence contradicted both the
+    code and this changelog's own defect #25 entry.
+  - The Quick-start `delegate` example omitted `--timeout-ms` and `--reasoning-level`, both
+    required, so the first command a new user copies failed. Corrected, and verified by
+    running the corrected example against an unresolvable pinned model - flag validation
+    passes, no provider call is made.
+  - Retry documentation said the first correctable "tool, context, or test" failure is
+    retried; the correctable set is tool-call and test failures only, while missing-context
+    and permission failures end the delegation immediately.
+  - The MCP timeout claim ("an independent 30-second in-server cap") was not universal:
+    `expert_verify` is bounded by the larger of that and 60 seconds on purpose.
+  - Two stale SDK versions (0.84.4 where 0.85.1 is pinned, in README, its Chinese mirror and
+    the bundled third-party notices) and one stale release claim (v0.5.2) were corrected.
+  - `SECURITY.md` claimed recovery state lives in `.expert-council/state.json` - it is under
+    the per-user data root, and the repository-local path is never used; and claimed
+    `expert_verify` runs "without a shell", which is untrue on Windows for argv headed by
+    npm/pnpm/yarn, where the `.cmd` shim forces `shell: true`. Both now say what happens.
+  - Four environment variables the runtime resolves (`EXPERT_COUNCIL_DATA_DIR`,
+    `_MODEL_ASSESSMENT`, `_ROUTE_POLICY`, `_USAGE_LEDGER`) had never been listed, and five
+    implemented CLI commands (`compositions`, `abort`, `reset`, `verify`, `respond`) appeared
+    in no command list; the `watch` usage line also still omitted `--quiet-ms`.
+  - The Chinese README's provisioning section had never been brought up to its English
+    counterpart; the per-mode bullets, the driver/suppression reality, the only-mutation-
+    worktrees rule and the child-environment allowlist are now mirrored.
+- **The defect #32 test now describes what the code does.** Its name claimed a stopped expert
+  escalates and it asserted that outcome using a metadata combination the stop path cannot
+  produce. It is now labelled as what it actually is - a defensive guard against a future
+  stop path carrying a different failure type - and a second test pins the real behaviour:
+  `report_and_stop` yields `missing_context`, the delegation ends on the first attempt, the
+  report is delivered unchanged, and no acceptance risk line is attached because the council
+  decided nothing. Falsified by removing the guard from the acceptance rule: exactly those
+  two tests fail and nothing else does.
+
 - **The expert window no longer closes in the middle of a delegation (defect #17).** Found live, during the
   first cross-process demo: a scout's first attempt died on a provider fault, the council escalated to another
   model and finished successfully, and `expert-council watch --follow` had already printed
@@ -12,7 +65,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
   Each attempt had been writing its own terminal event, and the watcher treated any terminal event as the end
   of the stream. The council now writes one delegation-level `delegation_final` marker when a delegation is
   really over, and `watch` closes on that; a stream without the marker (an older runtime, or a process that
-  died) closes after 750ms without growth, and `--timeout-ms` still bounds every wait. Verified by
+  died) closed after 750ms without growth, and `--timeout-ms` still bounded every wait. That 750ms fallback was itself the problem defect #23 in this same release fixed: the quiet window is now 15 seconds by default, tunable with `--quiet-ms`, and applies only after a terminal event has been seen. Verified by
   falsification: restoring the old rule reddens three watch tests, including the escalation case.
 - **A struggling first attempt stopped vanishing when a retry succeeded (defect #20).** The delivered
   `executionMetadata` carried whatever the runtime's *last* attempt saw, so a delegation whose first attempt
@@ -304,6 +357,18 @@ All notable changes to Expert Council are documented here. Versions follow seman
 ## 0.8.6（中文）
 
 ### 修复
+- **发布出去的包不再带死链接（#38，清扫审计结论时顺带查出）。** 各包的 README 是会被打进 tarball 的生成镜像，而其中三条链接指向从未被打包的仓库根文件——`SECURITY.md`、`shared/skills/expert-council/SKILL.md`、`config/examples/balanced.example.json`——每语言 10 条、五个包全是死链；另有一个语言切换器指向 `README.zh-CN.md`，而同步流程从来就没拷过它。现在镜像步骤会把中文 README 一并装入包内，并在生成时**只重写那些在包内无法解析的相对链接**为仓库 URL；其余字节与源文件保持一致，源 README 仍保留相对链接以便离线阅读。新增守卫测试遍历所有随包发布的 README，任何指向包外的相对链接即失败。该修复做了反证：把重写摘掉，恰好点名三条 offender；并且先确认"重新生成真的执行了"再采信结果（第一次反证因为我在 cmd 里用了 `>/dev/null`，构建根本没跑，于是得出"守卫无效"的假结论——错在我的探针，不在守卫）。
+- **文档准确性清扫（#34-#38 审计的后续，中英双份）。** 七条陈述描述的是代码没有的行为，还有一条示例跑不通：
+  - README 写着"限流或认证错误等瞬态提供商失败绝不产生标记"。事实上从 0.8.5 起它们**就是刻意产生标记的**：瞬态 TPM/RPM 限流写 2 分钟的 `rate-limited` 并连带同提供商兄弟模型；传输不可达写 5 分钟的 `transport-unstable` 且只标记失败路由；配额耗尽 6 小时；套餐级 403 访问被拒属失效模型证据，写 24 小时的 `unavailable`——这些一律不计入模型自身可靠性记录。这句话同时与代码和本变更日志自己的 #25 条目矛盾。
+  - 快速上手的 `delegate` 示例漏掉了两个必选参数 `--timeout-ms` 与 `--reasoning-level`，新用户照抄第一条命令就失败。已修正，并做了验证：用改好的示例 + 一个不存在的固定模型跑一次——参数解析通过、且不产生任何付费调用。
+  - 重试文档说首次可纠正的"工具、上下文或测试"失败会重试一次；实际可纠正集合只有 tool_call_error 与 test_failure，缺上下文与权限类是直接终止。
+  - "MCP 侧统一 30 秒内部上限"并非普遍成立：`expert_verify` 刻意取 30 秒与 60 秒中的较大者。
+  - 两处过期 SDK 版本（README、中文镜像、包内第三方声明里写 0.84.4，实钉 0.85.1）与一处过期发布号（v0.5.2）已更正。
+  - `SECURITY.md` 声称恢复态存于 `.expert-council/state.json`——实际在按用户数据根下，仓库内那条路径从不使用；还声称 `expert_verify` "不经 shell"——Windows 上以 npm/pnpm/yarn 开头的 argv 会被解析成 `.cmd` 垫片并 `shell: true`，该说法不成立。两处都改为陈述实际行为。
+  - 四个运行时确实解析的环境变量（`EXPERT_COUNCIL_DATA_DIR`、`_MODEL_ASSESSMENT`、`_ROUTE_POLICY`、`_USAGE_LEDGER`）从未被列出；五个已实现的 CLI 命令（`compositions`、`abort`、`reset`、`verify`、`respond`）在任何命令清单里都不存在；`watch` 的 usage 行也仍漏着 `--quiet-ms`。
+  - 中文 README 的"工作树供给"一节从未与英文对齐：按模式的条目、驱动与脚本抑制的真实情况、"只预置可写工作树"这条规则、以及子环境白名单内容，现已补齐。
+- **#32 那条测试现在描述的是代码的实际行为。** 它的名字声称"因缺上下文而停止的专家仍会升级"，并用一个停止路径不可能产生的元数据组合去断言该结果。现在它被改成名副其实——一条针对"未来某种携带其它失败类型的停止"的防御性守卫；另有第二条测试钉住真实行为：`report_and_stop` 产生 `missing_context`，委派在第一次尝试即终止、报告原样交付、且**不会**附加"接受不完整"的 risk，因为那决定不是 Council 做的。反证：把接受规则里的守卫摘掉，恰好这两条失败，其余不受影响。
+
 - **专家窗口不再在委派中途关闭（缺陷 #17）。** 现场发现于第一次跨进程演示：一个 scout 的首次尝试死于供应商故障，Council 升级到另一个模型并成功完成任务，而 `expert-council watch --follow` 早已打印 `stream closed (failed)` 退出——运维者只看到失败，永远看不到真正完成的那次尝试。根因是每次尝试都会写自己的终止事件，而 watch 把任意终止事件当成了流的尽头。现在 Council 在委派真正结束时写一条委派级 `delegation_final` 标记，watch 认它关闭；没有该标记的流（旧运行时、或进程已死）改为在 750ms 无增长后关闭，`--timeout-ms` 仍然是所有等待的上界。反证已做：恢复旧规则会让 3 条 watch 用例变红，其中正是升级那一条。
 - **首次尝试的挣扎不再因为重试成功而消失（缺陷 #20）。** 交付的 `executionMetadata` 带的是运行时**最后一次**尝试所见：第 1 次尝试反复工具失败烧光预算后，只要第 2 次干净完成，结果里就一条警告都不剩；遥测又把累加的 `toolErrors` 与单次尝试的 `toolCalls` 混在一起。现在由 Council 折算整条委派的总量：`toolCalls`、`toolErrors`、以及跨尝试按 code 去重的 `attention`（末 8 条）。
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。

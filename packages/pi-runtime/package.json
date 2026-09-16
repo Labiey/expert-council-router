@@ -15,6 +15,7 @@
   "files": [
     "dist",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "license": "MIT",

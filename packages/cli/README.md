@@ -150,7 +150,8 @@ node packages/cli/dist/bin.js build "fix the device hot-swap race condition" --m
 Delegate only when you are sure actual Pi models should be called:
 
 ```bash
-node packages/cli/dist/bin.js delegate architecture-oracle "analyze the concurrent invocation path" --workspace /path/to/repo --json
+node packages/cli/dist/bin.js delegate architecture-oracle "analyze the concurrent invocation path" \
+  --workspace /path/to/repo --timeout-ms 600000 --reasoning-level high --json
 ```
 
 Zero configuration uses conservative capability defaults, marks unverifiable billing types as `unknown`, and refuses non-isolated writes. It never guesses that an API is free and never infers model quality from a model name.
@@ -175,7 +176,7 @@ Pi builds this inventory once per session, and provider catalogs can keep stale 
 
 ## Configuration
 
-Specify a configuration file through the `EXPERT_COUNCIL_CONFIG` environment variable or the CLI's `--config PATH` flag. Start from [`config/examples/balanced.example.json`](config/examples/balanced.example.json).
+Specify a configuration file through the `EXPERT_COUNCIL_CONFIG` environment variable or the CLI's `--config PATH` flag. Start from [`config/examples/balanced.example.json`](https://github.com/Labiey/expert-council-router/blob/main/config/examples/balanced.example.json).
 
 Profile precedence:
 
@@ -298,7 +299,7 @@ This configuration lives in `council-config.json` inside the shared data directo
 - `mode` is `none` (default, never provision), `auto` (detect the committed lockfile and install), or `custom` (run `command` verbatim as an argv array).
 - `auto` runs `pnpm install --frozen-lockfile --prefer-offline`, `npm ci --prefer-offline --no-audit --no-fund`, or `bun install --frozen-lockfile`, each with `--ignore-scripts`. Yarn is the deliberate exception: Yarn Berry removed that CLI flag, so passing it would break the install rather than harden it, and the council instead sets `YARN_ENABLE_SCRIPTS=false` and `YARN_IGNORE_SCRIPTS=true` in the child environment, which covers both Yarn generations. A committed driver registry also materializes python (`uv sync`, `poetry install`, or a host `.venv` interpreter), rust, go, jvm/maven, dotnet, ruby, php, and elixir from each toolchain's own global download cache; those drivers do not all offer an equivalent switch, so each one declares whether it can suppress build scripts, and provisioning through a driver that cannot reports a limitation to the Main Agent instead of claiming otherwise; a repository that declares an environment-as-code backend (`flake.nix`, `.devcontainer/`) is detected and delegated to, never re-implemented.
 - Only mutation worktrees are provisioned; read-only roles run in the main workspace and are never provisioned.
-- The child environment is allowlist-scrubbed (`PATH`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `SYSTEMROOT`, `SYSTEMDRIVE`, `COMSPEC`, `PROGRAMFILES`, `PROGRAMDATA`, `GIT_*`, `npm_config_registry`, `npm_config_cache`); API tokens and cloud credentials are not forwarded.
+- The child environment is allowlist-scrubbed (`PATH`, `HOME`, `USERPROFILE`, `APPDATA`, `LOCALAPPDATA`, `TEMP`, `TMP`, `SYSTEMROOT`, `SYSTEMDRIVE`, `COMSPEC`, `PROGRAMFILES`, `PROGRAMDATA`, `GIT_*`, `npm_config_registry`, `npm_config_cache`); API tokens and cloud credentials are not forwarded. A driver's own suppression settings are merged **after** scrubbing, so they survive the allowlist and a parent `YARN_ENABLE_SCRIPTS=true` cannot override them.
 - When provisioning is `ready`, the runtime runs `verifyCommand` if configured, otherwise `npm run typecheck` then `npm test`. A failing gate downgrades a successful expert result to `partial` with `failureType: "test_failure"`.
 
 ### Observability and the expert window
@@ -481,13 +482,20 @@ discover currently callable candidate models
 
 Hard constraints reject unavailable or disabled models, incompatible roles, insufficient tool reliability, insufficient context, mutation without runtime support, `escalation-only` resources on routine tasks, and models carrying an active runtime availability marker.
 
-Pi caches its model inventory per session and provider catalogs can keep stale model names, so a council could otherwise be assembled around a model the upstream can no longer serve. When a delegated attempt fails as `provider_error` with dead-model evidence (for example `model_not_found`, unknown or discontinued models, or the runtime's own availability pre-check), the service records a `modelAvailability` marker into the persisted shared model assessment (`EXPERT_COUNCIL_DATA_DIR`, i.e. `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json` on Windows) through an atomic read-modify-write that never reverts a newer snapshot written by another running Pi/Codex instance. The affected `expert_result` names the model in `executionMetadata.unavailableModels` and `risks`, `expert_inspect` warns about active markers, and later `expert_build`, delegation, and escalation hard-reject marked models. Markers are conservative local evidence: they expire after 24 hours, survive freshly submitted audits, and an explicit `modelOverrides["provider/model"].overrideUnavailableMarker: true` re-enables a model. Transient provider failures such as rate limits or authentication errors never create markers. When no saved assessment exists yet, the marker cannot be persisted, but the failure is still reported to the Main Agent and recorded in local telemetry.
+Pi caches its model inventory per session and provider catalogs can keep stale model names, so a council could otherwise be assembled around a model the upstream can no longer serve. When a delegated attempt fails as `provider_error` with dead-model evidence (for example `model_not_found`, unknown or discontinued models, or the runtime's own availability pre-check), the service records a `modelAvailability` marker into the persisted shared model assessment (`EXPERT_COUNCIL_DATA_DIR`, i.e. `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json` on Windows) through an atomic read-modify-write that never reverts a newer snapshot written by another running Pi/Codex instance. The affected `expert_result` names the model in `executionMetadata.unavailableModels` and `risks`, `expert_inspect` warns about active markers, and later `expert_build`, delegation, and escalation hard-reject marked models. Markers are conservative local evidence: they expire after 24 hours, survive freshly submitted audits, and an explicit `modelOverrides["provider/model"].overrideUnavailableMarker: true` re-enables a model. Markers are not limited to dead models: a transient TPM/RPM
+rate limit records a `rate-limited` marker for `MODEL_RATE_LIMIT_MARKER_TTL_MS` (2 minutes) and also
+covers the same provider's sibling models, because throttling is an account-level condition; an
+unreachable provider transport records a `transport-unstable` marker for 5 minutes against the failing
+route only; plan or balance exhaustion records `quota-exhausted` (6 hours); and a plan-level access
+denial - a 403 `AccessDenied.Unpurchased`, for instance - is dead-model evidence and records
+`unavailable` (24 hours). None of the transient kinds counts against the model's own reliability
+record: that data belongs to the model, this data belongs to the supplier. When no saved assessment exists yet, the marker cannot be persisted, but the failure is still reported to the Main Agent and recorded in local telemetry.
 
 Reasoning levels are optional and model-specific. A configured role preference applies only when Pi exposes it for the selected model; otherwise Pi keeps or clamps to the model's supported default.
 
 ## Skills and least privilege
 
-The canonical platform-neutral host guidance is [`shared/skills/expert-council/SKILL.md`](shared/skills/expert-council/SKILL.md). The build composes it with the small host overlays under `shared/skills/expert-council/hosts/` into separate Pi and Codex `SKILL.md` artifacts without duplicating the shared workflow. The Pi artifact only describes completion `steer`/`followUp` behavior and never exposes `expert_wait`; only the Codex artifact describes the bounded `expert_wait` flow. Shared role prompts live in `packages/core/src/roles/prompts/` and are copied as package assets rather than rewritten per host.
+The canonical platform-neutral host guidance is [`shared/skills/expert-council/SKILL.md`](https://github.com/Labiey/expert-council-router/blob/main/shared/skills/expert-council/SKILL.md). The build composes it with the small host overlays under `shared/skills/expert-council/hosts/` into separate Pi and Codex `SKILL.md` artifacts without duplicating the shared workflow. The Pi artifact only describes completion `steer`/`followUp` behavior and never exposes `expert_wait`; only the Codex artifact describes the bounded `expert_wait` flow. Shared role prompts live in `packages/core/src/roles/prompts/` and are copied as package assets rather than rewritten per host.
 
 Read-only roles never receive `edit`, `write`, `bash`, or `powershell`, even if a caller tries to include them. Pi sessions use a real `tools` allowlist, which is stronger than prompt-only guidance. Until a dedicated non-mutating command runner exists, tasks that need shell-driven testing belong to writable roles in isolated worktrees.
 
@@ -504,7 +512,7 @@ tool_call_error reasoning_failure test_failure timeout provider_error
 missing_context permission_error unknown
 ```
 
-By default, the first correctable tool, context, or test failure receives at most one retry with a changed approach. Repeated relevant failures or provider errors switch to the next eligible, untried model. Attempt and escalation budgets are separately capped; with no candidates or exhausted budget, an unresolved state returns to the Main Agent.
+By default, the first correctable failure - a tool-call error or a test failure - receives at most one retry with a changed approach. A missing-context failure, a permission or workspace denial, or an expert-declared block ends the delegation immediately instead, because a different model would hit the same wall. Repeated relevant failures or provider errors switch to the next eligible, untried model. Attempt and escalation budgets are separately capped; with no candidates or exhausted budget, an unresolved state returns to the Main Agent.
 
 There are no infinite loops, and the same failed action is never repeated blindly by policy.
 
@@ -536,7 +544,7 @@ Non-Git workspaces refuse writes by default. If in-place mutation is truly requi
 }
 ```
 
-Read [`SECURITY.md`](SECURITY.md) before enabling.
+Read [`SECURITY.md`](https://github.com/Labiey/expert-council-router/blob/main/SECURITY.md) before enabling.
 
 ## Telemetry and local learning
 
@@ -553,11 +561,16 @@ The CLI uses exactly the same Core and Pi Runtime as MCP and the Pi Package:
 ```text
 expert-council models
 expert-council inspect
+expert-council compositions
 expert-council build <task>
 expert-council delegate <role> <task>
 expert-council feedback <execution-id> --verification passed|failed
-expert-council cleanup <execution-id>
 expert-council status
+expert-council abort <execution-id>
+expert-council reset <scope>
+expert-council verify (--exec <id> | --workspace <path>) --command JSON_ARRAY
+expert-council respond <execution-id> --kind decision|tool_approval
+expert-council cleanup <execution-id>
 expert-council watch --exec <execution-id> [--follow]
 ```
 
@@ -656,7 +669,7 @@ The optional `taskDescription` is a short host-facing label for identifying the 
 }
 ```
 
-`expert_wait` returns only completion state and task IDs; fetch the formal feedback with `expert_result` and call `expert_feedback` after the Main Agent's acceptance. `expert_wait.timeoutMs` bounds only that wait and never extends each expert's own execution deadline. Every potentially blocking Expert Council, Bash, PowerShell, or other MCP call must still carry an explicit finite timeout sized to the operation; remaining synchronous Expert Council operations are protected by an independent 30-second in-server cap. `expert_status` returns a bounded per-attempt history. The native Pi Package uses proactive completion notifications and therefore does not expose `expert_wait`.
+`expert_wait` returns only completion state and task IDs; fetch the formal feedback with `expert_result` and call `expert_feedback` after the Main Agent's acceptance. `expert_wait.timeoutMs` bounds only that wait and never extends each expert's own execution deadline. Every potentially blocking Expert Council, Bash, PowerShell, or other MCP call must still carry an explicit finite timeout sized to the operation; remaining synchronous Expert Council operations are protected by an independent 30-second in-server cap, with one deliberate exception: `expert_verify` is bounded by the larger of that cap and 60 seconds, because turning an expert claim into an observed exit code usually means running a build or a test suite. `expert_status` returns a bounded per-attempt history. The native Pi Package uses proactive completion notifications and therefore does not expose `expert_wait`.
 
 Start the stdio server directly:
 
@@ -671,6 +684,10 @@ Supported environment variables:
 - `EXPERT_COUNCIL_TELEMETRY`: local telemetry JSONL path.
 - `EXPERT_COUNCIL_STATE`: persisted plans, executions, and results state path.
 - `EXPERT_COUNCIL_WORKTREES`: parent directory for private expert mutation worktrees (the per-user private subdirectory is always kept); useful for short-path volumes or a faster disk.
+- `EXPERT_COUNCIL_DATA_DIR`: root for all per-user council data - assessments, route policy, usage ledger, recovery state, and observability streams; the platform default is `%LOCALAPPDATA%/ExpertCouncil` on Windows.
+- `EXPERT_COUNCIL_MODEL_ASSESSMENT`: persisted shared model assessment path.
+- `EXPERT_COUNCIL_ROUTE_POLICY`: persisted per-session routing allow/deny policy path.
+- `EXPERT_COUNCIL_USAGE_LEDGER`: persisted token usage ledger behind provider caps.
 - `EXPERT_COUNCIL_COMPOSITIONS`: saved council compositions path.
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`: bounded timeout for synchronous MCP operations, 30000 ms by default.
 - `PI_CODING_AGENT_MODULE`: explicit Pi package directory when automatic resolution fails.
@@ -739,7 +756,7 @@ packages/codex-integration/plugin/expert-council/
 
 ### Installation
 
-Release `v0.5.2` includes both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
+The current release ships both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
 codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
@@ -888,7 +905,7 @@ npm run pack:check
 npm run validate
 ```
 
-`npm run validate` builds first so a fresh clone has the workspace package entries generated before testing. Tests cover model normalization, published prices versus real policy billing, worker reliability, oracle scoring, reviewer diversity, hard constraints, unknown and missing models, team sizing, retries with per-attempt diagnostics, structured failure classification, escalation, retry limits, role permissions, compact host output, configuration validation, telemetry privacy/feedback/usage aggregation, Core host independence, mocked Pi discovery and execution, CLI JSON, MCP schemas, real Pi 0.84.4 extension loading/wrapping and async batch notifications, Pi extension registration, and real Git worktree isolation.
+`npm run validate` builds first so a fresh clone has the workspace package entries generated before testing. Tests cover model normalization, published prices versus real policy billing, worker reliability, oracle scoring, reviewer diversity, hard constraints, unknown and missing models, team sizing, retries with per-attempt diagnostics, structured failure classification, escalation, retry limits, role permissions, compact host output, configuration validation, telemetry privacy/feedback/usage aggregation, Core host independence, mocked Pi discovery and execution, CLI JSON, MCP schemas, real Pi 0.85.1 extension loading/wrapping and async batch notifications, Pi extension registration, and real Git worktree isolation.
 
 Ordinary tests only use the mock runtime and never call paid models. A real read-only Pi execution requires both an explicit model and an explicit cost acknowledgement:
 
@@ -918,7 +935,7 @@ Run `npm run validate` first, inspect every `npm pack --dry-run` file list, then
 - A nudge requires the runtime session to support steering. Pi sessions do; against a runtime that does not, the council warns the host and stays out of the expert's way.
 - Tool-failure counters record only what the runtime could observe. They are not an audit surface, and a tool that hangs instead of failing contributes no failure count until the attempt itself times out.
 
-- Pi's API moves quickly. The current release was verified against the local 0.84.4 SDK; the runtime checks required SDK, model-runtime, resource-loader, and session methods and lists any missing contract explicitly on incompatibility.
+- Pi's API moves quickly. The current release was verified against the local 0.85.1 SDK (the version pinned in `package.json`); the runtime checks required SDK, model-runtime, resource-loader, and session methods and lists any missing contract explicitly on incompatibility.
 - Pi has no unified real billing-type API. Runtime subscription signals and named Token Plans take priority; otherwise non-zero catalog prices are treated as metered, and providers without reliable evidence stay `unknown` until an audit or explicit user configuration confirms them.
 - Expert Council does not infer subjective coding quality from model names, nor does it download benchmark presets automatically.
 - Detached worktrees start from the committed `HEAD` and do not copy uncommitted changes from the main workspace. This is deliberate isolation; the runtime detects a dirty source workspace and surfaces the deviation through runtime limitations and mutation-council warnings before delegation.
