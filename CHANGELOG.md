@@ -155,6 +155,13 @@ All notable changes to Expert Council are documented here. Versions follow seman
   is now produced by one helper and merged into `risks` on every delivered path that gathers
   files, including the timeout result, which previously had no `risks` field at all. Verified
   through a real writable run in a non-repository workspace whose diff cannot be read.
+  The first pass of this fix missed one of the six sites: a scripted replacement whose anchor
+  did not match was applied without an assertion, so it no-oped silently, and the commit
+  message claimed a coverage the code did not have. The gap was found by counting call sites
+  against the paths named in the claim. A second test now pins the missed path (a thrown-error
+  mutation run) specifically, the correction is recorded as its own commit rather than amended
+  away, and the lesson is operational: every scripted multi-site edit gets an assertion on the
+  match count, in this repository as much as in the experts it drives.
 - **`watch` documentation matches what `watch` does.** The `--help` text still described the
   0.8.5 exit rule and omitted `--quiet-ms`; both were corrected, and the README now states
   the precondition the quiet fallback actually has - it applies once a terminal event has
@@ -280,7 +287,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **CLI 的流读取器会丢掉新的 `attempt` 字段。** 它的帧解析只复制自己认识的字段，尝试序号因此在到达渲染器之前就被静默丢弃——与 0.8.4 的 `interactionRounds` 同类的白名单陷阱，这次靠"对解析器而不是对桩"写的测试抓到。
 
 - **报告里引用了传输故障，不能让引用它的模型自己被暂停路由（#34，发布前评审发现）。** 给模型打"不可用"是有真实后果的路由决策——标记过期前候选会被直接剔除——而打标记的门禁喂的是专家长篇原文，它**没有任何形状守卫**（失败类型分类器在 0.8.5 正因为这个原因加了守卫）。缺陷 #31 把这个口子激活了："connection error""fetch failed""is overloaded" 在调试报告里只是普通句子，而现在它们是证据。一份写着"日志里有 connection error……但与本缺陷无关"的失败尝试，本来会把自己的模型暂停掉。新增 `classifyReportedAvailabilityEvidence` 给报告文本设门禁：短文本直接信任（可用性标记本身是特定短语），长文本必须以供应商消息的样子开头。**单靠长度上限不够**——真实供应商确实会返回 `429: {"message":"...quota has been exhausted."}` 这种长体，拒掉它们就会丢掉那条有测试保护的整计划标记。这个门禁刻意比 `readsAsFailureMessage` 宽松，理由写在谓词旁边：后者是为失败类型那几个桶设计的，拿它拦可用性会把 `model_not_found`、"429 rate limit exceeded" 这类真消息一起拒掉——我第一次正是这么接的，结果误杀了 4 条合法标记测试。评审还建议把 `failureTypeForResult` 也接上守卫；试过并**否决**：它会破坏"运行时把真实 429 误标为 `unknown` 时仍要恢复出供应商证据"这条有测试的行为，而那条兜底只在已经失败的尝试上跑。
-- **diff 读不出来这件事，在失败路径上也要继续可见（#35，发布前评审发现）。** 缺陷 #28 在所有交付路径都记了 `executionMetadata.filesChangedError`，但那条解释性 risk 只加在成功路径上，于是超时、中止、自停的可写执行仍然只显示"没有文件变化"而不给原因——恰恰是最需要让宿主知道"可能有活可捡"的场合。现在这句话由一个辅助函数统一产出，并在每一条收集文件的交付路径上合并进 `risks`，包括此前**根本没有 `risks` 字段**的超时结果。验证方式是真的跑一次可写执行、工作区不是仓库，因此 diff 必然读不出来。
+- **diff 读不出来这件事，在失败路径上也要继续可见（#35，发布前评审发现）。** 缺陷 #28 在所有交付路径都记了 `executionMetadata.filesChangedError`，但那条解释性 risk 只加在成功路径上，于是超时、中止、自停的可写执行仍然只显示"没有文件变化"而不给原因——恰恰是最需要让宿主知道"可能有活可捡"的场合。现在这句话由一个辅助函数统一产出，并在每一条收集文件的交付路径上合并进 `risks`，包括此前**根本没有 `risks` 字段**的超时结果。验证方式是真的跑一次可写执行、工作区不是仓库，因此 diff 必然读不出来。本条修复的第一遍**漏掉了六处中的一处**：一次脚本化替换的锚点没匹配上，而我没给它的匹配次数加断言，于是它静默空跑，提交信息却声称已经全覆盖。发现方式是把调用点数量与声明里列出的路径逐一对账。现在有一条专门的测试钉住被漏掉的那条路径（会话抛错的可写执行），修正也作为独立提交留下而不是 amend 抹掉。教训是可操作性的：**在这个仓库里驱动修改的每一次多点脚本编辑，都必须对匹配次数加断言**——正如我们要求每一个专家做的那样。
 - **`watch` 的文档与它自己的行为对齐了。** `--help` 里还写着 0.8.5 的退出规则、也漏了 `--quiet-ms`，两处都补上；README 现在写明那条静默兜底的真实前提——它只在**已经看到终止事件**之后生效，从未出现终止事件的流由 `--timeout-ms` 兜底，因为刚启动的专家在模型思考时本来就可以什么都不写。这轮修改过程中新增的一个便捷导出因无人调用而被删掉，没有作为死 API 发布出去。
 
 ### 新增

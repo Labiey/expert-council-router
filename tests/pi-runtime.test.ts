@@ -2019,3 +2019,55 @@ describe("a failed run with an unreadable diff says so where the host looks (def
     }
   });
 });
+
+describe("an unreadable diff stays visible when the session throws (defect #35, sixth path)", () => {
+  it("adds the risk line to a thrown-error mutation result", async () => {
+    // Added after the first #35 commit, which claimed every delivered path was covered.
+    // One scripted edit had silently failed to match, so the thrown-error result was left
+    // with the old limitations-only risk line - the same silent no-op class of mistake the
+    // council keeps finding in its own tooling, hence a test for this path specifically.
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [
+        { provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+      ],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime } as unknown as PiSdkLike["ModelRuntime"],
+      SessionManager: { inMemory: () => ({}) } as unknown as PiSdkLike["SessionManager"],
+      createAgentSession: (async () => {
+        throw new Error("session exploded on startup");
+      }) as PiSdkLike["createAgentSession"],
+    };
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-throws-nodiff-"));
+    try {
+      const runtime = await PiExpertRuntime.create({
+        cwd: dir,
+        config: parseCouncilConfig({ security: { workspaceStrategy: "bounded-in-place", allowInPlaceMutations: true } }),
+        sdk,
+        modelRuntime: modelRuntime as never,
+        roleDirectory,
+      });
+      const result = await runtime.executeExpert({
+        executionId: "exec_thrown_nodiff",
+        role: "implementation-worker",
+        task: "fail",
+        model: "p/m",
+        tools: ["read", "edit", "bash"],
+        skills: [],
+        reasoningLevel: "low",
+        readOnly: false,
+        workspace: dir,
+        timeoutMs: 5_000,
+        attempt: 1,
+      });
+      expect(result.status).toBe("failed");
+      expect(result.executionMetadata?.filesChangedError).toContain("not a git repository");
+      expect((result.risks ?? []).join(" ")).toContain("diff could not be read");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

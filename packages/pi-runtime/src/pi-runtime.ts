@@ -1444,7 +1444,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         model: request.model,
         summary,
         ...(evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {}),
-        ...(workspace?.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {}),
+        ...risksWithDiffNote(evidence.filesChangedError, workspace?.limitations),
         executionMetadata: {
           attempts: request.attempt,
           failureType: inferFailureType(error),
