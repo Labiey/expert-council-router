@@ -11,6 +11,7 @@ import {
   defaultCouncilDataRoot,
   defaultCouncilStoragePaths,
   detectProvisioningPlan,
+  provisioningSuppressionLimitation,
   inferPiProviderBilling,
   PiExpertRuntime,
   planVerification,
@@ -1434,38 +1435,75 @@ describe("worktree provisioning", () => {
     return parseCouncilConfig({ security: { workspaceProvisioning } }).security.workspaceProvisioning;
   }
 
-  it("derives install argv from the repository lockfile", async () => {
+  it("derives install argv from the lockfile and states script suppression per driver", async () => {
+    // defect #37: the registry relied on a README sentence claiming installs always append
+    // --ignore-scripts, which was true for two of thirteen drivers. Each driver now declares
+    // a class, and the classes below are the recorded evidence.
     const root = await mkdtemp(path.join(tmpdir(), "ec-provision-detect-"));
     try {
       const auto = await provisioningConfig({ mode: "auto" });
-      await writeFile(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: 9\n", "utf8");
+      // Marker file contents are irrelevant to detection, so no escapes are needed here.
+      await writeFile(path.join(root, "pnpm-lock.yaml"), "lockfileVersion: 9", "utf8");
       await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
         packageManager: "pnpm",
         argv: ["pnpm", "install", "--frozen-lockfile", "--prefer-offline", "--ignore-scripts"],
+        scriptSuppression: "flag",
       });
       await rm(path.join(root, "pnpm-lock.yaml"));
-      await writeFile(path.join(root, "package-lock.json"), "{}\n", "utf8");
+      await writeFile(path.join(root, "package-lock.json"), "{}", "utf8");
       await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
         packageManager: "npm",
         argv: ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund", "--ignore-scripts"],
+        scriptSuppression: "flag",
       });
       await rm(path.join(root, "package-lock.json"));
-      await writeFile(path.join(root, "bun.lockb"), "binary\n", "utf8");
+      // bun gained the flag in this fix; the old test had pinned the omission as if intended.
+      await writeFile(path.join(root, "bun.lockb"), "binary", "utf8");
       await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
         packageManager: "bun",
-        argv: ["bun", "install", "--frozen-lockfile"],
+        argv: ["bun", "install", "--frozen-lockfile", "--ignore-scripts"],
+        scriptSuppression: "flag",
       });
       await rm(path.join(root, "bun.lockb"));
-      await writeFile(path.join(root, "uv.lock"), "version = 1\n", "utf8");
-      await expect(detectProvisioningPlan(root, auto)).resolves.toEqual({
-        packageManager: "uv",
-        argv: ["uv", "sync", "--frozen"],
-      });
+      // yarn must NOT get the CLI flag: Berry removed it, so adding it breaks the install
+      // rather than hardening it. Suppression is expressed through its settings env.
+      await writeFile(path.join(root, "yarn.lock"), "# yarn lockfile v1", "utf8");
+      const yarnPlan = await detectProvisioningPlan(root, auto);
+      expect(yarnPlan.argv).toEqual(["yarn", "install", "--frozen-lockfile"]);
+      expect(yarnPlan.argv?.join(" ")).not.toContain("--ignore-scripts");
+      expect(yarnPlan.env).toEqual({ YARN_ENABLE_SCRIPTS: "false", YARN_IGNORE_SCRIPTS: "true" });
+      expect(yarnPlan.scriptSuppression).toBe("env");
+      await rm(path.join(root, "yarn.lock"));
+      // uv: no opt-out preserves functionality, so the exposure is declared, not denied.
+      await writeFile(path.join(root, "uv.lock"), "version = 1", "utf8");
+      const uvPlan = await detectProvisioningPlan(root, auto);
+      expect(uvPlan.scriptSuppression).toBe("unavailable");
+      expect(uvPlan.suppressionNote).toContain("source distributions");
+      await rm(path.join(root, "uv.lock"));
+      // Every driver must classify itself: a new driver with no class fails here.
+      const allDrivers: Array<[string, string]> = [
+        ["pnpm-lock.yaml", "pnpm"], ["package-lock.json", "npm"], ["bun.lock", "bun"],
+        ["yarn.lock", "yarn"], ["uv.lock", "uv"], ["poetry.lock", "poetry"],
+        ["Cargo.lock", "cargo"], ["go.mod", "go"], ["pom.xml", "maven"],
+        ["global.json", "dotnet"], ["Gemfile.lock", "bundler"], ["composer.lock", "composer"],
+        ["mix.lock", "mix"],
+      ];
+      const classes = new Set(["flag", "env", "unavailable", "unverified"]);
+      for (const [marker, name] of allDrivers) {
+        const dir = await mkdtemp(path.join(tmpdir(), "ec-driver-"));
+        try {
+          await writeFile(path.join(dir, marker), "x", "utf8");
+          const plan = await detectProvisioningPlan(dir, auto);
+          expect(plan.packageManager, marker).toBe(name);
+          expect(classes.has(plan.scriptSuppression ?? ""), "driver " + name + " declares no suppression class").toBe(true);
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      }
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
-
   it("materializes mainstream non-node ecosystems from their global caches and delegates as-code backends", async () => {
     const auto = await provisioningConfig({ mode: "auto" });
     const asCode = await provisioningConfig({ mode: "auto", strategy: "as-code" });
@@ -2069,5 +2107,59 @@ describe("an unreadable diff stays visible when the session throws (defect #35, 
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+describe("provisioning hardening is real, not a sentence (defect #37)", () => {
+  it("passes yarn suppression settings through the scrubbed child environment", async () => {
+    // The child environment is an allowlist. If a driver setting relied on the parent
+    // environment it would be scrubbed away and the hardening would be invisible, so the
+    // plan carries its own env and it is merged after scrubbing.
+    const root = await mkdtemp(path.join(tmpdir(), "ec-yarn-env-"));
+    const seen: Array<Record<string, string | undefined>> = [];
+    try {
+      await writeFile(path.join(root, "yarn.lock"), "# yarn lockfile v1", "utf8");
+      // A hostile parent value must not win the other way either: YARN_* is not on the
+      // allowlist, so only the council own setting reaches the child.
+      process.env.YARN_ENABLE_SCRIPTS = "true";
+      const config = parseCouncilConfig({ security: { workspaceProvisioning: { mode: "auto" } } }).security.workspaceProvisioning;
+      const status = await provisionWorkspace(root, config, {
+        reused: false,
+        runner: async (argv, options) => {
+          seen.push({ ...(options.env ?? {}) });
+          return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
+        },
+      });
+      expect(status.status).toBe("ready");
+      expect(status.scriptSuppression).toBe("env");
+      expect(status.command).toBe("yarn install --frozen-lockfile");
+      expect(seen).toHaveLength(1);
+      const child = seen[0];
+      expect(child).toBeDefined();
+      expect(child?.YARN_ENABLE_SCRIPTS).toBe("false");
+      expect(child?.YARN_IGNORE_SCRIPTS).toBe("true");
+      expect(child?.PATH).toBeDefined();
+    } finally {
+      delete process.env.YARN_ENABLE_SCRIPTS;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it("reports residual exposure only for drivers that cannot or might suppress scripts", () => {
+    // npm/pnpm/bun suppress by flag, yarn by settings: no limitation for those.
+    expect(provisioningSuppressionLimitation({ status: "ready", packageManager: "npm", scriptSuppression: "flag" })).toBeUndefined();
+    expect(provisioningSuppressionLimitation({ status: "ready", packageManager: "yarn", scriptSuppression: "env" })).toBeUndefined();
+    // A run that did not install anything cannot inherit exposure from a driver.
+    expect(provisioningSuppressionLimitation({ status: "skipped", packageManager: "uv", scriptSuppression: "unavailable" })).toBeUndefined();
+    expect(provisioningSuppressionLimitation({ status: "failed", packageManager: "uv", scriptSuppression: "unavailable" })).toBeUndefined();
+    const uv = provisioningSuppressionLimitation({
+      status: "ready", packageManager: "uv", scriptSuppression: "unavailable",
+      suppressionNote: "uv sync builds source distributions when no wheel is available",
+    });
+    expect(uv).toContain("cannot suppress ecosystem build scripts");
+    expect(uv).toContain("uv sync builds source distributions");
+    expect(uv).toContain("committed lockfile still bounds what is installed");
+    const go = provisioningSuppressionLimitation({ status: "ready", packageManager: "go", scriptSuppression: "unverified" });
+    expect(go).toContain("has not verified");
+    expect(go).toContain("treat the install as able to execute build code");
   });
 });

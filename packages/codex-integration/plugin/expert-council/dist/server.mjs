@@ -318444,6 +318444,18 @@ function scrubProvisioningEnv(source = process.env) {
   }
   return scrubbed;
 }
+function provisioningSuppressionLimitation(status) {
+  if (status.status !== "ready")
+    return void 0;
+  const driver = status.packageManager ?? "the detected package manager";
+  if (status.scriptSuppression === "unavailable") {
+    return `Worktree provisioning used ${driver}, which cannot suppress ecosystem build scripts${status.suppressionNote ? ` (${status.suppressionNote})` : ""}. The committed lockfile still bounds what is installed, but installing may run code shipped by packages it pins.`;
+  }
+  if (status.scriptSuppression === "unverified") {
+    return `Worktree provisioning used ${driver}; Expert Council has not verified whether that command suppresses ecosystem build scripts${status.suppressionNote ? ` (${status.suppressionNote})` : ""}, so treat the install as able to execute build code from pinned packages.`;
+  }
+  return void 0;
+}
 function resolvePlatformCommand(file2) {
   if (process.platform === "win32" && /^(npm|pnpm|yarn)$/i.test(file2)) {
     return { file: `${file2}.cmd`, shell: true };
@@ -318513,19 +318525,39 @@ async function existsAny(root, files) {
   return false;
 }
 var PROVISIONING_DRIVERS = [
-  { packageManager: "pnpm", markers: ["pnpm-lock.yaml"], argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]) },
-  { packageManager: "npm", markers: ["package-lock.json"], argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]) },
-  { packageManager: "bun", markers: ["bun.lock", "bun.lockb"], argv: ["bun", "install", "--frozen-lockfile"] },
-  { packageManager: "yarn", markers: ["yarn.lock"], argv: ["yarn", "install", "--frozen-lockfile"] },
-  { packageManager: "uv", markers: ["uv.lock"], argv: ["uv", "sync", "--frozen"] },
-  { packageManager: "poetry", markers: ["poetry.lock"], argv: ["poetry", "install", "--no-interaction"] },
-  { packageManager: "cargo", markers: ["Cargo.lock", "Cargo.toml"], argv: ["cargo", "build", "--locked"] },
-  { packageManager: "go", markers: ["go.mod"], argv: ["go", "mod", "download"] },
-  { packageManager: "maven", markers: ["pom.xml"], argv: ["mvn", "-q", "-B", "-DskipTests", "dependency:go-offline"] },
-  { packageManager: "dotnet", markers: ["global.json", "Directory.Build.props"], argv: ["dotnet", "restore"] },
-  { packageManager: "bundler", markers: ["Gemfile.lock"], argv: ["bundle", "install"] },
-  { packageManager: "composer", markers: ["composer.lock"], argv: ["composer", "install", "--no-interaction", "--prefer-dist"] },
-  { packageManager: "mix", markers: ["mix.lock"], argv: ["mix", "deps.get"] }
+  // Suppression is stated per driver, from evidence rather than from a wish: the
+  // --ignore-scripts flag exists for npm/pnpm/bun, Yarn Berry removed it from its CLI (so
+  // passing it breaks the install instead of hardening it), current Poetry has no install
+  // script switch at all, and the remaining toolchains are marked unverified rather than
+  // assumed safe. The old registry relied on a README sentence that said "always".
+  { packageManager: "pnpm", markers: ["pnpm-lock.yaml"], scriptSuppression: "flag", argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]) },
+  { packageManager: "npm", markers: ["package-lock.json"], scriptSuppression: "flag", argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]) },
+  { packageManager: "bun", markers: ["bun.lock", "bun.lockb"], scriptSuppression: "flag", argv: withIgnoreScripts(["bun", "install", "--frozen-lockfile"]) },
+  {
+    packageManager: "yarn",
+    markers: ["yarn.lock"],
+    // Deliberately no --ignore-scripts in argv: Berry removed that option, and Yarn
+    // Classic is the only generation that accepts it. Both generations read their
+    // setting from the environment instead, so both are covered by two variables.
+    // Berry defaults enableScripts to false already, with documented cases where scripts
+    // still ran (a dependency carrying its own Yarn v1 lockfile), so this is stated as
+    // env-suppression, not as a guarantee.
+    scriptSuppression: "env",
+    env: { YARN_ENABLE_SCRIPTS: "false", YARN_IGNORE_SCRIPTS: "true" },
+    argv: ["yarn", "install", "--frozen-lockfile"]
+  },
+  { packageManager: "uv", markers: ["uv.lock"], scriptSuppression: "unavailable", suppressionNote: "uv sync builds source distributions when no wheel is available, which executes Python build code (--no-build avoids that but fails instead of building)", argv: ["uv", "sync", "--frozen"] },
+  { packageManager: "poetry", markers: ["poetry.lock"], scriptSuppression: "unavailable", suppressionNote: "current Poetry exposes no install-time script switch and builds the project itself", argv: ["poetry", "install", "--no-interaction"] },
+  { packageManager: "cargo", markers: ["Cargo.lock", "Cargo.toml"], scriptSuppression: "unavailable", suppressionNote: "cargo build runs build scripts (build.rs) for crates that declare them", argv: ["cargo", "build", "--locked"] },
+  { packageManager: "go", markers: ["go.mod"], scriptSuppression: "unverified", argv: ["go", "mod", "download"] },
+  { packageManager: "maven", markers: ["pom.xml"], scriptSuppression: "unverified", argv: ["mvn", "-q", "-B", "-DskipTests", "dependency:go-offline"] },
+  { packageManager: "dotnet", markers: ["global.json", "Directory.Build.props"], scriptSuppression: "unverified", suppressionNote: "restore evaluates MSBuild, and custom targets can execute code", argv: ["dotnet", "restore"] },
+  { packageManager: "bundler", markers: ["Gemfile.lock"], scriptSuppression: "unverified", suppressionNote: "bundle install compiles native extensions", argv: ["bundle", "install"] },
+  // composer supports a no-scripts switch upstream; it is not applied here because this
+  // repository has not verified it in this environment, and guessing an installer flag
+  // is how provisioning gets broken while looking hardened.
+  { packageManager: "composer", markers: ["composer.lock"], scriptSuppression: "unverified", argv: ["composer", "install", "--no-interaction", "--prefer-dist"] },
+  { packageManager: "mix", markers: ["mix.lock"], scriptSuppression: "unverified", argv: ["mix", "deps.get"] }
 ];
 var AS_CODE_BACKENDS = [
   {
@@ -318567,7 +318599,10 @@ async function detectProvisioningPlan(root, config2, hostWorkspace) {
       return {
         packageManager: driver.packageManager,
         ...driver.argv ? { argv: driver.argv } : {},
-        ...driver.detail ? { detail: driver.detail } : {}
+        ...driver.detail ? { detail: driver.detail } : {},
+        ...driver.env ? { env: driver.env } : {},
+        ...driver.scriptSuppression ? { scriptSuppression: driver.scriptSuppression } : {},
+        ...driver.suppressionNote ? { suppressionNote: driver.suppressionNote } : {}
       };
     }
   }
@@ -318658,7 +318693,8 @@ async function provisionWorkspace(root, config2, options = {}) {
     };
   }
   const runner = options.runner ?? runBoundedCommand;
-  const env2 = config2.runtimeEnv === "host-env" ? { ...process.env } : config2.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  const scrubbedEnv = config2.runtimeEnv === "host-env" ? { ...process.env } : config2.scrubEnv ? scrubProvisioningEnv() : { ...process.env };
+  const env2 = plan.env ? { ...scrubbedEnv, ...plan.env } : scrubbedEnv;
   const semaphore = provisioningSemaphore(config2.maxConcurrent);
   await semaphore.acquire();
   let outcome;
@@ -318682,7 +318718,9 @@ async function provisionWorkspace(root, config2, options = {}) {
       ...packageManager ? { packageManager } : {},
       command: commandLabel,
       durationMs,
-      detail: `Provisioned with ${plan.argv[0]}.`
+      detail: `Provisioned with ${plan.argv[0]}.`,
+      ...plan.scriptSuppression ? { scriptSuppression: plan.scriptSuppression } : {},
+      ...plan.suppressionNote ? { suppressionNote: plan.suppressionNote } : {}
     };
   }
   const tail = tailCommandOutput(outcome.stderr || outcome.stdout, 4 * 1024);
@@ -318958,6 +318996,9 @@ var WorkspaceBoundary = class {
       if (provisioning.status === "failed") {
         limitations.push(`Worktree provisioning failed: ${provisioning.detail ?? "unknown error"}. Dependencies are not installed; do not attempt an install.`.slice(0, 2e3));
       }
+      const suppression = provisioningSuppressionLimitation(provisioning);
+      if (suppression)
+        limitations.push(suppression.slice(0, 2e3));
       return {
         cwd: path25.join(created, relativeCwd),
         root: created,

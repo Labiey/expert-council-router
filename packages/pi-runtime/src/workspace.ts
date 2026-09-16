@@ -9,12 +9,28 @@ import type { CouncilConfig, WorkspaceProvisioningConfig } from "@expert-council
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Whether a provisioning driver can actually suppress the ecosystem's build/lifecycle
+ * scripts. Declared per driver so the documentation and the host-facing limitation stay
+ * tied to code rather than to a sentence (defect #37):
+ *   flag          - an install-time switch is appended (npm, pnpm, bun)
+ *   env           - suppression exists only as configuration, not as a CLI flag (yarn)
+ *   unavailable   - the toolchain executes build code and offers no supported opt-out
+ *   unverified    - this repository has not verified the driver's behavior either way,
+ *                   so it must not be documented as suppressing scripts
+ */
+export type ScriptSuppression = "flag" | "env" | "unavailable" | "unverified";
+
 export interface WorkspaceProvisioningStatus {
   status: "ready" | "skipped" | "failed";
   packageManager?: string;
   command?: string;
   durationMs?: number;
   detail?: string;
+  /** Suppression class of the driver that actually ran, when one did. */
+  scriptSuppression?: ScriptSuppression;
+  /** Why this driver cannot suppress scripts, when a reason was recorded. */
+  suppressionNote?: string;
 }
 
 export interface PreparedWorkspace {
@@ -131,6 +147,34 @@ export function scrubProvisioningEnv(source: NodeJS.ProcessEnv = process.env): N
   return scrubbed;
 }
 
+/**
+ * The residual-exposure note for a provisioning run whose driver could not suppress
+ * ecosystem build scripts, or whose behavior this repository has not verified (defect #37).
+ *
+ * This exists because the previous documentation asserted "never running lifecycle
+ * scripts" for a driver registry where the claim was true for two commands out of thirteen.
+ * The honest form is not a sentence nobody can falsify: it is a class declared per driver
+ * and reported to the Main Agent whenever the class is weaker than the promise, so an
+ * operator can decide whether that is acceptable for the repository being provisioned.
+ * A lockfile still bounds *what* gets installed; it does not bound *whether installed code
+ * runs* during the install.
+ */
+export function provisioningSuppressionLimitation(status: WorkspaceProvisioningStatus): string | undefined {
+  if (status.status !== "ready") return undefined;
+  const driver = status.packageManager ?? "the detected package manager";
+  if (status.scriptSuppression === "unavailable") {
+    return `Worktree provisioning used ${driver}, which cannot suppress ecosystem build scripts${
+      status.suppressionNote ? ` (${status.suppressionNote})` : ""
+    }. The committed lockfile still bounds what is installed, but installing may run code shipped by packages it pins.`;
+  }
+  if (status.scriptSuppression === "unverified") {
+    return `Worktree provisioning used ${driver}; Expert Council has not verified whether that command suppresses ecosystem build scripts${
+      status.suppressionNote ? ` (${status.suppressionNote})` : ""
+    }, so treat the install as able to execute build code from pinned packages.`;
+  }
+  return undefined;
+}
+
 export interface BoundedCommandOptions {
   cwd: string;
   timeoutMs: number;
@@ -202,6 +246,11 @@ export interface ProvisioningPlan {
   packageManager?: string;
   argv?: string[];
   detail?: string;
+  /** Merged into the child environment after scrubbing, so it cannot be scrubbed away. */
+  env?: Record<string, string>;
+  scriptSuppression?: ScriptSuppression;
+  /** Ecosystem-specific wording for the residual-exposure note. */
+  suppressionNote?: string;
 }
 
 function withIgnoreScripts(argv: string[]): string[] {
@@ -241,6 +290,9 @@ interface EcosystemDriver {
   markers: string[];
   argv?: string[];
   detail?: string;
+  env?: Record<string, string>;
+  scriptSuppression?: ScriptSuppression;
+  suppressionNote?: string;
 }
 
 /**
@@ -253,19 +305,39 @@ interface EcosystemDriver {
  * (cargo locks its target); each worktree materializes its own.
  */
 const PROVISIONING_DRIVERS: EcosystemDriver[] = [
-  { packageManager: "pnpm", markers: ["pnpm-lock.yaml"], argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]) },
-  { packageManager: "npm", markers: ["package-lock.json"], argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]) },
-  { packageManager: "bun", markers: ["bun.lock", "bun.lockb"], argv: ["bun", "install", "--frozen-lockfile"] },
-  { packageManager: "yarn", markers: ["yarn.lock"], argv: ["yarn", "install", "--frozen-lockfile"] },
-  { packageManager: "uv", markers: ["uv.lock"], argv: ["uv", "sync", "--frozen"] },
-  { packageManager: "poetry", markers: ["poetry.lock"], argv: ["poetry", "install", "--no-interaction"] },
-  { packageManager: "cargo", markers: ["Cargo.lock", "Cargo.toml"], argv: ["cargo", "build", "--locked"] },
-  { packageManager: "go", markers: ["go.mod"], argv: ["go", "mod", "download"] },
-  { packageManager: "maven", markers: ["pom.xml"], argv: ["mvn", "-q", "-B", "-DskipTests", "dependency:go-offline"] },
-  { packageManager: "dotnet", markers: ["global.json", "Directory.Build.props"], argv: ["dotnet", "restore"] },
-  { packageManager: "bundler", markers: ["Gemfile.lock"], argv: ["bundle", "install"] },
-  { packageManager: "composer", markers: ["composer.lock"], argv: ["composer", "install", "--no-interaction", "--prefer-dist"] },
-  { packageManager: "mix", markers: ["mix.lock"], argv: ["mix", "deps.get"] },
+  // Suppression is stated per driver, from evidence rather than from a wish: the
+  // --ignore-scripts flag exists for npm/pnpm/bun, Yarn Berry removed it from its CLI (so
+  // passing it breaks the install instead of hardening it), current Poetry has no install
+  // script switch at all, and the remaining toolchains are marked unverified rather than
+  // assumed safe. The old registry relied on a README sentence that said "always".
+  { packageManager: "pnpm", markers: ["pnpm-lock.yaml"], scriptSuppression: "flag", argv: withIgnoreScripts(["pnpm", "install", "--frozen-lockfile", "--prefer-offline"]) },
+  { packageManager: "npm", markers: ["package-lock.json"], scriptSuppression: "flag", argv: withIgnoreScripts(["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"]) },
+  { packageManager: "bun", markers: ["bun.lock", "bun.lockb"], scriptSuppression: "flag", argv: withIgnoreScripts(["bun", "install", "--frozen-lockfile"]) },
+  {
+    packageManager: "yarn",
+    markers: ["yarn.lock"],
+    // Deliberately no --ignore-scripts in argv: Berry removed that option, and Yarn
+    // Classic is the only generation that accepts it. Both generations read their
+    // setting from the environment instead, so both are covered by two variables.
+    // Berry defaults enableScripts to false already, with documented cases where scripts
+    // still ran (a dependency carrying its own Yarn v1 lockfile), so this is stated as
+    // env-suppression, not as a guarantee.
+    scriptSuppression: "env",
+    env: { YARN_ENABLE_SCRIPTS: "false", YARN_IGNORE_SCRIPTS: "true" },
+    argv: ["yarn", "install", "--frozen-lockfile"],
+  },
+  { packageManager: "uv", markers: ["uv.lock"], scriptSuppression: "unavailable", suppressionNote: "uv sync builds source distributions when no wheel is available, which executes Python build code (--no-build avoids that but fails instead of building)", argv: ["uv", "sync", "--frozen"] },
+  { packageManager: "poetry", markers: ["poetry.lock"], scriptSuppression: "unavailable", suppressionNote: "current Poetry exposes no install-time script switch and builds the project itself", argv: ["poetry", "install", "--no-interaction"] },
+  { packageManager: "cargo", markers: ["Cargo.lock", "Cargo.toml"], scriptSuppression: "unavailable", suppressionNote: "cargo build runs build scripts (build.rs) for crates that declare them", argv: ["cargo", "build", "--locked"] },
+  { packageManager: "go", markers: ["go.mod"], scriptSuppression: "unverified", argv: ["go", "mod", "download"] },
+  { packageManager: "maven", markers: ["pom.xml"], scriptSuppression: "unverified", argv: ["mvn", "-q", "-B", "-DskipTests", "dependency:go-offline"] },
+  { packageManager: "dotnet", markers: ["global.json", "Directory.Build.props"], scriptSuppression: "unverified", suppressionNote: "restore evaluates MSBuild, and custom targets can execute code", argv: ["dotnet", "restore"] },
+  { packageManager: "bundler", markers: ["Gemfile.lock"], scriptSuppression: "unverified", suppressionNote: "bundle install compiles native extensions", argv: ["bundle", "install"] },
+  // composer supports a no-scripts switch upstream; it is not applied here because this
+  // repository has not verified it in this environment, and guessing an installer flag
+  // is how provisioning gets broken while looking hardened.
+  { packageManager: "composer", markers: ["composer.lock"], scriptSuppression: "unverified", argv: ["composer", "install", "--no-interaction", "--prefer-dist"] },
+  { packageManager: "mix", markers: ["mix.lock"], scriptSuppression: "unverified", argv: ["mix", "deps.get"] },
 ];
 
 /** Environment-as-code backends: detected and surfaced, never materialized here. */
@@ -320,6 +392,9 @@ export async function detectProvisioningPlan(
         packageManager: driver.packageManager,
         ...(driver.argv ? { argv: driver.argv } : {}),
         ...(driver.detail ? { detail: driver.detail } : {}),
+        ...(driver.env ? { env: driver.env } : {}),
+        ...(driver.scriptSuppression ? { scriptSuppression: driver.scriptSuppression } : {}),
+        ...(driver.suppressionNote ? { suppressionNote: driver.suppressionNote } : {}),
       };
     }
   }
@@ -425,9 +500,14 @@ export async function provisionWorkspace(
     };
   }
   const runner = options.runner ?? runBoundedCommand;
-  const env = config.runtimeEnv === "host-env"
+  const scrubbedEnv = config.runtimeEnv === "host-env"
     ? { ...process.env }
     : (config.scrubEnv ? scrubProvisioningEnv() : { ...process.env });
+  // The driver's own settings are merged AFTER scrubbing: the child environment is an
+  // allowlist, so a suppression value that merely sat in the parent environment would be
+  // dropped and the hardening would be invisible. Explicit merge also means a parent's
+  // YARN_ENABLE_SCRIPTS=true cannot override the council's intent.
+  const env: NodeJS.ProcessEnv = plan.env ? { ...scrubbedEnv, ...plan.env } : scrubbedEnv;
   const semaphore = provisioningSemaphore(config.maxConcurrent);
   await semaphore.acquire();
   let outcome: BoundedCommandOutcome;
@@ -452,6 +532,8 @@ export async function provisionWorkspace(
       command: commandLabel,
       durationMs,
       detail: `Provisioned with ${plan.argv[0]}.`,
+      ...(plan.scriptSuppression ? { scriptSuppression: plan.scriptSuppression } : {}),
+      ...(plan.suppressionNote ? { suppressionNote: plan.suppressionNote } : {}),
     };
   }
   const tail = tailCommandOutput(outcome.stderr || outcome.stdout, 4 * 1024);
@@ -758,6 +840,10 @@ export class WorkspaceBoundary {
           `Worktree provisioning failed: ${provisioning.detail ?? "unknown error"}. Dependencies are not installed; do not attempt an install.`.slice(0, 2_000),
         );
       }
+      // A successful provisioning that could not suppress build scripts is not a silent
+      // pass: the host has to be able to see the exposure it inherited (#37).
+      const suppression = provisioningSuppressionLimitation(provisioning);
+      if (suppression) limitations.push(suppression.slice(0, 2_000));
       return {
         cwd: path.join(created, relativeCwd),
         root: created,
