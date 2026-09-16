@@ -3,6 +3,7 @@ import { Type } from "typebox";
 import path from "node:path";
 import {
   inferFailureType,
+  inferFailureTypeFromSummary,
   normalizePiModels,
   getRole,
   type AbortExecutionRequest,
@@ -324,7 +325,10 @@ function normalizeResult(
   const explicitFailureType = typeof parsed?.failureType === "string" && FAILURE_TYPES.has(parsed.failureType as FailureType)
     ? parsed.failureType as FailureType
     : undefined;
-  const summaryFailureType = inferFailureType(
+  // Report text is not an error message: an expert can quote transport vocabulary while
+  // describing the bug it was asked to investigate, and classifying that as a supplier
+  // outage would blame the model for prose. Only failure-shaped summaries are classified.
+  const summaryFailureType = inferFailureTypeFromSummary(
     typeof parsed?.summary === "string" ? parsed.summary : rawText,
     "reasoning_failure",
   );

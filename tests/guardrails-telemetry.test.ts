@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { inferFailureType, parseCouncilConfig, sanitizeOutcome } from "../packages/core/src/index.js";
+import { inferFailureType, inferFailureTypeFromSummary, parseCouncilConfig, sanitizeOutcome } from "../packages/core/src/index.js";
 import type { ExpertOutcome } from "../packages/core/src/index.js";
 import { aggregateOutcomes } from "../packages/core/src/telemetry.js";
 
@@ -42,6 +42,37 @@ describe("failure classification: transport faults are provider failures", () =>
     expect(inferFailureType("permission denied")).toBe("permission_error");
     expect(inferFailureType("insufficient balance")).toBe("provider_error");
     expect(inferFailureType("tool call rejected")).toBe("tool_call_error");
+  });
+});
+
+describe("report text is weaker evidence than an error message", () => {
+  it("will not turn a long expert report into a supplier outage", () => {
+    const report =
+      "All gates pass. Work complete - final summary: the presence package now builds and initializes; " +
+      "I also noticed the owner runtime logs a bad gateway when the socket dies, which is unrelated to this change " +
+      "and should be tracked separately.";
+    expect(inferFailureTypeFromSummary(report)).toBe("reasoning_failure");
+  });
+
+  it("ignores transport vocabulary that is not shaped like a failure", () => {
+    expect(inferFailureTypeFromSummary("the crash follows a 502 from the gateway")).toBe("reasoning_failure");
+    expect(inferFailureTypeFromSummary("")).toBe("reasoning_failure");
+  });
+
+  it("still classifies failure-shaped summaries, however long the tail", () => {
+    expect(inferFailureTypeFromSummary("Connection error.")).toBe("provider_error");
+    expect(inferFailureTypeFromSummary(`[Failure] Connection error.
+
+${"Scout roles are read-only. ".repeat(20)}`)).toBe("provider_error");
+    expect(inferFailureTypeFromSummary("Error: fetch failed")).toBe("provider_error");
+  });
+
+  it("requires HTTP status codes to appear in context", () => {
+    expect(inferFailureType("[Failure] HTTP 502 Bad Gateway")).toBe("provider_error");
+    expect(inferFailureType("[Failure] status: 504")).toBe("provider_error");
+    expect(inferFailureType("[Failure] the api is overloaded")).toBe("provider_error");
+    expect(inferFailureType("[Failure] saw 502 in the fixture")).toBe("unknown");
+    expect(inferFailureType("[Failure] server error")).toBe("unknown");
   });
 });
 

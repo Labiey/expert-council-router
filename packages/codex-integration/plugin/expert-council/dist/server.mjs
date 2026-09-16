@@ -311060,23 +311060,39 @@ var TRANSPORT_FAILURE_MARKERS = [
   "socket hang up",
   "socket hangup",
   "fetch failed",
-  "network error",
   "network timeout",
   "upstream connect error",
   "upstream connect",
   "bad gateway",
   "service unavailable",
   "gateway timeout",
-  "overloaded",
-  "server error",
   "internal server error",
   "stream disconnected",
-  "502",
-  "503",
-  "504",
-  "521",
-  "522",
-  "524"
+  "api overloaded",
+  "server overloaded",
+  "model overloaded",
+  "is overloaded",
+  "http 502",
+  "http 503",
+  "http 504",
+  "http 521",
+  "http 522",
+  "http 524",
+  "status 502",
+  "status 503",
+  "status 504",
+  "status: 502",
+  "status: 503",
+  "status: 504",
+  "code 502",
+  "code 503",
+  "code 504",
+  "error 502",
+  "error 503",
+  "error 504",
+  "502 bad gateway",
+  "503 service unavailable",
+  "504 gateway timeout"
 ];
 var PROVIDER_FAILURE_MARKERS = [
   "provider",
@@ -311153,6 +311169,19 @@ function classifyAvailabilityEvidence(summary) {
 }
 function indicatesModelUnavailable(summary) {
   return classifyAvailabilityEvidence(summary) !== void 0;
+}
+var SUMMARY_CLASSIFICATION_LIMIT = 200;
+function inferFailureTypeFromSummary(value3, fallback = "reasoning_failure") {
+  const text = (typeof value3 === "string" ? value3 : String(value3 ?? "")).trim();
+  if (!text)
+    return fallback;
+  const prefixed = /^\[failure\]/i.test(text);
+  if (!prefixed && text.length > SUMMARY_CLASSIFICATION_LIMIT)
+    return fallback;
+  if (!prefixed && !/(error|failed|failure|exception|timed out|timeout|unavailable|denied|reject)/i.test(text.slice(0, 60))) {
+    return fallback;
+  }
+  return inferFailureType(text, fallback);
 }
 function inferFailureType(value3, fallback = "unknown") {
   const message = value3 instanceof Error ? value3.message.toLowerCase() : String(value3).toLowerCase();
@@ -319141,7 +319170,7 @@ function normalizeResult(parsed, request, rawText, changedFiles, workspace, usag
   }) : void 0;
   const stringArray = (value3) => Array.isArray(value3) ? value3.flatMap((item) => safeText(item, 2e3) ?? []).slice(0, 20) : void 0;
   const explicitFailureType = typeof parsed?.failureType === "string" && FAILURE_TYPES.has(parsed.failureType) ? parsed.failureType : void 0;
-  const summaryFailureType = inferFailureType(typeof parsed?.summary === "string" ? parsed.summary : rawText, "reasoning_failure");
+  const summaryFailureType = inferFailureTypeFromSummary(typeof parsed?.summary === "string" ? parsed.summary : rawText, "reasoning_failure");
   const inferredFailureType = status !== "success" ? explicitFailureType ?? (tests?.some((test) => test.status === "failed") ? "test_failure" : void 0) ?? summaryFailureType : void 0;
   return {
     status,

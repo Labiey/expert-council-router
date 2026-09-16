@@ -9,6 +9,21 @@ import type { ExpertResult, FailureType } from "./types.js";
  * against that model's own reliability record in local learning. Observed live:
  * an attempt whose last text was "Connection error." recorded `failureType: unknown`.
  */
+/**
+ * Transport-level upstream faults. These are checked before the generic `timeout`
+ * branch, because "gateway timeout" is the provider's failure, not our budget
+ * expiring. Without them a dropped provider connection was classified `unknown`,
+ * which cost three things at once: no availability marking, none of the bounded
+ * budget growth reserved for timeouts, and - worst - a supplier outage charged
+ * against that model's own reliability record in local learning. Observed live:
+ * an attempt whose last text was "Connection error." recorded `failureType: unknown`.
+ *
+ * Every marker here is message-shaped on purpose. A bare "502" or "overloaded" is not:
+ * the same classifier is also handed an expert's own report (see
+ * `inferFailureTypeFromSummary`), and a debugger writing "the crash follows a 502 from
+ * the gateway" must never be recorded as a supplier outage blamed on the model that
+ * wrote it. Status codes therefore only match alongside HTTP context.
+ */
 const TRANSPORT_FAILURE_MARKERS = [
   "connection error",
   "connection reset",
@@ -22,23 +37,39 @@ const TRANSPORT_FAILURE_MARKERS = [
   "socket hang up",
   "socket hangup",
   "fetch failed",
-  "network error",
   "network timeout",
   "upstream connect error",
   "upstream connect",
   "bad gateway",
   "service unavailable",
   "gateway timeout",
-  "overloaded",
-  "server error",
   "internal server error",
   "stream disconnected",
-  "502",
-  "503",
-  "504",
-  "521",
-  "522",
-  "524",
+  "api overloaded",
+  "server overloaded",
+  "model overloaded",
+  "is overloaded",
+  "http 502",
+  "http 503",
+  "http 504",
+  "http 521",
+  "http 522",
+  "http 524",
+  "status 502",
+  "status 503",
+  "status 504",
+  "status: 502",
+  "status: 503",
+  "status: 504",
+  "code 502",
+  "code 503",
+  "code 504",
+  "error 502",
+  "error 503",
+  "error 504",
+  "502 bad gateway",
+  "503 service unavailable",
+  "504 gateway timeout",
 ] as const;
 
 const PROVIDER_FAILURE_MARKERS = [
@@ -138,6 +169,28 @@ export function classifyAvailabilityEvidence(summary: unknown): AvailabilityEvid
 
 export function indicatesModelUnavailable(summary: unknown): boolean {
   return classifyAvailabilityEvidence(summary) !== undefined;
+}
+
+/** Longer than this, free-form text is treated as narration, not as a failure message. */
+export const SUMMARY_CLASSIFICATION_LIMIT = 200;
+
+/**
+ * A failure type derived from report text, which is a different evidence class from an
+ * error message: an expert's summary can quote the very words that mark a transport fault
+ * while describing somebody else's bug. Only text that is itself shaped like a failure -
+ * our own `[Failure]` prefix, or a short line that opens with failure vocabulary - is
+ * classified at all, so a long report can never invent a supplier outage and have it
+ * blamed on the model that wrote it.
+ */
+export function inferFailureTypeFromSummary(value: unknown, fallback: FailureType = "reasoning_failure"): FailureType {
+  const text = (typeof value === "string" ? value : String(value ?? "")).trim();
+  if (!text) return fallback;
+  const prefixed = /^\[failure\]/i.test(text);
+  if (!prefixed && text.length > SUMMARY_CLASSIFICATION_LIMIT) return fallback;
+  if (!prefixed && !/(error|failed|failure|exception|timed out|timeout|unavailable|denied|reject)/i.test(text.slice(0, 60))) {
+    return fallback;
+  }
+  return inferFailureType(text, fallback);
 }
 
 export function inferFailureType(value: unknown, fallback: FailureType = "unknown"): FailureType {

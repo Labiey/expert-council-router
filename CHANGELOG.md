@@ -39,6 +39,13 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **Newly persisted outcome fields are registered in the projection whitelist** (`failureType`,
   `toolCalls`, `toolErrorsObserved`, `attentionCodes`) - the same class of silent-drop bug fixed in 0.8.4
   for `interactionRounds`, now covered by a regression test in `tests/guardrails-telemetry.test.ts`.
+- **Report text is no longer classified as if it were an error message (defect #16).** `summarizeExpertReport`
+  derives a failure type from the expert's own summary, so bare markers like `502`, `overloaded` or
+  `server error` would have let a debugger writing "the crash follows a 502 from the gateway" be recorded as
+  a supplier outage blamed on the model that wrote the sentence - the exact inversion this release exists to
+  prevent. Status codes now match only with HTTP context, and a new `inferFailureTypeFromSummary` classifies
+  only failure-shaped text (our own `[Failure]` prefix, or a short line opening with failure vocabulary)
+  while real errors keep the message classifier.
 - **The verification gate no longer fails falsely inside a worktree.** The suite creates git worktrees
   whose source is the repository it is standing in; when the suite itself runs inside a linked worktree -
   which is exactly what happens when a mutation expert is delegated - git answered
@@ -99,6 +106,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **遥测里的 `toolErrors` 曾是一个伪装成计数的 0/1 标志。** 它记录的是「这次尝试是否被*分类*为工具错误」，导致 `observedAdjustment` 的工具错误项长期饥饿；现在使用真实观测计数，旧分类仅作为无法观测工具事件的运行时的兜底。
 - **`state.json` 改为缩进写盘**，与其他持久化文档一致。此前单行 minified 对我们自己的只读角色完全不透明（`read` 每行上限 50KB，`grep` 把命中截断到 500 字符），这正是逐次诊断必须借宿主 shell 的原因。
 - **新增持久化字段已登记进投影白名单**（`failureType`、`toolCalls`、`toolErrorsObserved`、`attentionCodes`）——与 0.8.4 修复的 `interactionRounds` 静默丢弃属同一类缺陷，现由 `tests/guardrails-telemetry.test.ts` 的回归测试守住了。
+- **报告文本不再被当成错误消息分类（缺陷 #16）。** `summarizeExpertReport` 会从专家自己的摘要推导失败类型，于是 `502`、`overloaded`、`server error` 这类裸标记会让一句“崩溃跟随网关返回的 502”被记成供应商故障、并算到写出这句话的模型头上——这正是本次发布要消除的倒置。现在状态码必须带 HTTP 上下文才匹配；新增 `inferFailureTypeFromSummary` 只判定“形似失败”的文本（我们自己的 `[Failure]` 前缀，或以失败词汇开头的短行），真实错误仍走消息级分类器。
 - **验证门不再在 worktree 内假失败。** 测试套件的 worktree 以「自己所在的仓库」为源；当套件本身跑在 linked worktree 里（正是委派可写专家时发生的情形），git 会回 `fatal: '$GIT_DIR' too big`，于是明明没问题的成果被判失败——已有两位专家的正确结果因此降级。`tests/global-setup.ts` 现在用 `--absolute-git-dir` 与 `--git-common-dir` 比对来识别 linked worktree（绝不用路径长度猜），以 `git clone --local` 一次性把主检出克隆到短路径，并经由一个握手文件交给需要真实 git 源的可写测试——因为 globalSetup 里的 `process.env` 根本传不到 vitest worker。双向证实：普通检出 49/49，132 字符的 linked worktree 内同样 49/49（同样的运行此前有 7 项因该 git 错误失败）。
 
 ### 说明
