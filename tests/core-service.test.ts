@@ -2177,7 +2177,13 @@ describe("a read-only partial is delivered rather than re-run (defect #32)", () 
     expect((result.risks ?? []).join(" ")).not.toContain("read-only role");
   });
 
-  it("still escalates when the expert stopped because it lacked context", async () => {
+  it("never lets the acceptance rule swallow an expert-declared stop (defensive guard)", async () => {
+    // Deliberately synthetic and labelled as such: buildStoppedResult always reports
+    // missing_context, so no current stop produces stoppedByExpert with reasoning_failure.
+    // What this pins is the guard itself - if a future stop path carries some other failure
+    // type, a self-declared stop must never be converted into "incomplete is good enough".
+    // The previous version of this test was named as if it described real stop behaviour,
+    // which it did not; the real behaviour is pinned by the next test (defect #32 follow-up).
     const runtime = new MockRuntime(models, [
       partialOnFirst("partial", { stoppedByExpert: true, failureType: "reasoning_failure" }),
       (request: { role: string; model: string }) => ({
@@ -2190,10 +2196,26 @@ describe("a read-only partial is delivered rather than re-run (defect #32)", () 
     ]);
     const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
     const result = await service.delegate({ role: "scout", task: "Trace the pruning path", timeoutMs: 60_000 });
-    // A self-declared stop is the case a different model can genuinely fix, so #32's
-    // acceptance must not swallow it.
     expect(runtime.requests).toHaveLength(2);
     expect(result.status).toBe("success");
+    expect((result.risks ?? []).join(" ")).not.toContain("rather than paying for a second attempt");
+  });
+
+  it("ends the delegation when an expert stops for missing context, without paying for a retry", async () => {
+    // What actually happens today: report_and_stop yields failureType missing_context, the
+    // loop terminates on that as it has since long before 0.8.6, and the report is delivered
+    // unchanged. #32 does not alter this - a stop says the task is blocked, not that an
+    // incomplete answer is acceptable - and no acceptance risk line is attached, because the
+    // council decided nothing; the expert did.
+    const runtime = new MockRuntime(models, [
+      partialOnFirst("partial", { stoppedByExpert: true, failureType: "missing_context" }),
+    ]);
+    const service = new ExpertCouncilService(runtime, { profiles: { models: profiles } });
+    const result = await service.delegate({ role: "scout", task: "Trace the pruning path", timeoutMs: 60_000 });
+    expect(runtime.requests).toHaveLength(1);
+    expect(result.status).toBe("partial");
+    expect(result.summary).toContain("could not confirm");
+    expect((result.risks ?? []).join(" ")).not.toContain("rather than paying for a second attempt");
   });
 });
 
