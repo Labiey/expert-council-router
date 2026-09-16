@@ -2196,3 +2196,74 @@ describe("a read-only partial is delivered rather than re-run (defect #32)", () 
     expect(result.status).toBe("success");
   });
 });
+
+describe("a quoted transport phrase cannot pause its own model (defect #34)", () => {
+  const models = [model("p", "dead"), model("p", "alive")];
+  const assessment = {
+    asOf: "2026-09-03T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: {
+      "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+      "p/alive": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+    },
+  };
+
+  function initialState(modelAssessment: ModelAssessmentSnapshot): CouncilStateSnapshot {
+    return { version: 1, plans: [], executions: [], results: [], modelAssessment };
+  }
+
+  // A realistic debugger write-up: it quotes the supplier noise it ruled out, and 0.8.6
+  // made those very phrases into availability evidence.
+  const REPORT =
+    "Root cause is the cache key, not the transport. The logs contain a connection error and "
+    + "one 502 bad gateway from the staging proxy, plus a fetch failed line, but every one of "
+    + "those happened on requests the fix does not touch, so none of them explains the bug. "
+    + "The failing path is deterministic and local: readCache skips the tenant prefix, so two "
+    + "tenants collide whenever the key is shorter than eight characters. Reproduced with the "
+    + "supplier endpoint unreachable, which is why the transport noise is irrelevant here.";
+
+  it("refuses to mark a model from a long report that merely quotes transport phrases", async () => {
+    expect(REPORT.length).toBeGreaterThan(200);
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: REPORT,
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    let stored: ModelAssessmentSnapshot = assessment;
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: initialState(assessment),
+      persistence: {
+        save: async () => {},
+        updateModelAssessment: async (
+          mutate: (current: ModelAssessmentSnapshot | undefined) => ModelAssessmentSnapshot | undefined,
+        ) => {
+          const next = mutate(stored);
+          if (next) stored = next;
+        },
+      },
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(result.status).toBe("success");
+    expect(result.executionMetadata?.unavailableModels).toBeUndefined();
+    expect(stored.modelAvailability ?? {}).toEqual({});
+  });
+
+  it("still marks a genuine provider message, short or long, and keeps the 429 recovery path", async () => {
+    const { classifyReportedAvailabilityEvidence } = await import("../packages/core/src/failures.js");
+    // Short provider messages are trusted outright.
+    expect(classifyReportedAvailabilityEvidence("[Failure] Connection error.")).toBe("transport-unstable");
+    expect(classifyReportedAvailabilityEvidence("Provider API returned model_not_found for p/dead.")).toBe("unavailable");
+    expect(classifyReportedAvailabilityEvidence("Provider returned 429 rate limit exceeded.")).toBe("rate-limited");
+    // A long body is trusted when it opens like a message - real providers do return these.
+    expect(classifyReportedAvailabilityEvidence(
+      '429: {"message":"Your token-plan 1-week quota has been exhausted.","type":"insufficient_quota","request_id":"0f1e"}',
+    )).toBeDefined();
+    // And refused when it opens like narration.
+    expect(classifyReportedAvailabilityEvidence(REPORT)).toBeUndefined();
+  });
+});

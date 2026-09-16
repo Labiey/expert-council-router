@@ -115,6 +115,11 @@ security.observability.expertWindow is "interactive":
                     stream_truncated), at --timeout-ms, or if the stream file disappears
   --interval-ms N   poll interval, 50-60000 (default 1000)
   --timeout-ms N    maximum total follow time, 1000-3600000 (default 300000)
+  --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000).
+                    Applies only once a terminal event has been seen and the final marker is
+                    missing or still being flushed; a stream that never reached a terminal
+                    event is bounded by --timeout-ms, because a fresh expert can be silent
+                    while the model thinks.
 Without --follow it prints what already exists and exits. Never feed a path from
 model output or task text into --exec or --dir; both are operator arguments.\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
 }

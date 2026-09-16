@@ -8,7 +8,7 @@ import {
 } from "./config.js";
 import { decideEscalation } from "./escalation.js";
 import { classifyAvailabilityEvidence } from "./failures.js";
-import { failureTypeForResult, indicatesModelUnavailable } from "./failures.js";
+import { classifyReportedAvailabilityEvidence, failureTypeForResult } from "./failures.js";
 import {
   compositionByName,
   compositionMenu,
@@ -819,8 +819,15 @@ export class ExpertCouncilService implements ExpertCouncil {
               (candidate) => parseModelKey(candidate.model).provider !== provider,
             );
           }
-        } catch {
-          // Usage accounting is best-effort; routing still records the attempt.
+        } catch (error) {
+          // Usage accounting is best-effort; routing still records the attempt. The
+          // provider-cap marker inside this block is a marker write like any other, so a
+          // failure here is recorded rather than swallowed (#26's rule, which this catch
+          // previously escaped).
+          persistenceErrors.push({
+            model: current.model,
+            detail: String(error instanceof Error ? error.message : error).slice(0, 200),
+          });
         }
       }
 
@@ -853,13 +860,16 @@ export class ExpertCouncilService implements ExpertCouncil {
         // scale the next attempt's budget (bounded) instead of repeating it.
         currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), 3_600_000);
       }
-      if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
+      // Report prose, not a provider message: only text that reads as a failure may mark anything
+      // away, or a debugger quoting "connection error" would pause its own model (#34).
+      const reportedEvidence = classifyReportedAvailabilityEvidence(lastResult.summary);
+      if (failure === "provider_error" && reportedEvidence && !unavailableMarked.includes(current.model)) {
         try {
           const provider = parseModelKey(current.model).provider;
           const siblings = models
             .filter((model) => model.provider === provider && `${model.provider}/${model.id}` !== current.model)
             .map((model) => `${model.provider}/${model.id}`);
-          const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings);
+          const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings, { kind: reportedEvidence });
           unavailableMarked.push(...marked.markedKeys.filter((key) => !unavailableMarked.includes(key)));
           if (marked.kind === "quota-exhausted") {
             // The whole provider's plan or balance is out: stop considering its

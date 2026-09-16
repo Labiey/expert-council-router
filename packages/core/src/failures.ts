@@ -166,8 +166,59 @@ export function indicatesModelUnavailable(summary: unknown): boolean {
   return classifyAvailabilityEvidence(summary) !== undefined;
 }
 
+/**
+ * How a long piece of text must begin to be read as a provider message rather than as
+ * narration. Real providers do return long bodies - `429: {"message":"Your token-plan
+ * quota has been exhausted..."}` - so length alone cannot be the test; the opening can.
+ */
+const MESSAGE_LIKE_OPENING =
+  /^(\[failure\]|\d{3}\b|\bprovider\b|\bhttp\b|\bupstream\b|\bfatal\b|\berror\b|\bfailure\b|\bexception\b|\btimeout\b|\bquota\b|rate.?limit|\bthrottl|\bsocket\b|fetch failed|\bconnection\b|econn\w*|model_not_found|\baccess\b|unauthorized|service unavailable)/i;
+
+/**
+ * Availability evidence taken from a result's report text rather than from a provider
+ * error message. `classifyAvailabilityEvidence` is written for messages; since 0.8.6 the
+ * transport markers include phrases that turn up routinely in debugging write-ups
+ * ("connection error", "fetch failed", "is overloaded"), so an unguarded report could
+ * pause its own model in routing - the #16 inversion on the routing axis (defect #34).
+ *
+ * Short text is trusted, because the availability markers are already specific phrases.
+ * Long text must open like a message, which is what stops a write-up that merely quotes
+ * "connection error" while explaining that it is unrelated. Note this is deliberately
+ * looser than `readsAsFailureMessage`: that predicate serves the failure-type buckets
+ * ("tool", "test", "context"), and applying it here would refuse genuine messages like
+ * "model_not_found" or "429 rate limit exceeded", which open with none of its words.
+ */
+export function classifyReportedAvailabilityEvidence(value: unknown): AvailabilityEvidence | undefined {
+  const text = (value instanceof Error ? value.message : String(value ?? "")).trim();
+  if (!text) return undefined;
+  // Short text is trusted, because the availability markers are specific phrases. Long
+  // text is only trusted when it opens like a message, which is what stops a debugging
+  // report that merely quotes "connection error" from pausing its own model (#34) -
+  // the #16 inversion on the routing axis, newly reachable because 0.8.6 made transport
+  // phrases into availability evidence.
+  if (text.length > SUMMARY_CLASSIFICATION_LIMIT && !MESSAGE_LIKE_OPENING.test(text)) return undefined;
+  return classifyAvailabilityEvidence(text);
+}
+
 /** Longer than this, free-form text is treated as narration, not as a failure message. */
 export const SUMMARY_CLASSIFICATION_LIMIT = 200;
+
+/**
+ * Whether text may be read as a failure *message* rather than as free-form narration, for
+ * the failure-type classifier. A long write-up can quote "connection error", "502 bad
+ * gateway" or "the model is overloaded" while explaining that none of it is the model's
+ * fault, and that quotation must not cost the model its reliability record (#16).
+ *
+ * Availability evidence deliberately does NOT share this predicate: its markers are specific
+ * phrases, and this vocabulary was written for the failure-type buckets, so applying it
+ * there would refuse genuine provider messages (see
+ * `classifyReportedAvailabilityEvidence` and defect #34).
+ */
+function readsAsFailureMessage(text: string): boolean {
+  if (/^\[failure\]/i.test(text)) return true;
+  if (text.length > SUMMARY_CLASSIFICATION_LIMIT) return false;
+  return /(error|failed|failure|exception|timed out|timeout|unavailable|denied|reject)/i.test(text.slice(0, 60));
+}
 
 /**
  * A failure type derived from report text, which is a different evidence class from an
@@ -179,12 +230,7 @@ export const SUMMARY_CLASSIFICATION_LIMIT = 200;
  */
 export function inferFailureTypeFromSummary(value: unknown, fallback: FailureType = "reasoning_failure"): FailureType {
   const text = (typeof value === "string" ? value : String(value ?? "")).trim();
-  if (!text) return fallback;
-  const prefixed = /^\[failure\]/i.test(text);
-  if (!prefixed && text.length > SUMMARY_CLASSIFICATION_LIMIT) return fallback;
-  if (!prefixed && !/(error|failed|failure|exception|timed out|timeout|unavailable|denied|reject)/i.test(text.slice(0, 60))) {
-    return fallback;
-  }
+  if (!text || !readsAsFailureMessage(text)) return fallback;
   return inferFailureType(text, fallback);
 }
 
@@ -228,5 +274,13 @@ export function inferFailureType(value: unknown, fallback: FailureType = "unknow
 export function failureTypeForResult(result: ExpertResult): FailureType {
   if (result.executionMetadata?.failureType) return result.executionMetadata.failureType;
   if (result.tests?.some((test) => test.status === "failed")) return "test_failure";
+  // Deliberately the unguarded classifier. This is the council's recovery path for a
+  // runtime that declared no failure type at all on an already-failed attempt: a real
+  // provider body such as `429: {"message":"...quota has been exhausted."}` must still be
+  // recognised as supplier evidence so the plan-wide marker lands (pinned by
+  // "classifies plan-quota 429 failures as provider_error so the whole plan gets marked").
+  // Routing the guarded report classifier through here would refuse exactly that text,
+  // because its opening vocabulary list was written for failure-type buckets, not quota
+  // wording. The #34 hazard is on the availability axis and is closed at that gate instead.
   return inferFailureType(result.summary);
 }

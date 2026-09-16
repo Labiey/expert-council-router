@@ -41,10 +41,14 @@ All notable changes to Expert Council are documented here. Versions follow seman
   `status !== "success"`, so every incomplete-but-usable report bought a second full attempt on another
   model - observed live, a scout whose 25-second partial answer triggered a 44-second re-run of the same
   investigation. `partial` from a read-only role now terminates the loop, keeping `status: "partial"` and
-  adding a risk line that says the council chose not to re-run. Mutation roles are unchanged, and an expert
-  that stopped for missing context still escalates, because that is the one case a different model can
-  genuinely fix. Falsified by disabling the condition: exactly the scout test reddens, while both
-  escalate-anyway tests stay green.
+  adding a risk line that says the council chose not to re-run. Mutation roles are unchanged, and a report
+  from an expert that called `report_and_stop` is untouched by this rule: it terminates without a second
+  attempt, as it always has, because it declared the task blocked rather than merely incomplete. (This
+  entry originally claimed such a report "still escalates", which is not what the code does -
+  `report_and_stop` yields `missing_context`, and the loop has terminated on that since well before 0.8.6;
+  the test written against the claim used a metadata combination the stop path cannot produce. Both are
+  corrected to the real behaviour, which is what the surviving tests now assert.) Falsified by disabling
+  the condition: exactly the scout test reddens, while the mutation-role test stays green.
 - **Supplier faults now reach the axis routing actually reads (defect #31).** `provider_error` was excluded
   from the model's reliability record in 0.8.5 - correct, and kept - but nothing picked the signal up, and a
   connection fault is not model-death evidence so it produced no availability marker either. The result: a
@@ -72,9 +76,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
   `WorkspaceBoundary.changedFiles` swallowed its own `git status` failure and returned `[]`, so a mutation
   expert whose diff could not be read - the `$GIT_DIR` too big class from defect #11 is exactly this - was
   reported as an expert that changed nothing, and a host integrating from `filesChanged` integrated nothing
-  at all. "Cannot tell" is now its own answer: `executionMetadata.filesChangedError` plus a risk line on
-  every delivered path that gathers files (success, timeout, session error, thrown error, abort, expert
-  stop). Swept the whole repository for this family: 70 `catch` blocks, 15 with no statement in the body,
+  at all. "Cannot tell" is now its own answer: `executionMetadata.filesChangedError`. The risk line
+  promised alongside it landed on the success path only - that half-done state is defect #35 below, and it
+  mattered precisely because an absent `filesChanged` on a *failed* attempt is where a host most needs to
+  know that work may exist. Swept the whole repository for this family: 70 `catch` blocks, 15 with no statement in the body,
   and every one of them read - the rest are deliberate (optional Pi capability probes, raced deletions,
   notices a host refused, teardown), and their reasons are now recorded next to the code.
 - **A notice counter that counted attempts as deliveries (defect #29).** `watchForInteractions` incremented
@@ -122,6 +127,40 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **The CLI's stream reader dropped the new `attempt` field.** Its frame parser copies only fields it knows,
   so attempt numbers were silently discarded before reaching the renderer - the same whitelist hazard as
   `interactionRounds` in 0.8.4, caught here by a test written against the parser rather than the stub.
+
+- **A report that quotes a transport failure cannot pause the model that quoted it (#34,
+  pre-release review).** Marking a model unavailable is a routing decision with real
+  consequences - candidates are rejected until the marker expires - and the marking gate fed
+  it raw expert prose, which has no shape guard at all (unlike the failure-type classifier,
+  which got one in 0.8.5 for exactly this reason). Defect #31 made the hazard live:
+  "connection error", "fetch failed" and "is overloaded" are ordinary sentences in a
+  debugger's write-up, and they are now evidence. A failed attempt whose report said "the
+  logs contain a connection error ... but that is unrelated" would have paused its own model.
+  `classifyReportedAvailabilityEvidence` now gates report text: short text is trusted,
+  because availability markers are specific phrases, while long text must open like a
+  provider message. A length cap alone is not enough - real providers do return long bodies
+  such as `429: {"message":"...quota has been exhausted."}`, and refusing those would drop
+  the plan-wide marker that ships protected by a test. The gate is deliberately looser than
+  `readsAsFailureMessage`, and the reason is recorded at the predicate: that test was written
+  for the failure-type buckets and rejects genuine messages like "model_not_found" or "429
+  rate limit exceeded", which is what happened the first time this guard was applied there.
+  The review also proposed routing `failureTypeForResult` through the guarded classifier;
+  that was tried and **rejected** - it broke the tested recovery path for a runtime that
+  mislabels a real 429 as `unknown`, and that fallback runs only on already-failed attempts.
+- **An unreadable diff stays visible on the failure paths (#35, pre-release review).**
+  Defect #28 recorded `executionMetadata.filesChangedError` on every delivered path but put
+  its explanatory risk line only on the success path, so a timed-out, aborted or self-stopped
+  mutation run still showed an absent `filesChanged` with no reason attached - the exact
+  situation in which a host most needs to learn that work may exist to be salvaged. The note
+  is now produced by one helper and merged into `risks` on every delivered path that gathers
+  files, including the timeout result, which previously had no `risks` field at all. Verified
+  through a real writable run in a non-repository workspace whose diff cannot be read.
+- **`watch` documentation matches what `watch` does.** The `--help` text still described the
+  0.8.5 exit rule and omitted `--quiet-ms`; both were corrected, and the README now states
+  the precondition the quiet fallback actually has - it applies once a terminal event has
+  been seen, while a stream that never reached one is bounded by `--timeout-ms`, because a
+  fresh expert can legitimately say nothing while the model thinks. An unused convenience
+  export added during this work was deleted rather than shipped as dead API.
 
 ### Added
 - **A drift guard for the renderer.** Every event kind must now be listed in a `Record` over the
@@ -226,7 +265,7 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **挣扎告警到了运维终端却把正文丢了（缺陷 #21）。** `formatExpertEvent` 没有 `attention` 分支，于是落进 default 只印出裸的种类名——现场那两行 `attention` 不知所云。现在渲染为 `WARNING: <正文> (budget 60%, tool errors 1/2, expert steered)`。
 - **护栏计数没能进入事件流，即便进入了也会在管道另一端被丢掉（缺陷 #22）。** 运行时只写告警文本，而 CLI 帧读取只复制它认识的字段，同一根管子两头都在丢数据。两端一起修、各自单独测——“字段存在”与“字段能穿过投影”是两个不同的 bug：与 0.8.4 的 `interactionRounds`、0.8.6 的 `attempt` 同一课。
 - **一条落盘的标记能让共享评估文件变得不可读（缺陷 #33）。** `rate-limited` 在标记联合类型里、也由标记写入函数写出，但 `config.ts` 的持久化状态枚举仍然只有 `unavailable` 与 `quota-exhausted`——于是**第一次正常的瞬时限流标记**就让 `model-assessment.json` 对**之后每一个进程**校验失败：`load()` 与 `update()` 双双抛错，而 factory 启动时的 `persistence.load()` 没有 try 包裹。我拿真实文件的副本做了端到端验证，不是推断出来的。现在两个枚举都覆盖全部 kind，并有一条测试用**真正的解析器**遍历 `AVAILABILITY_MARKER_KINDS`，所以下一个新 kind 不可能再绕过 schema；把旧的窄枚举改回去，会逐字重现当初的 `Invalid option` 拒绝。读盘错误也补上了恢复提示（点名文件与安全的出路），因为一份坏掉的评估文件过去就是死胡同。
-- **只读角色的 `partial` 直接交付，不再付两遍钱（缺陷 #32）。** 升级规则原本是 `status !== "success"`，于是每一份"不完整但可用"的答复都会换来另一次整额尝试——现场就看到了：scout 25 秒给出的 partial，触发了对同一次调查的 44 秒重跑。现在只读角色的 `partial` 会终止循环，保留 `status: "partial"`，并加一条说明"Council 选择不重跑"的 risk。可写角色不变；而因缺上下文主动停止的专家依然会升级——那是换更强模型确实能解决的情形。反证：把接受条件摘掉，只有 scout 那条变红，两条"照旧升级"的测试保持绿。
+- **只读角色的 `partial` 直接交付，不再付两遍钱（缺陷 #32）。** 升级规则原本是 `status !== "success"`，于是每一份"不完整但可用"的答复都会换来另一次整额尝试——现场就看到了：scout 25 秒给出的 partial，触发了对同一次调查的 44 秒重跑。现在只读角色的 `partial` 会终止循环，保留 `status: "partial"`，并加一条说明"Council 选择不重跑"的 risk。可写角色不变；调用 `report_and_stop` 主动停止的专家也不受此规则影响——它照旧直接终止、不再重试，因为那是"任务被阻塞"而不是"任务不完整"。（本条最初写的是"缺上下文的停止仍会升级"，那是错的：`report_and_stop` 产生 `missing_context`，而循环早在 0.8.6 之前就一直在此终止；对着这句声明写的测试也用了停止路径不可能产生的组合。两处都已改为真实行为，现存测试钉的就是真实行为。）反证：把接受条件摘掉，只有 scout 那条变红，可写角色那条保持绿。
 - **供应商故障终于进入路由真正会读的那条轴（缺陷 #31）。** 0.8.5 把 `provider_error` 从模型可靠性记录里剔除——这件事是对的，也保留了——但没有任何一端接手这个信号，而连接错误又不是“模型已死”的证据，所以连可用性标记都不产生。结果是：一条 5 次里掉线 4 次的线路，始终是路由的首选，每次委派都要付一次注定失败的尝试去重新发现这件事。现在 `classifyAvailabilityEvidence` 对它**本来就拥有**的传输标记返回 `transport-unstable`（不新建标记清单），给最短的标记窗口（5 分钟），并在“模型不存在”那组之前判它，因此 "503 Service Unavailable" 绝不会被读成模型消失；而且**只标坏掉的那条线路**、不连坐同 provider 的兄弟模型——连接故障是单线路证据，账号级限流才是账户事实。两条轴的分离是刻意的：供应商故障仍然不进模型记录，只在窗口开着时暂被路由避开——正反都验过，包括窗口过去之后路由会重新选它。我们自己的超时依然什么都不标：预算用完不是供应商的错。
 - **六处与代码脱钩的文档块，其中一处还在说谎（缺陷 #30）。** 这是派出去的一名 scout 在被运维者实时旁观工作时发现的，不是我看 diff 看出来的：同一个分类器带了两份逐字相同的文档注释，`*/` 紧挨 `/**`。成因是我自己的手法——习惯把新声明插在“已有文档块”和它所描述的代码中间。六处逐一修复：`failures.ts`、`presentation.ts`（渲染器的注释被我在它上方插入覆盖表时挤掉了）、`types.ts` 两处（一处归还给 `ModelAvailabilityObservation`，一处陈旧重复删除）、`pi-runtime.ts`，以及 `config.ts`——那里一份过期注释仍写着“从不透出工具参数，所以这里没什么可脱敏”，而 0.8.4 早已实现真实的参数脱敏：**读起来像现行说明却是错的文档，比没有文档更糟**。现在新增一条源码卫生测试：`packages/` 下任何紧接 `/**` 的 `*/` 都会失败并点名文件与行号；用注入一对注释验证，它报出 `index.ts:21`。
 - **读不出来的工作区 diff 不再冒充“工作树是干净的”（缺陷 #28）。** `WorkspaceBoundary.changedFiles` 会把自身的 `git status` 失败吞掉并返回 `[]`，于是一个可写专家只要 diff 读不出来——#11 那类 `$GIT_DIR` too big 正走这条路——就被报成“什么都没改”；照 `filesChanged` 做集成的宿主于是把真实成果集成为零。“无法判断”现在是一个独立的答案：所有会收集文件的交付路径（成功、超时、会话错误、抛错、中止、专家自停）都会给出 `executionMetadata.filesChangedError` 加一条 risk。并按这一族把全仓扫了一遍：70 个 `catch`、其中 15 个块内没有任何语句，逐个读过——其余都是有意为之（可选的 Pi 能力探测、竞态删除、宿主拒收的通知、拆除阶段），并把理由写在了代码旁边。
@@ -239,6 +278,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **`watch` 关闭时报告的结局是错的（缺陷 #19）。** 一次先失败后成功的委派会自称 `stream closed (failed)`，因为观察者记住了它看到的**第一个**终止事件。现在它记住最后一个；由委派级标记驱动的关闭会说 `stream closed (delegation finished)`——收尾那行再也不能和自己上面的输出相矛盾。
 - **出厂的事件渲染器此前完全没有测试（缺陷 #18）。** 0.8.4 那条"格式化器"测试注入的是桩，测试通过而 core 里真正的 `formatExpertEvent` 从未被断言过。现在它有直接测试，并且当场抓到一个真 bug：一条事件可以渲染成两行终端输出，会让运维者的 tail 与流失步。渲染已强制压成单行。
 - **CLI 的流读取器会丢掉新的 `attempt` 字段。** 它的帧解析只复制自己认识的字段，尝试序号因此在到达渲染器之前就被静默丢弃——与 0.8.4 的 `interactionRounds` 同类的白名单陷阱，这次靠"对解析器而不是对桩"写的测试抓到。
+
+- **报告里引用了传输故障，不能让引用它的模型自己被暂停路由（#34，发布前评审发现）。** 给模型打"不可用"是有真实后果的路由决策——标记过期前候选会被直接剔除——而打标记的门禁喂的是专家长篇原文，它**没有任何形状守卫**（失败类型分类器在 0.8.5 正因为这个原因加了守卫）。缺陷 #31 把这个口子激活了："connection error""fetch failed""is overloaded" 在调试报告里只是普通句子，而现在它们是证据。一份写着"日志里有 connection error……但与本缺陷无关"的失败尝试，本来会把自己的模型暂停掉。新增 `classifyReportedAvailabilityEvidence` 给报告文本设门禁：短文本直接信任（可用性标记本身是特定短语），长文本必须以供应商消息的样子开头。**单靠长度上限不够**——真实供应商确实会返回 `429: {"message":"...quota has been exhausted."}` 这种长体，拒掉它们就会丢掉那条有测试保护的整计划标记。这个门禁刻意比 `readsAsFailureMessage` 宽松，理由写在谓词旁边：后者是为失败类型那几个桶设计的，拿它拦可用性会把 `model_not_found`、"429 rate limit exceeded" 这类真消息一起拒掉——我第一次正是这么接的，结果误杀了 4 条合法标记测试。评审还建议把 `failureTypeForResult` 也接上守卫；试过并**否决**：它会破坏"运行时把真实 429 误标为 `unknown` 时仍要恢复出供应商证据"这条有测试的行为，而那条兜底只在已经失败的尝试上跑。
+- **diff 读不出来这件事，在失败路径上也要继续可见（#35，发布前评审发现）。** 缺陷 #28 在所有交付路径都记了 `executionMetadata.filesChangedError`，但那条解释性 risk 只加在成功路径上，于是超时、中止、自停的可写执行仍然只显示"没有文件变化"而不给原因——恰恰是最需要让宿主知道"可能有活可捡"的场合。现在这句话由一个辅助函数统一产出，并在每一条收集文件的交付路径上合并进 `risks`，包括此前**根本没有 `risks` 字段**的超时结果。验证方式是真的跑一次可写执行、工作区不是仓库，因此 diff 必然读不出来。
+- **`watch` 的文档与它自己的行为对齐了。** `--help` 里还写着 0.8.5 的退出规则、也漏了 `--quiet-ms`，两处都补上；README 现在写明那条静默兜底的真实前提——它只在**已经看到终止事件**之后生效，从未出现终止事件的流由 `--timeout-ms` 兜底，因为刚启动的专家在模型思考时本来就可以什么都不写。这轮修改过程中新增的一个便捷导出因无人调用而被删掉，没有作为死 API 发布出去。
 
 ### 新增
 - **渲染器的防漂移守卫。** 每个事件种类现在都必须在 `ExpertEventKind` 联合类型上的一个 `Record` 里登记——漏登就编译失败并点名缺的键；另有一条表驱动测试要求每个种类都有渲染断言。两半都用注入法验证过：加种类不登记会打断 `tsc`，登记却不测则守卫变红。

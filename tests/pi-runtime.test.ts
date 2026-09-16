@@ -1955,3 +1955,67 @@ describe("attention events carry their counters into the stream", () => {
     }
   });
 });
+
+describe("a failed run with an unreadable diff says so where the host looks (defect #35)", () => {
+  it("adds the risk line to a timed-out mutation result, not only to a successful one", async () => {
+    // The claim being verified is the one the 0.8.6 CHANGELOG makes: every delivered path
+    // that gathers files reports an unreadable diff. Defect #28 fixed only the success
+    // path, so a timed-out mutation run still showed an absent filesChanged with no
+    // explanation - which is exactly where a host most needs to know that work may exist.
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [
+        { provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+      ],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime } as unknown as PiSdkLike["ModelRuntime"],
+      SessionManager: { inMemory: () => ({}) } as unknown as PiSdkLike["SessionManager"],
+      createAgentSession: (async () => ({
+        session: {
+          // never resolves, so the attempt ends in the timeout path
+          prompt: () => new Promise(() => {}),
+          waitForIdle: async () => {},
+          dispose: () => {},
+          abort: async () => {},
+          subscribe: () => () => {},
+          setActiveToolsByName: () => {},
+          state: { messages: [] },
+        },
+      })) as PiSdkLike["createAgentSession"],
+    };
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-diffblind-"));
+    try {
+      const runtime = await PiExpertRuntime.create({
+        cwd: dir,
+        // In-place mutation of a directory that is not a repository: the run is writable,
+        // so a diff is attempted, and the attempt fails for a real reason.
+        config: parseCouncilConfig({ security: { workspaceStrategy: "bounded-in-place", allowInPlaceMutations: true } }),
+        sdk,
+        modelRuntime: modelRuntime as never,
+        roleDirectory,
+      });
+      const result = await runtime.executeExpert({
+        executionId: "exec_blind",
+        role: "implementation-worker",
+        task: "hang",
+        model: "p/m",
+        tools: ["read", "edit", "bash"],
+        skills: [],
+        reasoningLevel: "low",
+        readOnly: false,
+        workspace: dir,
+        timeoutMs: 1_500,
+        attempt: 1,
+      });
+      expect(result.status).toBe("failed");
+      expect(result.executionMetadata?.failureType).toBe("timeout");
+      expect(result.executionMetadata?.filesChangedError).toContain("not a git repository");
+      expect((result.risks ?? []).join(" ")).toContain("diff could not be read");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

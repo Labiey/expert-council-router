@@ -506,6 +506,25 @@ interface ActiveExpertSession {
   unsubscribe?: () => void;
 }
 
+const DIFF_UNREADABLE_NOTE = "The workspace diff could not be read, so filesChanged may be incomplete:";
+
+/**
+ * Merge the "diff unreadable" note into a result's risks, so an absent `filesChanged`
+ * never silently reads as "the expert changed nothing" on any delivered path - including
+ * the failure paths, which is precisely where the host most needs to salvage work
+ * (defect #35, the incomplete half of defect #28).
+ */
+function risksWithDiffNote(
+  diffError: string | undefined,
+  ...groups: Array<string[] | undefined>
+): { risks?: string[] } {
+  const merged = [
+    ...(diffError ? [`${DIFF_UNREADABLE_NOTE} ${diffError}`] : []),
+    ...groups.filter((group): group is string[] => Array.isArray(group)).flat(),
+  ].slice(0, 20);
+  return merged.length ? { risks: merged } : {};
+}
+
 export class PiExpertRuntime implements ExpertRuntime {
   private readonly boundary: WorkspaceBoundary;
   private readonly activeSessions = new Map<string, ActiveExpertSession>();
@@ -1373,7 +1392,7 @@ export class PiExpertRuntime implements ExpertRuntime {
           model: request.model,
           summary: safeText(`[Failure] ${sessionError}\n\n${evidence.lastText ?? ""}`.trim(), 4_000) ?? "Expert session failed.",
           ...(evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {}),
-          ...(workspace.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {}),
+          ...risksWithDiffNote(evidence.filesChangedError, workspace.limitations),
           executionMetadata: {
             attempts: request.attempt,
             workspace: workspace.root,
@@ -1401,15 +1420,11 @@ export class PiExpertRuntime implements ExpertRuntime {
       let result = applyVerificationGate(
         normalizeResult(extractJson(rawText), request, rawText, diff.files, workspace, sessionUsage(session), verification),
       );
-      const notes: string[] = [];
-      if (workspace.limitations?.length) notes.push(...workspace.limitations);
-      if (diff.error) {
-        // A success that cannot list its own changes is only half a success. Without this
-        // the host reads an empty `filesChanged` on a mutation run and integrates nothing
-        // (defect #28) - the same damage #11 caused through the verification gate.
-        notes.push(`The workspace diff could not be read, so filesChanged may be incomplete: ${diff.error}`);
-      }
-      if (notes.length) result = { ...result, risks: [...notes, ...(result.risks ?? [])].slice(0, 20) };
+      // A success that cannot list its own changes is only half a success. Without this the
+      // host reads an empty `filesChanged` on a mutation run and integrates nothing
+      // (defect #28) - the same damage #11 caused through the verification gate.
+      const diffRisks = risksWithDiffNote(diff.error, workspace.limitations);
+      if (diffRisks.risks) result = { ...result, risks: [...diffRisks.risks, ...(result.risks ?? [])].slice(0, 20) };
       result.executionMetadata = {
         ...result.executionMetadata,
         ...(diff.error ? { filesChangedError: diff.error } : {}),
@@ -1710,6 +1725,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       model: request.model,
       summary,
       ...(evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {}),
+      ...risksWithDiffNote(evidence.filesChangedError),
       executionMetadata: {
         attempts: request.attempt,
         failureType: "timeout",
@@ -1744,6 +1760,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       model: request.model,
       summary: summary ?? "Expert execution aborted by the Main Agent.",
       ...(changedFiles.length ? { filesChanged: changedFiles.slice(0, 1_000) } : {}),
+      ...risksWithDiffNote(changed.error),
       executionMetadata: {
         attempts: request.attempt,
         workspace: entry.workspace.root,
@@ -1779,7 +1796,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       summary,
       ...(changedFiles.length ? { filesChanged: changedFiles.slice(0, 1_000) } : {}),
       ...(report.findings?.length ? { findings: report.findings } : {}),
-      ...(report.risks?.length ? { risks: report.risks } : {}),
+      ...risksWithDiffNote(changed.error, report.risks),
       ...(report.recommendedNextAction ? { recommendedNextAction: report.recommendedNextAction } : {}),
       executionMetadata: {
         attempts: request.attempt,

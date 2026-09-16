@@ -311163,20 +311163,27 @@ function classifyAvailabilityEvidence(summary) {
     return "unavailable";
   return void 0;
 }
-function indicatesModelUnavailable(summary) {
-  return classifyAvailabilityEvidence(summary) !== void 0;
+var MESSAGE_LIKE_OPENING = /^(\[failure\]|\d{3}\b|\bprovider\b|\bhttp\b|\bupstream\b|\bfatal\b|\berror\b|\bfailure\b|\bexception\b|\btimeout\b|\bquota\b|rate.?limit|\bthrottl|\bsocket\b|fetch failed|\bconnection\b|econn\w*|model_not_found|\baccess\b|unauthorized|service unavailable)/i;
+function classifyReportedAvailabilityEvidence(value3) {
+  const text = (value3 instanceof Error ? value3.message : String(value3 ?? "")).trim();
+  if (!text)
+    return void 0;
+  if (text.length > SUMMARY_CLASSIFICATION_LIMIT && !MESSAGE_LIKE_OPENING.test(text))
+    return void 0;
+  return classifyAvailabilityEvidence(text);
 }
 var SUMMARY_CLASSIFICATION_LIMIT = 200;
+function readsAsFailureMessage(text) {
+  if (/^\[failure\]/i.test(text))
+    return true;
+  if (text.length > SUMMARY_CLASSIFICATION_LIMIT)
+    return false;
+  return /(error|failed|failure|exception|timed out|timeout|unavailable|denied|reject)/i.test(text.slice(0, 60));
+}
 function inferFailureTypeFromSummary(value3, fallback = "reasoning_failure") {
   const text = (typeof value3 === "string" ? value3 : String(value3 ?? "")).trim();
-  if (!text)
+  if (!text || !readsAsFailureMessage(text))
     return fallback;
-  const prefixed = /^\[failure\]/i.test(text);
-  if (!prefixed && text.length > SUMMARY_CLASSIFICATION_LIMIT)
-    return fallback;
-  if (!prefixed && !/(error|failed|failure|exception|timed out|timeout|unavailable|denied|reject)/i.test(text.slice(0, 60))) {
-    return fallback;
-  }
   return inferFailureType(text, fallback);
 }
 function inferFailureType(value3, fallback = "unknown") {
@@ -312436,7 +312443,11 @@ var ExpertCouncilService = class {
             capBreaches.push(reason);
             ranked.candidates = ranked.candidates.filter((candidate2) => parseModelKey(candidate2.model).provider !== provider);
           }
-        } catch {
+        } catch (error61) {
+          persistenceErrors.push({
+            model: current.model,
+            detail: String(error61 instanceof Error ? error61.message : error61).slice(0, 200)
+          });
         }
       }
       if (lastResult.status === "success")
@@ -312454,11 +312465,12 @@ var ExpertCouncilService = class {
       if (failure === "timeout") {
         currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), 36e5);
       }
-      if (failure === "provider_error" && indicatesModelUnavailable(lastResult.summary) && !unavailableMarked.includes(current.model)) {
+      const reportedEvidence = classifyReportedAvailabilityEvidence(lastResult.summary);
+      if (failure === "provider_error" && reportedEvidence && !unavailableMarked.includes(current.model)) {
         try {
           const provider = parseModelKey(current.model).provider;
           const siblings = models.filter((model) => model.provider === provider && `${model.provider}/${model.id}` !== current.model).map((model) => `${model.provider}/${model.id}`);
-          const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings);
+          const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings, { kind: reportedEvidence });
           unavailableMarked.push(...marked.markedKeys.filter((key) => !unavailableMarked.includes(key)));
           if (marked.kind === "quota-exhausted") {
             ranked.candidates = ranked.candidates.filter((candidate2) => parseModelKey(candidate2.model).provider !== provider);
@@ -319362,6 +319374,14 @@ ${request.priorFailure ? `- Previous failure: ${request.priorFailure.type}: ${re
 ` : ""}
 Return only one compact JSON object with: status, summary, failureType, filesChanged, tests, findings, risks, recommendedNextAction. Omit failureType on success; otherwise use one of tool_call_error, reasoning_failure, test_failure, timeout, provider_error, missing_context, permission_error, or unknown. Test entries use status passed, failed, or not-run. Each \`tests\` entry must include \`command\` and \`exitCode\`, and when known \`testsRun\`, \`failedCount\`, \`errorCount\`, \`skippedCount\`, \`durationMs\`, plus \`outputTail\` (last lines of real output). Never claim a test ran without an exit code.`;
 }
+var DIFF_UNREADABLE_NOTE = "The workspace diff could not be read, so filesChanged may be incomplete:";
+function risksWithDiffNote(diffError, ...groups) {
+  const merged = [
+    ...diffError ? [`${DIFF_UNREADABLE_NOTE} ${diffError}`] : [],
+    ...groups.filter((group) => Array.isArray(group)).flat()
+  ].slice(0, 20);
+  return merged.length ? { risks: merged } : {};
+}
 var PiExpertRuntime = class _PiExpertRuntime {
   sdk;
   models;
@@ -320074,7 +320094,7 @@ Apply this decision and continue the assigned task now. If the decision changed 
 
 ${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
           ...evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {},
-          ...workspace.limitations?.length ? { risks: workspace.limitations.slice(0, 20) } : {},
+          ...risksWithDiffNote(evidence.filesChangedError, workspace.limitations),
           executionMetadata: {
             attempts: request.attempt,
             workspace: workspace.root,
@@ -320093,14 +320113,9 @@ ${evidence.lastText ?? ""}`.trim(), 4e3) ?? "Expert session failed.",
       }
       const diff = await this.expertChangedFiles(workspace);
       let result = applyVerificationGate(normalizeResult(extractJson(rawText), request, rawText, diff.files, workspace, sessionUsage(session), verification));
-      const notes = [];
-      if (workspace.limitations?.length)
-        notes.push(...workspace.limitations);
-      if (diff.error) {
-        notes.push(`The workspace diff could not be read, so filesChanged may be incomplete: ${diff.error}`);
-      }
-      if (notes.length)
-        result = { ...result, risks: [...notes, ...result.risks ?? []].slice(0, 20) };
+      const diffRisks = risksWithDiffNote(diff.error, workspace.limitations);
+      if (diffRisks.risks)
+        result = { ...result, risks: [...diffRisks.risks, ...result.risks ?? []].slice(0, 20) };
       result.executionMetadata = {
         ...result.executionMetadata,
         ...diff.error ? { filesChangedError: diff.error } : {},
@@ -320360,6 +320375,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
       model: request.model,
       summary,
       ...evidence.filesChanged?.length ? { filesChanged: evidence.filesChanged } : {},
+      ...risksWithDiffNote(evidence.filesChangedError),
       executionMetadata: {
         attempts: request.attempt,
         failureType: "timeout",
@@ -320389,6 +320405,7 @@ ${evidence.lastText}` : ""}`.trim(), 4e3) ?? `[Failure] Expert execution timed o
       model: request.model,
       summary: summary ?? "Expert execution aborted by the Main Agent.",
       ...changedFiles.length ? { filesChanged: changedFiles.slice(0, 1e3) } : {},
+      ...risksWithDiffNote(changed.error),
       executionMetadata: {
         attempts: request.attempt,
         workspace: entry.workspace.root,
@@ -320417,7 +320434,7 @@ ${finalAssistantText(entry.session) ?? ""}`.trim(), 4e3) ?? `[Task stopped by ex
       summary,
       ...changedFiles.length ? { filesChanged: changedFiles.slice(0, 1e3) } : {},
       ...report.findings?.length ? { findings: report.findings } : {},
-      ...report.risks?.length ? { risks: report.risks } : {},
+      ...risksWithDiffNote(changed.error, report.risks),
       ...report.recommendedNextAction ? { recommendedNextAction: report.recommendedNextAction } : {},
       executionMetadata: {
         attempts: request.attempt,
