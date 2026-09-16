@@ -2163,3 +2163,120 @@ describe("provisioning hardening is real, not a sentence (defect #37)", () => {
     expect(go).toContain("treat the install as able to execute build code");
   });
 });
+
+describe("an opt-in observer window follows the delegation, not the attempt", () => {
+  // Wiring proof: the launcher has its own unit tests, but nothing would fail if the runtime
+  // never called it. Windows are opened only when the operator turns them on, exactly once per
+  // delegation, and never by anything a model can pass.
+  function windowHarness(sink: { opened: string[] }) {
+    const nativeModel = { provider: "p", id: "m" };
+    const modelRuntime = {
+      getAvailable: async () => [
+        { provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } },
+      ],
+      getModel: () => nativeModel,
+    };
+    const sdk: PiSdkLike = {
+      ...safeResourceApis,
+      ModelRuntime: { create: async () => modelRuntime } as unknown as PiSdkLike["ModelRuntime"],
+      SessionManager: { inMemory: () => ({}) } as unknown as PiSdkLike["SessionManager"],
+      createAgentSession: (async () => ({
+        session: {
+          prompt: async () => undefined,
+          waitForIdle: async () => {},
+          dispose: () => {},
+          subscribe: () => () => {},
+          setActiveToolsByName: () => {},
+          state: {
+            messages: [{
+              role: "assistant",
+              content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "read the file", findings: [], risks: [], recommendedNextAction: "none" }) }],
+            }],
+          },
+        },
+      })) as PiSdkLike["createAgentSession"],
+    };
+    return { modelRuntime, sdk };
+  }
+
+  async function windowRuntime(options: {
+    dir: string;
+    autoOpen: boolean;
+    sink: { opened: string[] };
+  }) {
+    const { modelRuntime, sdk } = windowHarness(options.sink);
+    return PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({
+        security: { observability: { expertWindow: options.autoOpen ? "interactive" : "off", autoOpenWindow: options.autoOpen } },
+      }),
+      sdk,
+      modelRuntime: modelRuntime as never,
+      roleDirectory,
+      observabilityDir: options.dir,
+      observerWindow: {
+        platform: "win32",
+        // No real process is ever spawned by a test, and no path with backslashes has to be
+        // written into a string literal to prove the argument shape.
+        resolveCli: () => ({ kind: "node", script: "C:/fake/cli/dist/index.js" }),
+        nodeExecutable: "C:/fake/node.exe",
+        findExecutable: (name) => (name === "wt.exe" ? "C:/fake/wt.exe" : "C:/fake/cmd.exe"),
+        spawn: (_file, argv) => {
+          options.sink.opened.push(argv.join(" "));
+          return { unref: () => undefined };
+        },
+      },
+    });
+  }
+
+  function scoutRequest(executionId: string, attempt: number) {
+    return {
+      executionId,
+      role: "scout" as const,
+      task: "look",
+      model: "p/m",
+      tools: ["read", "grep"],
+      skills: [],
+      readOnly: true,
+      workspace: process.cwd(),
+      timeoutMs: 20_000,
+      attempt,
+    };
+  }
+
+  it("opens one window for a delegation and does not reopen it for the retry", async () => {
+    const sink = { opened: [] as string[] };
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-window-"));
+    try {
+      const runtime = await windowRuntime({ dir, autoOpen: true, sink });
+      const first = await runtime.executeExpert(scoutRequest("exec_win", 1));
+      expect(first.status).toBe("success");
+      // Same execution id = same delegation: an escalated or retried attempt must not flash a
+      // second window showing half the work.
+      const second = await runtime.executeExpert(scoutRequest("exec_win", 2));
+      expect(second.status).toBe("success");
+      await runtime.executeExpert(scoutRequest("exec_other", 1));
+
+      expect(sink.opened).toHaveLength(2);
+      expect(sink.opened[0] ?? "").toContain("--exec exec_win");
+      expect(sink.opened[0] ?? "").toContain("--follow");
+      expect(sink.opened[0] ?? "").toContain("pause");
+      expect(sink.opened[1] ?? "").toContain("--exec exec_other");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("opens nothing while the feature is off", async () => {
+    const sink = { opened: [] as string[] };
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-window-off-"));
+    try {
+      const runtime = await windowRuntime({ dir, autoOpen: false, sink });
+      const result = await runtime.executeExpert(scoutRequest("exec_quiet", 1));
+      expect(result.status).toBe("success");
+      expect(sink.opened).toEqual([]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

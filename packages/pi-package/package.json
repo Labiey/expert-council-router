@@ -46,7 +46,8 @@
   },
   "dependencies": {
     "@expert-council/core": "0.8.6",
-    "@expert-council/pi-runtime": "0.8.6"
+    "@expert-council/pi-runtime": "0.8.6",
+    "@expert-council/cli": "0.8.6"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": ">=0.84.0 <1",

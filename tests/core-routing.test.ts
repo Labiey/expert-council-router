@@ -425,15 +425,20 @@ describe("configuration", () => {
   });
 
   it("defaults and validates security.observability", () => {
-    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true });
+    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false });
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "events" } } }).security.observability).toMatchObject({ expertWindow: "events", streamToHost: true });
     expect(() => parseCouncilConfig({ security: { observability: { expertWindow: "magic" } } })).toThrow(ConfigValidationError);
     // redactToolArgs was removed in 0.8.3 as an inert placebo and returns in 0.8.4 with
     // real behavior: it governs whether the interactive event stream records a bounded
     // tool-argument summary. An operator turning it off must actually be honored.
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive", redactToolArgs: false } } }).security.observability)
-      .toEqual({ expertWindow: "interactive", streamToHost: true, redactToolArgs: false });
+      .toEqual({ expertWindow: "interactive", streamToHost: true, redactToolArgs: false, autoOpenWindow: false });
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive" } } }).security.observability.redactToolArgs).toBe(true);
+    // autoOpenWindow is opt-in and typed: it must not be reachable by a stray truthy string,
+    // and the shipped example config has to keep validating against the schema.
+    expect(() => parseCouncilConfig({ security: { observability: { expertWindow: "interactive", autoOpenWindow: "yes" } } })).toThrow(ConfigValidationError);
+    expect(() => parseCouncilConfig({ security: { observability: { autoOpenWindow: true } } })).toThrow(ConfigValidationError);
+    expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive", autoOpenWindow: true } } }).security.observability.autoOpenWindow).toBe(true);
   });
 });
 

@@ -40,8 +40,15 @@ import {
   type PiSessionLike,
 } from "./pi-sdk.js";
 import { WorkspaceBoundary, runBoundedCommand, scrubProvisioningEnv, tailCommandOutput, type BoundedCommandRunner, type PreparedWorkspace, type WorkspaceProvisioningStatus } from "./workspace.js";
+import { ObserverWindowLauncher, type ObserverWindowLauncherOptions } from "./window-launcher.js";
 
 export interface PiExpertRuntimeOptions {
+  /**
+   * Overrides for the opt-in observer window launcher. Only `spawn`, `platform` and
+   * `resolveCli` are meaningful to callers: the test suite must never open a real window,
+   * and an operator can point the follower at a specific CLI build.
+   */
+  observerWindow?: ObserverWindowLauncherOptions;
   cwd: string;
   config: CouncilConfig;
   roleDirectory?: string;
@@ -538,6 +545,14 @@ export class PiExpertRuntime implements ExpertRuntime {
   private readonly lastGuardrails = new Map<string, { toolCalls: number; toolErrors: number; attention: ExpertAttention[] }>();
   private skillDiscoveryWarning?: string;
 
+  /**
+   * Set only when security.observability.autoOpenWindow is on. Windows are an operator
+   * convenience: the launcher never throws, never blocks, and cannot change what an expert
+   * does or sees - it only reads the same event stream another terminal could follow.
+   */
+  private readonly observerWindows: ObserverWindowLauncher | undefined;
+  private readonly observerWindowWarnings: string[] = [];
+
   private constructor(
     private readonly sdk: PiSdkLike,
     private readonly models: PiModelRuntimeLike,
@@ -545,6 +560,18 @@ export class PiExpertRuntime implements ExpertRuntime {
     private readonly packageName: string,
   ) {
     this.boundary = new WorkspaceBoundary(options.cwd, options.config.security);
+    this.observerWindows = options.config.security.observability.autoOpenWindow
+      ? new ObserverWindowLauncher({
+          ...(options.observerWindow ?? {}),
+          onWarning: (message) => {
+            // Once per distinct message: a degraded convenience must not spam the host.
+            const bounded = boundedText(message) ?? "Observer window warning unavailable.";
+            if (!this.observerWindowWarnings.includes(bounded) && this.observerWindowWarnings.length < 5) {
+              this.observerWindowWarnings.push(bounded);
+            }
+          },
+        })
+      : undefined;
   }
 
   static async create(options: PiExpertRuntimeOptions): Promise<PiExpertRuntime> {
@@ -629,6 +656,14 @@ export class PiExpertRuntime implements ExpertRuntime {
       ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
       kind: "started",
     });
+    // The delegation-level identity is what matters here: retries and escalations reuse this
+    // execution id and this same stream file, so the launcher keeps one window per
+    // delegation instead of flashing a fresh one for every attempt.
+    this.observerWindows?.ensureOpen({
+      executionId: request.executionId,
+      role: String(request.role),
+      ...(typeof request.timeoutMs === "number" ? { timeoutMs: request.timeoutMs } : {}),
+    });
   }
 
   private emitObservability(
@@ -707,6 +742,9 @@ export class PiExpertRuntime implements ExpertRuntime {
       kind: "delegation_final",
     });
     await this.closeObservabilityStream(executionId);
+    // The window that was opened for this delegation may now be released: the follower sees
+    // the marker, stops tailing, and waits for a keypress on its own.
+    this.observerWindows?.release(executionId);
   }
 
   /**
@@ -988,6 +1026,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       limitations: [
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
+        ...this.observerWindowWarnings,
         ...workspace.limitations,
         provisioningMode === "none"
           ? "Mutation worktrees are not provisioned (security.workspaceProvisioning.mode=none); experts must not install dependencies."
@@ -1814,6 +1853,7 @@ export class PiExpertRuntime implements ExpertRuntime {
   }
 
   async cleanupExecution(executionId: string) {
+    this.observerWindows?.release(executionId);
     return this.boundary.cleanupExecution(executionId);
   }
 

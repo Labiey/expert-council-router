@@ -9,3 +9,4 @@ export * from "./pi-runtime.js";
 export * from "./pi-sdk.js";
 export * from "./persistent-state.js";
 export * from "./workspace.js";
+export * from "./window-launcher.js";

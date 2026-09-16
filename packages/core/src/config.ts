@@ -240,8 +240,19 @@ export const councilConfigSchema = z.object({
           expertWindow: z.enum(["off", "events", "interactive"]).default("off"),
           streamToHost: z.boolean().default(true),
           redactToolArgs: z.boolean().default(true),
+          /**
+           * Open an observer window per delegation, on the operator's own desktop, running
+           * the same `watch` command another terminal would. Opt-in only: nothing an expert
+           * or a host tool call can pass opens a window, and turning it on without a stream
+           * to show would look like a broken feature rather than a configuration mistake.
+           */
+          autoOpenWindow: z.boolean().default(false),
         })
-        .default({ expertWindow: "off", streamToHost: true, redactToolArgs: true }),
+        .refine((value) => !value.autoOpenWindow || value.expertWindow === "interactive", {
+          message: 'security.observability.autoOpenWindow requires expertWindow "interactive": without the on-disk event stream there is nothing for an observer window to follow',
+          path: ["autoOpenWindow"],
+        })
+        .default({ expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false }),
       /**
        * Struggle detection. Non-blocking by construction: warnings reach the host, an
        * optional bounded nudge reaches the expert, and nothing here ever aborts a run.
@@ -307,7 +318,7 @@ export const councilConfigSchema = z.object({
       worktreeRetentionMs: 24 * 60 * 60_000,
       toolGrants: {},
       expertLifetime: "host-bound",
-      observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true },
+      observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false },
       guardrails: {
         warnHost: true,
         nudgeExpert: true,

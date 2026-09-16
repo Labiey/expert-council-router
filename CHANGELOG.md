@@ -260,6 +260,29 @@ All notable changes to Expert Council are documented here. Versions follow seman
   the log line - not the green bar - was what revealed it.
 
 ### Added
+- **Opt-in observer windows per delegation (defect #39's requested feature).**
+  `security.observability.autoOpenWindow` (default `false`, requires `expertWindow:`
+  `"interactive"` - validated at config load with the reason in the message) opens a terminal of
+  its own for each delegation running the already-tested `expert-council watch --follow`, which is
+  exactly what an operator would type in a second terminal. The expert, its workspace, its tools and
+  its deadline are untouched; the window only reads the stream file. Rules chosen by the operator:
+  **one window per delegation** (retries and escalations reuse the same execution id and stream, so
+  a per-attempt window would show half the work twice over) and **no cap** on how many may be open.
+  The window does not close when the expert finishes - the follower stops at `delegation_final` and
+  `cmd`'s own `pause` waits for a keypress, so the session can be scrolled back through and dismissed
+  by hand; the pause comes from the shell rather than a new CLI flag, so any CLI version behaves the
+  same. The window's follow deadline follows the expert budget (1.5x, floored at 15 minutes, capped at
+  the CLI ceiling) so it can never expire before the work it watches. It is view-only: decisions and
+  tool approvals still go to the host. Windows Terminal when found, classic console otherwise,
+  `EXPERT_COUNCIL_CLI` / `EXPERT_COUNCIL_TERMINAL` as overrides, and a non-Windows or
+  unresolvable-host situation produces one limitation line and no window - never a failed
+  delegation. `@expert-council/pi-package` now depends on the CLI, because without it a Pi-package
+  install could never open a window at all.
+  Proven by 14 launcher tests plus two runtime wiring tests (one window across a retried delegation,
+  none while off) that inject a fake spawner, so the suite never opens a real window. Falsified six
+  ways: removing the dedupe, the key-wait, the budget scaling, the config rule, the failure-not-
+  recorded rule, and the runtime call each redden exactly the tests that own them - and a deliberate
+  no-op control edit stayed green, confirming the falsifications are measuring the change.
 - **A drift guard for the renderer.** Every event kind must now be listed in a `Record` over the
   `ExpertEventKind` union - an unlisted kind fails the build with the property name - and a table-driven test
   requires a rendering expectation for each one. Both halves were proven by injection: adding a kind with no
@@ -399,6 +422,20 @@ All notable changes to Expert Council are documented here. Versions follow seman
   README（三处）与 SECURITY.md（三处）措辞随之改为与代码一致，中英双份。这份检出里并不构成实际暴露：本机只装了 `npm`、仓库锁文件是 `package-lock.json`，真实执行的命令本来就带着 flag——而这恰恰是这类声称能在评审里一路活下来的原因。防护是一条走查全部十三驱动、任何未声明等级即失败的测试，加上 env 透传与 limitation 两条。三处修复都做了反证：摘掉 bun 的 flag、去掉 scrub 后的 env 合并、把 uv 误标成安全——每次都恰好只弄红一条。本次改动里我自己犯的一个错也留档：用正则重写断言时丢了 `await`，三处 plan 比较变成**没人认领的浮动 promise**，vitest 照样报 55 passed 却在日志里打了一条无人认领的 rejection——揭穿它的不是绿色进度条，而是那行日志。
 
 ### 新增
+- **每次委派一个可选的观察窗口（缺陷 #39 所请求的功能）。** `security.observability.autoOpenWindow`
+  （默认 `false`，且要求 `expertWindow` 为 `"interactive"`——配置加载期即校验并把理由写进报错）。开启后
+  每次委派拥有自己的终端，跑的就是已带测试的 `expert-council watch --follow`，与你亲手在另一个终端敲的
+  那条完全一致；专家本体、工作区、工具、期限一概不动，窗口只读那个流文件。两条规则按你的要求定：
+  **一次委派一个窗口**（重试与升级共用同一个 execution id、同一个流文件，按尝试开窗只会把半截工作
+  看两遍），以及**不限制同时开窗数量**。专家结束**不**关窗——跟随器在 `delegation_final` 停下，然后由
+  `cmd` 自带的 `pause` 等你按键，好让你往回翻完整过程再自己关掉；这个暂停用的是 shell 的 pause 而非新的
+  CLI 参数，所以任何版本的 CLI 行为都一致。窗口自身的跟随期限跟随专家预算（1.5 倍，下限 15 分钟，上限为
+  CLI 天花板），不可能比所观察的工作先过期。窗口只读：决策与工具授权仍归宿主。装了 Windows Terminal 就用它，
+  否则退回经典控制台；`EXPERT_COUNCIL_CLI` / `EXPERT_COUNCIL_TERMINAL` 可覆盖；非 Windows 或找不到宿主时
+  只给一条 limitation 且不弹窗，绝不让委派失败。`@expert-council/pi-package` 现在依赖 CLI——否则只装 Pi 包的
+  用户永远弹不出窗。测试：14 条 launcher 测试 + 2 条运行时接线测试（重试的委派仍只有一个窗；关闭时一个都不开），
+  全部注入假 spawner，套件永不真开窗。反证六次：摘去重、摘按键等待、摘预算缩放、摘配置规则、让失败的开窗也记账、
+  摘掉运行时调用——各自恰好弄红属于自己的测试；另外故意放了一个空改动作对照，它必须不红而确实没红，说明反证在度量改动本身。
 - **渲染器的防漂移守卫。** 每个事件种类现在都必须在 `ExpertEventKind` 联合类型上的一个 `Record` 里登记——漏登就编译失败并点名缺的键；另有一条表驱动测试要求每个种类都有渲染断言。两半都用注入法验证过：加种类不登记会打断 `tsc`，登记却不测则守卫变红。
 - **每个可观测事件都带尝试序号**，重试或升级的尝试渲染为 `[role model #2]`。单次尝试的普通运行保持原样。
 ## 0.8.5（中文）

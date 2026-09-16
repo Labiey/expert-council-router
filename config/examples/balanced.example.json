@@ -65,7 +65,8 @@
     "observability": {
       "expertWindow": "interactive",
       "streamToHost": true,
-      "redactToolArgs": true
+      "redactToolArgs": true,
+      "autoOpenWindow": false
     },
     "guardrails": {
       "warnHost": true,
@@ -73,7 +74,10 @@
       "consecutiveToolFailures": 3,
       "minCallsForRatio": 8,
       "failureRatio": 0.5,
-      "budgetFractions": [0.6, 0.85],
+      "budgetFractions": [
+        0.6,
+        0.85
+      ],
       "maxTotalWallMs": 1800000
     },
     "workspaceProvisioning": {

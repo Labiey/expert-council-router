@@ -1,0 +1,270 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { spawn as nodeSpawn } from "node:child_process";
+
+/**
+ * Observer windows for running experts (defect #39's feature request).
+ *
+ * This module changes nothing about how an expert runs. The expert still lives in this
+ * process, in its own workspace, with the same tools and the same deadline. What happens
+ * here is what an operator would otherwise do by hand: open a second terminal and tail the
+ * event stream that the runtime already writes for `expertWindow: "interactive"`, using the
+ * already-tested `expert-council watch` command. The window is a reader of that file.
+ *
+ * Deliberately crude: no renderer of our own, no in-process panel, no cap on how many
+ * windows may exist, and no automatic close - the follower stops at the delegation's final
+ * marker and then `cmd`'s own `pause` waits for a keypress, so the operator scrolls back
+ * and dismisses it when done. The one thing that is not crude is the identity rule: one
+ * window per delegation, because retries and escalations reuse the same execution id and
+ * the same stream file, and a second window for the same work would only show half of it.
+ */
+
+export type WatchInvocationTarget =
+  | { kind: "node"; script: string }
+  | { kind: "bin"; command: string };
+
+/** Terminal hosts we know how to open, in preference order. */
+export type TerminalHost = "windows-terminal" | "console-host";
+
+/**
+ * How long the follower may live on its own, derived from the expert's own budget so a
+ * window can never expire before the work it is watching (the operator asked for exactly
+ * this rule). Bounded below so a tiny budget still shows a whole delegation, and above by
+ * the CLI's own ceiling.
+ */
+export function observerWindowTimeoutMs(expertTimeoutMs: number | undefined): number {
+  // A missing deadline is not an expert budget to scale: it gets the floor outright, or the
+  // default would silently become 1.5x the floor.
+  if (typeof expertTimeoutMs !== "number" || !Number.isFinite(expertTimeoutMs)) return 900_000;
+  return Math.min(3_600_000, Math.max(900_000, Math.round(expertTimeoutMs * 1.5)));
+}
+
+/** Quote one token only when the inner cmd parser would otherwise split it. */
+export function quoteCmdToken(value: string): string {
+  return /[\s"]/.test(value) ? `"${value.replace(/"/g, "")}"` : value;
+}
+
+/**
+ * `node <cli> watch --exec <id> --follow …`, as one cmd command line.
+ *
+ * The interpreter is invoked by bare name on purpose. cmd refuses a *quoted first token* - a
+ * Windows node install lives under "C:\\Program Files\\nodejs\\node.exe", and quoting that as the
+ * command reports "not recognized" - and this was only visible once a real window was opened:
+ * an injected fake spawner never parses the line. childEnv() puts the interpreter's own
+ * directory on the child's PATH so the bare name resolves however the host process was
+ * started, and a quoted script path is harmless because it is not the first token.
+ */
+export function buildWatchInvocation(
+  cli: WatchInvocationTarget,
+  executionId: string,
+  windowTimeoutMs: number,
+): string {
+  const head = cli.kind === "node" ? `node ${quoteCmdToken(cli.script)}` : quoteCmdToken(cli.command);
+  return [
+    head,
+    "watch",
+    "--exec",
+    executionId,
+    "--follow",
+    "--interval-ms",
+    "250",
+    "--timeout-ms",
+    String(windowTimeoutMs),
+  ].join(" ");
+}
+
+/** The banner and key-wait that follow the tail, so closing is the operator's decision. */
+const PAUSE_TAIL = ' & echo. & echo [expert-window] stream closed above - press any key to close this window & pause >nul';
+
+/** Titles only accept a conservative character set; ids and roles are already safe. */
+function safeTitlePart(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 60);
+}
+
+export function buildWindowPlan(input: {
+  host: TerminalHost;
+  terminalExecutable: string;
+  cli: WatchInvocationTarget;
+  executionId: string;
+  role: string;
+  windowTimeoutMs: number;
+}): { file: string; argv: string[] } {
+  const title = `EXPERT ${safeTitlePart(input.role)} ${safeTitlePart(input.executionId)}`;
+  const command = buildWatchInvocation(input.cli, input.executionId, input.windowTimeoutMs) + PAUSE_TAIL;
+  if (input.host === "windows-terminal") {
+    return {
+      file: input.terminalExecutable,
+      argv: ["new-tab", "--title", title, "cmd", "/d", "/c", command],
+    };
+  }
+  // `start` takes the first quoted token as a title, so pass one explicitly and never let a
+  // path be mistaken for it.
+  return {
+    file: input.terminalExecutable,
+    argv: ["/d", "/c", "start", title, "cmd", "/d", "/c", command],
+  };
+}
+
+/** Where `wt.exe` actually lives when Windows Terminal is provisioned. */
+export function defaultFindTerminal(env: NodeJS.ProcessEnv): (name: string) => string | undefined {
+  return (name) => {
+    if (name === "wt.exe") {
+      const override = env.EXPERT_COUNCIL_TERMINAL;
+      if (override && existsSync(override)) return override;
+      const roots = [env.LOCALAPPDATA, env.SYSTEMROOT ? path.join(env.SYSTEMROOT, "System32") : undefined];
+      for (const root of roots) {
+        if (!root) continue;
+        const candidate = path.join(root, "Microsoft", "WindowsApps", "wt.exe");
+        if (existsSync(candidate)) return candidate;
+        const direct = path.join(root, "wt.exe");
+        if (existsSync(direct)) return direct;
+      }
+      return undefined;
+    }
+    if (name === "cmd.exe") {
+      return env.SYSTEMROOT ? path.join(env.SYSTEMROOT, "System32", "cmd.exe") : "cmd.exe";
+    }
+    return undefined;
+  };
+}
+
+/**
+ * Locate the CLI to tail with. The relative probe is identical in a checkout and in an
+ * installed tree (`…/pi-runtime/dist` and `…/cli/dist` are siblings both ways), and an
+ * explicit `EXPERT_COUNCIL_CLI` always wins so an operator can point at a different build.
+ */
+export function defaultResolveCli(env: NodeJS.ProcessEnv, moduleUrl: string): WatchInvocationTarget | undefined {
+  const explicit = env.EXPERT_COUNCIL_CLI;
+  if (explicit) {
+    if (existsSync(explicit)) return { kind: "node", script: explicit };
+    return undefined;
+  }
+  // bin.js is the executable entry (the package's own bin field points at it); dist/index.js
+  // is the library surface and exits silently when run, which would open a window showing
+  // nothing at all. Found only by opening a real window.
+  const here = path.dirname(fileURLToPath(moduleUrl));
+  const names = ["bin.js", "index.js"];
+  for (const up of ["..", path.join("..", "..")]) {
+    for (const name of names) {
+      const candidate = path.join(here, up, "cli", "dist", name);
+      if (existsSync(candidate) && name === "bin.js") return { kind: "node", script: candidate };
+    }
+  }
+  for (const up of ["..", path.join("..", "..")]) {
+    for (const name of names) {
+      const candidate = path.join(here, up, "cli", "dist", name);
+      if (existsSync(candidate)) return { kind: "node", script: candidate };
+    }
+  }
+  const bin = env.EXPERT_COUNCIL_BIN;
+  return bin ? { kind: "bin", command: bin } : undefined;
+}
+
+export interface ObserverWindowInput {
+  executionId: string;
+  role: string;
+  timeoutMs?: number;
+}
+
+export interface ObserverWindowLauncherOptions {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  /** The final argument is the inner cmd command line, including its key-wait. */
+  spawn?: (file: string, argv: string[], env: NodeJS.ProcessEnv) => unknown;
+  findExecutable?: (name: string) => string | undefined;
+  resolveCli?: () => WatchInvocationTarget | undefined;
+  nodeExecutable?: string;
+  onWarning?: (message: string) => void;
+  now?: () => number;
+}
+
+/** Older ids are pruned so an abandoned delegation cannot hold a key forever. */
+const WINDOW_TRACKING_MS = 6 * 60 * 60_000;
+
+export class ObserverWindowLauncher {
+  private readonly opened = new Map<string, number>();
+  private warned = "";
+  private readonly options: Required<Pick<ObserverWindowLauncherOptions, "platform" | "env" | "spawn" | "findExecutable" | "nodeExecutable">> & Pick<ObserverWindowLauncherOptions, "resolveCli" | "onWarning" | "now">;
+
+  constructor(options: ObserverWindowLauncherOptions = {}) {
+    this.options = {
+      platform: options.platform ?? process.platform,
+      env: options.env ?? process.env,
+      spawn: options.spawn ?? ((file, argv, env) => nodeSpawn(file, argv, { detached: true, stdio: "ignore", env }).unref()),
+      findExecutable: options.findExecutable ?? defaultFindTerminal(options.env ?? process.env),
+      nodeExecutable: options.nodeExecutable ?? process.execPath,
+      ...(options.resolveCli ? { resolveCli: options.resolveCli } : {}),
+      ...(options.onWarning ? { onWarning: options.onWarning } : {}),
+      ...(options.now ? { now: options.now } : {}),
+    };
+  }
+
+  /** True when a window may already exist for this delegation. */
+  isOpen(executionId: string): boolean {
+    return this.opened.has(executionId);
+  }
+
+  /**
+   * Open one observer window per delegation. Never throws and never blocks the delegation:
+   * an unopenable window is a degraded convenience, not a failed task.
+   */
+  ensureOpen(input: ObserverWindowInput): void {
+    const pruneBefore = (this.options.now ?? Date.now)() - WINDOW_TRACKING_MS;
+    for (const [id, at] of this.opened) if (at < pruneBefore) this.opened.delete(id);
+    if (!input.executionId || this.opened.has(input.executionId)) return;
+    if (this.options.platform !== "win32") {
+      this.warnOnce("autoOpenWindow is on but observer windows are only implemented on Windows; follow the stream manually with the CLI watch command.");
+      return;
+    }
+    const cli = (this.options.resolveCli ?? (() => defaultResolveCli(this.options.env, import.meta.url)))();
+    if (!cli) {
+      this.warnOnce("autoOpenWindow is on but the Expert Council CLI could not be located, so no observer window was opened. Set EXPERT_COUNCIL_CLI to its entry file.");
+      return;
+    }
+    const wt = this.options.findExecutable("wt.exe");
+    const host: TerminalHost = wt ? "windows-terminal" : "console-host";
+    const terminalExecutable = wt ?? this.options.findExecutable("cmd.exe") ?? "cmd.exe";
+    const plan = buildWindowPlan({
+      host,
+      terminalExecutable,
+      cli,
+      executionId: input.executionId,
+      role: input.role,
+      windowTimeoutMs: observerWindowTimeoutMs(input.timeoutMs),
+    });
+    try {
+      this.options.spawn(plan.file, plan.argv, this.childEnv());
+      // Recorded only on success so a host that refused to spawn can be retried next attempt.
+      this.opened.set(input.executionId, (this.options.now ?? Date.now)());
+    } catch (error) {
+      this.warnOnce(`autoOpenWindow could not open an observer window (${String(error instanceof Error ? error.message : error).slice(0, 160)}); the delegation continues unwatched.`);
+    }
+  }
+
+  /**
+   * The window inherits the operator's own environment - it is their desktop and their
+   * terminal, and the same environment is what makes the CLI find their data directory and
+   * configuration. The interpreter directory is prepended to PATH so the bare `node` token
+   * in the command line resolves regardless of how the host process was started.
+   */
+  private childEnv(): NodeJS.ProcessEnv {
+    const parent = this.options.env;
+    const dir = path.dirname(this.options.nodeExecutable);
+    const key = Object.keys(parent).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+    const current = parent[key];
+    const resolved = current && current.split(path.delimiter).includes(dir) ? current : [dir, current].filter(Boolean).join(path.delimiter);
+    return { ...parent, [key]: resolved };
+  }
+
+  /** The delegation ended: a later delegation with this id is not the same work. */
+  release(executionId: string | undefined): void {
+    if (executionId) this.opened.delete(executionId);
+  }
+
+  private warnOnce(message: string): void {
+    if (this.warned === message) return;
+    this.warned = message;
+    this.options.onWarning?.(message);
+  }
+}

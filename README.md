@@ -339,6 +339,49 @@ expert-council watch --exec exec_abc123 --follow
 - `watch` closes when the council writes a delegation-level terminator (`delegation_final`), and reports the close as `delegation finished` rather than the first attempt's terminal event. That distinction exists because a retried or escalated delegation emits **one terminal event per attempt**: a watcher that stopped at the first would close on the failure and never show the attempt that actually answered the task. A stream from an older runtime, or one whose process died, instead closes only after it has been silent for a generous period (15s by default, tunable with `--quiet-ms`), because silence is not death: an expert thinks between tool calls for seconds and a build can go quiet for minutes. That fallback applies **once a terminal event has been seen**; a stream that never reached one is bounded by `--timeout-ms` instead, since a fresh expert can legitimately say nothing while the model thinks. `--timeout-ms` always bounds the wait.
 - Every event carries the attempt number that produced it, and a retried attempt renders as `[role model #2]`, so an escalation is visible in the window itself. Event rendering is clamped to one line, because a second line from a single event would desynchronise the operator's tail.
 
+### Opening an observer window automatically
+
+Nothing is opened on your behalf by default. `security.observability.autoOpenWindow` opts in to a
+terminal of its own per delegation, running exactly the command above - the same tail you would
+start by hand, so the Main Agent still spends no context on it:
+
+```json
+{
+  "security": {
+    "observability": {
+      "expertWindow": "interactive",
+      "autoOpenWindow": true
+    }
+  }
+}
+```
+
+- **One window per delegation, not per attempt.** A retried or escalated attempt reuses the same
+  execution id and the same stream file, and would otherwise flash a second window showing half of
+  the work. The window is released when the delegation reaches its final marker.
+- **No limit on simultaneous windows.** Three experts in flight is three windows; the count is the
+  operator's business, not the council's.
+- **The expert finishing does not close the window.** The follower stops at `delegation_final` and
+  then waits for a keypress, so you can scroll back over the whole session and dismiss it yourself.
+- **The window's own deadline follows the expert's budget** (1.5x, floored at 15 minutes, capped at
+  the CLI's 60-minute ceiling), so the observer can never expire before the work it is watching.
+- **The window is view-only.** Decision prompts and tool approvals still surface in the host, so
+  there is exactly one place that can answer an expert.
+- **Only this configuration key opens a window.** No tool argument, expert output, or task text can
+  trigger one, and task content never reaches the command line: the arguments are the execution id,
+  the role, and numeric options.
+
+Opening a window is the one place where the runtime starts a process on the operator's behalf: it
+launches the operating system's own terminal host (Windows Terminal when installed, otherwise the
+classic console) running this project's own CLI follower. When the terminal host or the CLI cannot
+be found, or the platform is not Windows, no window appears, no delegation is affected, and
+`expert_inspect` / `expert_status` report a single limitation line explaining the fallback. To point
+the observer at a specific CLI build, set `EXPERT_COUNCIL_CLI`; to force a terminal host, set
+`EXPERT_COUNCIL_TERMINAL`.
+
+The manual route stays available for everyone: run `expert-council watch --exec <execution-id>
+--follow` from any second terminal, which is also how you re-read a finished delegation, since the
+stream file remains on disk until it is pruned after 7 days.
 ### Struggle detection (guardrails)
 
 `security.guardrails` decides whether the council notices an expert that is stuck

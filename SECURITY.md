@@ -16,6 +16,20 @@ Dynamic tool permissions never lower the isolation guarantee. A read-only execut
 
 The cross-language provisioning driver registry extends the same trust model beyond Node. Installers are run only from the repository's own committed lockfile/manifest (cargo/go/maven/dotnet/bundler/composer/mix). The Node drivers suppress install-time scripts - npm/pnpm/bun by flag, Yarn by configuration - but no such equivalence exists for every ecosystem, so the registry records a suppression class per driver and provisioning reports a limitation when the driver that actually ran cannot suppress build code; each ecosystem already keeps a machine-global download cache (pnpm store, `~/.cargo`, `GOMODCACHE`, `~/.m2`, `~/.nuget`, pip/uv). Sharing that cache across worktrees is a deliberate trade: it assumes a **single-trust-boundary local user**, exactly as the pnpm global store does, so do not run mutually untrusted experts against one writable cache. Concurrent worktrees each materialize their **own** build/target directory; the registry never points parallel experts at one shared `target/` (cargo takes an exclusive target lock — sharing serializes or deadlocks). `strategy: "in-place"` and the `.devcontainer`/`nix` backends surface guidance for executing against an environment Expert Council does not itself materialize — treat "run read-only commands against the host workspace" as operator-intent execution, the same posture as `expert_verify`. `runtimeEnv: "host-env"` deliberately stops scrubbing the provisioning child environment (passing toolchain/cache-location variables through); it is opt-in and widens credential reach, so keep the default `isolated` unless a specific toolchain requires it.
 
+## Operator-visible process launch
+
+`security.observability.autoOpenWindow` (default `false`) is the only configuration under which
+Expert Council starts a process on the operator's behalf: the host operating system's own terminal
+(Windows Terminal when it can be found, otherwise `cmd /c start`) running this project's own CLI in
+`watch --follow` mode against the delegation's event stream. It is reached only from this config
+key - no MCP or Pi tool argument, no expert output, and no task text can trigger it, and task text
+never enters the command line. The window is a reader of the same redacted stream file another
+terminal could already open, so it adds no new data reach: tool arguments stay redacted unless the
+operator turns `redactToolArgs` off, and answering an expert still happens in the host, which keeps
+a single authority for decisions. It inherits the host environment the same way any terminal the
+operator opened themselves would, which is why it is opt-in rather than ambient. Where the terminal
+host or the CLI cannot be located, or the platform is not Windows, nothing is launched and one
+limitation line explains the fallback; a failed launch can never fail a delegation.
 ## Trusted startup inputs
 
 Process environment and CLI path flags are administrative inputs, not model-controlled configuration. `PI_CODING_AGENT_MODULE` points to executable Pi SDK code. `EXPERT_COUNCIL_CONFIG`, `EXPERT_COUNCIL_WORKSPACE`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_STATE`, `EXPERT_COUNCIL_WORKTREES`, and their CLI equivalents select local files or directories. Do not populate them from repository content, delegated task text, or expert output. `EXPERT_COUNCIL_WORKTREES` changes only the parent of the per-user private worktree base; the ownership, permission, and canonical-containment checks still apply, so pointing it at a world-writable directory is an operator misconfiguration rather than a bypass. The Codex distribution passes its bundled role directory directly to the runtime rather than accepting a role-prompt directory environment override. Expert Council intentionally performs no signature or integrity verification of operator-supplied module paths: verifying that a locally built or globally installed Pi SDK is trustworthy is part of operator workstation hygiene, and adding an allowlist would break the documented local-development resolution order.
