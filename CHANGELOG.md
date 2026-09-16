@@ -169,6 +169,43 @@ All notable changes to Expert Council are documented here. Versions follow seman
   fresh expert can legitimately say nothing while the model thinks. An unused convenience
   export added during this work was deleted rather than shipped as dead API.
 
+- **Provisioning script suppression is now per-driver truth, not a sentence (#37, found by
+  a delegated README audit).** The documentation claimed installs "always append
+  `--ignore-scripts`" and "never run lifecycle scripts". The registry applied that flag to
+  two of thirteen drivers, and named bun and uv in the same breath as if both were covered.
+  Three changes, in that order of importance:
+  - **Made true where it can be true.** `bun install` gained `--ignore-scripts` (Bun does
+    support it, and already only runs scripts for its own trusted-allowlist packages, so the
+    gap was bounded but real). Yarn deliberately did **not** get the flag: Yarn Berry removed
+    it from its CLI, so appending it would break the install while looking hardened; both
+    Yarn generations are instead covered through the child environment
+    (`YARN_ENABLE_SCRIPTS=false`, `YARN_IGNORE_SCRIPTS=true`). Because that environment is an
+    allowlist, driver settings are merged *after* scrubbing - a value left in the parent
+    environment would have been scrubbed away and the fix would have been invisible, which is
+    the exact failure mode this repository keeps finding in its own tooling.
+  - **Declared what cannot be true.** Each driver now carries a suppression class - `flag`,
+    `env`, `unavailable`, `unverified` - decided from evidence: `uv` builds source
+    distributions (PEP 517 executes Python build code; its `--no-build` trades that for
+    failing instead), current Poetry exposes no install script switch at all (verified from
+    the option list in `install.py` on main, not from memory - the older `--no-scripts` I
+    remembered no longer exists), `cargo` runs `build.rs`, and go/maven/dotnet/bundler/
+    composer/mix are marked `unverified` rather than assumed safe. Composer's `--no-scripts`
+    is the likely fix and is deliberately left unapplied until verified here.
+  - **Made the residual exposure visible.** Provisioning that ran through an `unavailable` or
+    `unverified` driver now appends a limitation to the prepared workspace, so the Main Agent
+    sees that a lockfile bounds *what* is installed but not *whether installed code runs*.
+  The README (three places) and SECURITY.md (three places) wording was corrected to match,
+  in English and Chinese. Not exploitable in this checkout: the machine has only `npm`
+  installed and the repository pins `package-lock.json`, so the real command already carried
+  the flag - which is exactly how a claim like this survives review untouched.
+  Guarded by a test that walks all thirteen drivers and fails any that declares no class,
+  plus the env-passthrough and limitation tests. All three fixes were falsified: removing the
+  bun flag, dropping the post-scrub env merge, or misclassifying `uv` reddens exactly one test
+  each. One test-authoring mistake in this change is on record: rewriting assertions with a
+  regex dropped their `await`, turning three plan comparisons into floating promises that
+  could not fail the run; vitest reported 55 passed while printing an unowned rejection, and
+  the log line - not the green bar - was what revealed it.
+
 ### Added
 - **A drift guard for the renderer.** Every event kind must now be listed in a `Record` over the
   `ExpertEventKind` union - an unlisted kind fails the build with the property name - and a table-driven test
@@ -289,6 +326,12 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **报告里引用了传输故障，不能让引用它的模型自己被暂停路由（#34，发布前评审发现）。** 给模型打"不可用"是有真实后果的路由决策——标记过期前候选会被直接剔除——而打标记的门禁喂的是专家长篇原文，它**没有任何形状守卫**（失败类型分类器在 0.8.5 正因为这个原因加了守卫）。缺陷 #31 把这个口子激活了："connection error""fetch failed""is overloaded" 在调试报告里只是普通句子，而现在它们是证据。一份写着"日志里有 connection error……但与本缺陷无关"的失败尝试，本来会把自己的模型暂停掉。新增 `classifyReportedAvailabilityEvidence` 给报告文本设门禁：短文本直接信任（可用性标记本身是特定短语），长文本必须以供应商消息的样子开头。**单靠长度上限不够**——真实供应商确实会返回 `429: {"message":"...quota has been exhausted."}` 这种长体，拒掉它们就会丢掉那条有测试保护的整计划标记。这个门禁刻意比 `readsAsFailureMessage` 宽松，理由写在谓词旁边：后者是为失败类型那几个桶设计的，拿它拦可用性会把 `model_not_found`、"429 rate limit exceeded" 这类真消息一起拒掉——我第一次正是这么接的，结果误杀了 4 条合法标记测试。评审还建议把 `failureTypeForResult` 也接上守卫；试过并**否决**：它会破坏"运行时把真实 429 误标为 `unknown` 时仍要恢复出供应商证据"这条有测试的行为，而那条兜底只在已经失败的尝试上跑。
 - **diff 读不出来这件事，在失败路径上也要继续可见（#35，发布前评审发现）。** 缺陷 #28 在所有交付路径都记了 `executionMetadata.filesChangedError`，但那条解释性 risk 只加在成功路径上，于是超时、中止、自停的可写执行仍然只显示"没有文件变化"而不给原因——恰恰是最需要让宿主知道"可能有活可捡"的场合。现在这句话由一个辅助函数统一产出，并在每一条收集文件的交付路径上合并进 `risks`，包括此前**根本没有 `risks` 字段**的超时结果。验证方式是真的跑一次可写执行、工作区不是仓库，因此 diff 必然读不出来。本条修复的第一遍**漏掉了六处中的一处**：一次脚本化替换的锚点没匹配上，而我没给它的匹配次数加断言，于是它静默空跑，提交信息却声称已经全覆盖。发现方式是把调用点数量与声明里列出的路径逐一对账。现在有一条专门的测试钉住被漏掉的那条路径（会话抛错的可写执行），修正也作为独立提交留下而不是 amend 抹掉。教训是可操作性的：**在这个仓库里驱动修改的每一次多点脚本编辑，都必须对匹配次数加断言**——正如我们要求每一个专家做的那样。
 - **`watch` 的文档与它自己的行为对齐了。** `--help` 里还写着 0.8.5 的退出规则、也漏了 `--quiet-ms`，两处都补上；README 现在写明那条静默兜底的真实前提——它只在**已经看到终止事件**之后生效，从未出现终止事件的流由 `--timeout-ms` 兜底，因为刚启动的专家在模型思考时本来就可以什么都不写。这轮修改过程中新增的一个便捷导出因无人调用而被删掉，没有作为死 API 发布出去。
+
+- **预置的脚本抑制改成"逐驱动的实话"，而不是一句话（#37，由派出的 README 审计发现）。** 文档声称安装"总是附加 `--ignore-scripts`""绝不运行生命周期脚本"，而注册表十三分之二才真的加了该 flag，README 还把 bun 和 uv 并列写进"已覆盖"的名单。三件事按重要性排：
+  - **能兑现的先兑现。** `bun install` 补上 `--ignore-scripts`（Bun 确实支持；且 Bun 本身只对内置信任白名单包跑脚本，所以缺口有限但真实）。**yarn 刻意不加这个 flag**：Berry 已把它从 CLI 移除，加了只会让安装报错——"看起来加固了，其实弄坏了"。两代 yarn 改由子进程环境覆盖（`YARN_ENABLE_SCRIPTS=false`、`YARN_IGNORE_SCRIPTS=true`）。由于子环境是**白名单 scrub**，驱动自带的环境变量必须在 scrub **之后**合并：若只是留在父环境里会被擦掉，加固就成了看不见的空动作——而这正是本仓库反复在自己工具链里抓到的错误类别。
+  - **兑现不了的如实声明。** 每个驱动带上抑制等级：`flag` / `env` / `unavailable` / `unverified`，判定来自证据：`uv` 会构建 sdist（PEP 517 即执行 Python 构建代码；`--no-build` 只是把"执行"换成"报错"），当前 Poetry **没有**安装期脚本开关（我从 main 分支 `install.py` 的选项声明逐条核过，不靠记忆——我原本记得的 `--no-scripts` 已不存在），`cargo` 会跑 `build.rs`；go/maven/dotnet/bundler/composer/mix 标为 `unverified`，而不是假定安全。composer 大概率有 `--no-scripts`，但在本环境取证之前**故意不加**。
+  - **让残余暴露可见。** 走 `unavailable` 或 `unverified` 驱动的预置，现在会往 prepared workspace 的 limitations 里追加一条，主 Agent 于是看得见：**锁文件约束"装什么"，不约束"装的时候跑不跑代码"**。
+  README（三处）与 SECURITY.md（三处）措辞随之改为与代码一致，中英双份。这份检出里并不构成实际暴露：本机只装了 `npm`、仓库锁文件是 `package-lock.json`，真实执行的命令本来就带着 flag——而这恰恰是这类声称能在评审里一路活下来的原因。防护是一条走查全部十三驱动、任何未声明等级即失败的测试，加上 env 透传与 limitation 两条。三处修复都做了反证：摘掉 bun 的 flag、去掉 scrub 后的 env 合并、把 uv 误标成安全——每次都恰好只弄红一条。本次改动里我自己犯的一个错也留档：用正则重写断言时丢了 `await`，三处 plan 比较变成**没人认领的浮动 promise**，vitest 照样报 55 passed 却在日志里打了一条无人认领的 rejection——揭穿它的不是绿色进度条，而是那行日志。
 
 ### 新增
 - **渲染器的防漂移守卫。** 每个事件种类现在都必须在 `ExpertEventKind` 联合类型上的一个 `Record` 里登记——漏登就编译失败并点名缺的键；另有一条表驱动测试要求每个种类都有渲染断言。两半都用注入法验证过：加种类不登记会打断 `tsc`，登记却不测则守卫变红。
