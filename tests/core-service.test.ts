@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   activeModelAvailability,
+  aggregateOutcomes,
   applyUsage,
   decideEscalation,
   evaluateModelAssessment,
@@ -11,12 +12,14 @@ import {
   MemoryTelemetryStore,
   MODEL_AVAILABILITY_MARKER_TTL_MS,
   MODEL_RATE_LIMIT_MARKER_TTL_MS,
+  MODEL_TRANSPORT_MARKER_TTL_MS,
+  modelAvailabilityWarnings,
   observedAdjustment,
   resolveModelAssessment,
   sanitizeOutcome,
   withModelAvailabilityMarker,
 } from "../packages/core/src/index.js";
-import type { BillingPolicyEntry, CompositionDocument, CouncilStateOptions, CouncilStateSnapshot, ExpertResult, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
+import type { BillingPolicyEntry, ExpertOutcome, CompositionDocument, CouncilStateOptions, CouncilStateSnapshot, ExpertResult, ModelAssessmentSnapshot, RoutePolicyDocument } from "../packages/core/src/index.js";
 import { applyVerificationGate } from "../packages/pi-runtime/src/index.js";
 import { capabilities, MockRuntime, model } from "./helpers.js";
 
@@ -1970,5 +1973,147 @@ describe("cross-attempt evidence survives a successful retry", () => {
     const result = await service.startDelegation({ role: "reviewer", task: "Review a bounded change", timeoutMs: 60_000 }).result;
     expect(result.executionMetadata?.toolCalls).toBeUndefined();
     expect(result.executionMetadata?.attention).toBeUndefined();
+  });
+});
+
+describe("transport faults reach the routing eligibility axis (defect #31)", () => {
+  const assessment = {
+    asOf: "2026-09-03T00:00:00.000Z",
+    sources: ["https://livebench.ai/"],
+    models: {
+      "p/dead": { coding: 9, toolReliability: 9, autonomousExecution: 9, bashReliability: 9 },
+      "p/alive": { coding: 8, toolReliability: 8, autonomousExecution: 8, bashReliability: 8 },
+    },
+  };
+  const models = [model("p", "dead"), model("p", "alive")];
+
+  function initialState(modelAssessment: ModelAssessmentSnapshot): CouncilStateSnapshot {
+    return { version: 1, plans: [], executions: [], results: [], modelAssessment };
+  }
+
+  function outcomeFor(overrides: Partial<ExpertOutcome>): ExpertOutcome {
+    return {
+      executionId: "exec_transport",
+      timestamp: "2026-09-16T00:00:00.000Z",
+      model: "p/dead",
+      provider: "p",
+      role: "scout",
+      taskCategory: "normal",
+      success: true,
+      firstPass: true,
+      toolErrors: 0,
+      retryCount: 0,
+      timedOut: false,
+      escalationCount: 0,
+      attempts: 1,
+      hostType: "test",
+      ...overrides,
+    };
+  }
+
+  it("classifies upstream connection faults as transport evidence, with the ordering pinned", async () => {
+    const { classifyAvailabilityEvidence, indicatesModelUnavailable } = await import(
+      "../packages/core/src/failures.js"
+    );
+    expect(classifyAvailabilityEvidence("[Failure] Connection error.")).toBe("transport-unstable");
+    expect(classifyAvailabilityEvidence("fetch failed")).toBe("transport-unstable");
+    expect(classifyAvailabilityEvidence("socket hang up")).toBe("transport-unstable");
+    // "503 Service Unavailable" must never be read as a dead model.
+    expect(classifyAvailabilityEvidence("HTTP 503 Service Unavailable from upstream")).toBe("transport-unstable");
+    // Throttling and quota wording still win, so the 2-minute and 6-hour windows are unchanged.
+    expect(classifyAvailabilityEvidence("Provider returned 429 rate limit exceeded.")).toBe("rate-limited");
+    expect(classifyAvailabilityEvidence("403 AccessDenied: insufficient_quota")).toBe("quota-exhausted");
+    expect(classifyAvailabilityEvidence("model_not_found for p/dead")).toBe("unavailable");
+    expect(classifyAvailabilityEvidence("tool call failed")).toBeUndefined();
+    // Our own budget is not the supplier's fault: a timeout must not mark anything away.
+    expect(classifyAvailabilityEvidence("[Failure] Expert execution timed out after 9000ms.")).toBeUndefined();
+    expect(indicatesModelUnavailable("[Failure] Connection error.")).toBe(true);
+  });
+
+  it("marks only the route that failed, on a short window, and keeps it out of the model's record", async () => {
+    const runtime = new MockRuntime(models, [
+      {
+        status: "failed",
+        role: "scout",
+        model: "p/dead",
+        summary: "[Failure] Connection error.",
+        executionMetadata: { failureType: "provider_error" },
+      },
+      { status: "success", role: "scout", model: "p/alive", summary: "ok" },
+    ]);
+    let stored: ModelAssessmentSnapshot = assessment;
+    const service = new ExpertCouncilService(runtime, {}, undefined, {
+      initialState: initialState(assessment),
+      persistence: {
+        save: async () => {},
+        updateModelAssessment: async (mutate) => {
+          const next = mutate(stored);
+          if (next) stored = next;
+        },
+      },
+    });
+    const result = await service.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+
+    expect(result.status).toBe("success");
+    // Siblings are deliberately NOT marked here: a connection fault is per-route evidence,
+    // unlike account-level throttling, and marking more models than the evidence covers is
+    // how a supplier fault turns into a self-inflicted blackout.
+    expect(result.executionMetadata?.unavailableModels).toEqual(["p/dead"]);
+    const marker = stored.modelAvailability?.["p/dead"];
+    if (!marker) throw new Error("expected the failed route to carry a marker");
+    expect(marker).toMatchObject({ callable: false, kind: "transport-unstable", source: "runtime-failure" });
+    expect(stored.modelStatus?.["p/dead"]).toMatchObject({ state: "transport-unstable" });
+    expect(stored.modelAvailability?.["p/alive"]).toBeUndefined();
+
+    const observedAt = Date.parse(marker.observedAt);
+    expect(Object.keys(activeModelAvailability(stored, new Date(observedAt + MODEL_TRANSPORT_MARKER_TTL_MS - 1_000))))
+      .toEqual(["p/dead"]);
+    expect(activeModelAvailability(stored, new Date(observedAt + MODEL_TRANSPORT_MARKER_TTL_MS + 1_000))).toEqual({});
+    // The warning must say whose fault this was, so a later reader does not blame the model.
+    const warnings = modelAvailabilityWarnings(stored, models, new Date(observedAt + 1_000));
+    expect(warnings.join(" ")).toContain("supplier evidence");
+    expect(warnings.join(" ")).toContain("excluded from the model's reliability");
+
+    // And the axis separation holds: supplier faults must not lower the model's own record.
+    const aggregates = aggregateOutcomes([
+      outcomeFor({ success: false, firstPass: false, failureType: "provider_error" }),
+      outcomeFor({ success: false, firstPass: false, failureType: "provider_error" }),
+      outcomeFor({ success: true }),
+    ]);
+    const recorded = aggregates.find((entry) => entry.model === "p/dead" && entry.role === "scout");
+    expect(recorded?.samples).toBe(1);
+  });
+  it("routes around the marked route while the window is open, and back to it once it closes", async () => {
+    // `buildCouncil` takes a task and classifies it, so the observable proof that a hard
+    // constraint fired is which model the runtime was actually asked to run first.
+    const recent = withModelAvailabilityMarker(
+      assessment,
+      "p/dead",
+      "[Failure] Connection error.",
+      new Date().toISOString(),
+      "transport-unstable",
+    );
+    const blocked = new MockRuntime(models, [{ status: "success", role: "scout", model: "p/alive", summary: "ok" }]);
+    const blockedService = new ExpertCouncilService(blocked, {}, undefined, { initialState: initialState(recent) });
+    const first = await blockedService.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(first.status).toBe("success");
+    // p/dead is the first pick for a scout whenever it is healthy - every other test here
+    // starts there - so being asked to run p/alive first is the marker doing its job.
+    expect(blocked.requests.map((request) => request.model)).toEqual(["p/alive"]);
+
+    // Once the window has passed the same evidence must stop affecting routing entirely:
+    // a transport marker is a pause, not a verdict.
+    const expired = withModelAvailabilityMarker(
+      assessment,
+      "p/dead",
+      "[Failure] Connection error.",
+      new Date(Date.now() - MODEL_TRANSPORT_MARKER_TTL_MS - 60_000).toISOString(),
+      "transport-unstable",
+    );
+    const revived = new MockRuntime(models, [{ status: "success", role: "scout", model: "p/dead", summary: "ok" }]);
+    const revivedService = new ExpertCouncilService(revived, {}, undefined, { initialState: initialState(expired) });
+    const second = await revivedService.delegate({ role: "scout", task: "Inspect a tiny file", timeoutMs: 60_000 });
+    expect(second.status).toBe("success");
+    expect(revived.requests.map((request) => request.model)).toEqual(["p/dead"]);
   });
 });

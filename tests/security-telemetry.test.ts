@@ -4,7 +4,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { parseCouncilConfig, withModelAvailabilityMarker } from "../packages/core/src/index.js";
+import {
+  activeModelAvailability,
+  AVAILABILITY_MARKER_KINDS,
+  parseCouncilConfig,
+  parseModelAssessmentSnapshot,
+  withModelAvailabilityMarker,
+  withModelStatus,
+} from "../packages/core/src/index.js";
 import {
   JsonCouncilStateStore,
   JsonlTelemetryStore,
@@ -419,5 +426,36 @@ describe("local JSONL telemetry", () => {
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
+  });
+});
+
+describe("persisted availability markers survive the real parser (defect #33)", () => {
+  it("round-trips every availability kind through the schema that reads model-assessment.json", () => {
+    // `rate-limited` was added to the union and written by the marker helpers, but the
+    // persisted-state enums were never updated - so a single legitimate transient marker
+    // made model-assessment.json unreadable by every later process: load() and update()
+    // both threw, which destroyed the very routing memory defect #31 depends on. Walking
+    // the kinds against the real parser is the only guard that catches the next one.
+    const now = "2026-09-16T12:00:00.000Z";
+    for (const kind of AVAILABILITY_MARKER_KINDS) {
+      let snap = parseModelAssessmentSnapshot({
+        asOf: now,
+        sources: ["https://example.invalid"],
+        models: { "p/m": { coding: 5 } },
+      });
+      snap = withModelAvailabilityMarker(snap, "p/m", "Provider said no.", now, kind);
+      snap = withModelStatus(snap, "p/m", kind, now, "Provider said no.");
+      const wire = JSON.parse(JSON.stringify(snap)) as unknown;
+      const back = parseModelAssessmentSnapshot(wire);
+      expect(back.modelAvailability?.["p/m"]?.kind).toBe(kind);
+      expect(back.modelStatus?.["p/m"]?.state).toBe(kind);
+      expect(Object.keys(activeModelAvailability(back, new Date("2026-09-16T12:00:30.000Z")))).toEqual(["p/m"]);
+    }
+  });
+
+  it("lists every kind the union can carry, so a new one cannot skip this test", () => {
+    expect([...AVAILABILITY_MARKER_KINDS].sort()).toEqual(
+      ["unavailable", "quota-exhausted", "rate-limited", "transport-unstable"].sort(),
+    );
   });
 });

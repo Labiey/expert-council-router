@@ -15,7 +15,12 @@ export class JsonModelAssessmentStore {
       return parseModelAssessmentSnapshot(JSON.parse(await readFile(filePath, "utf8")) as unknown);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-      throw new Error(`Unable to load Expert Council model assessment at ${filePath}: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(
+        `Unable to load Expert Council model assessment at ${filePath}: ${error instanceof Error ? error.message : String(error)}. ` +
+          "This file is written by the runtime and validated on read, so a rejected version usually means it was " +
+          `edited by hand or written by a newer build. Restore routing by moving it aside (for example rename to "${path.basename(filePath)}.bad") and letting the council rebuild it; ` +
+          "no expert work is stored there.",
+      );
     }
   }
 

@@ -40,6 +40,7 @@ import type {
   CouncilStateOptions,
   CouncilStateSnapshot,
   CouncilStatus,
+  ModelStatusObservation,
   CouncilStatusSummary,
   CouncilStatusView,
   CouncilStatusViewResult,
@@ -1014,7 +1015,7 @@ export class ExpertCouncilService implements ExpertCouncil {
    * after classified provider failures. This lives in model-assessment.json,
    * not telemetry, so the current per-model state is readable at a glance.
    */
-  private async recordModelStatus(modelKey: string, state: "available" | "quota-exhausted" | "unavailable", reason?: string): Promise<void> {
+  private async recordModelStatus(modelKey: string, state: ModelStatusObservation["state"], reason?: string): Promise<void> {
     const observedAt = new Date().toISOString();
     if (this.modelAssessment) {
       this.modelAssessment = withModelStatus(this.modelAssessment, modelKey, state, observedAt, reason);

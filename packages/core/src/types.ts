@@ -553,9 +553,16 @@ export interface ResolvedModelProfile extends Partial<Record<CapabilityDimension
  * Why a model is currently marked non-callable. `unavailable` means the model
  * itself is gone or the subscription lacks it; `quota-exhausted` means access
  * is valid but the plan or API balance ran out and may recover after a top-up
- * or quota reset, so it expires on a shorter marker lifetime.
+ * or quota reset, so it expires on a shorter marker lifetime. `rate-limited` is
+ * transient throttling, and `transport-unstable` is an upstream connection fault -
+ * both supplier evidence, which is charged to routing eligibility only and never to
+ * the model's reliability record (defects #15 and #31).
  */
-export type AvailabilityMarkerKind = "unavailable" | "quota-exhausted" | "rate-limited";
+export type AvailabilityMarkerKind =
+  | "unavailable"
+  | "quota-exhausted"
+  | "rate-limited"
+  | "transport-unstable";
 
 /** Runtime-observed evidence that a model listed by the host can no longer be called. */
 export interface ModelAvailabilityObservation {
@@ -570,7 +577,7 @@ export interface ModelAvailabilityObservation {
 
 /** Current per-model runtime status snapshot, persisted in the shared assessment. */
 export interface ModelStatusObservation {
-  state: "available" | "quota-exhausted" | "unavailable" | "rate-limited";
+  state: "available" | "quota-exhausted" | "unavailable" | "rate-limited" | "transport-unstable";
   observedAt: string;
   reason?: string;
 }

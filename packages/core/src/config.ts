@@ -80,7 +80,7 @@ const auditedCapabilityProfileSchema = z.object(capabilityFields).strict().refin
 
 export const modelAvailabilityObservationSchema = z.object({
   callable: z.literal(false),
-  kind: z.enum(["unavailable", "quota-exhausted"]).optional(),
+  kind: z.enum(["unavailable", "quota-exhausted", "rate-limited", "transport-unstable"]).optional(),
   observedAt: z.string().datetime({ offset: true }),
   expiresAt: z.string().datetime({ offset: true }).optional(),
   reason: z.string().min(1).max(500),
@@ -88,7 +88,7 @@ export const modelAvailabilityObservationSchema = z.object({
 });
 
 const modelStatusObservationSchema = z.object({
-  state: z.enum(["available", "quota-exhausted", "unavailable"]),
+  state: z.enum(["available", "quota-exhausted", "unavailable", "rate-limited", "transport-unstable"]),
   observedAt: z.string().datetime({ offset: true }),
   reason: z.string().min(1).max(500).optional(),
 });

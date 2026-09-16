@@ -309999,14 +309999,14 @@ var modelProfileSchema = external_exports.object({
 var auditedCapabilityProfileSchema = external_exports.object(capabilityFields).strict().refine((profile) => Object.values(profile).some((value3) => typeof value3 === "number"), { message: "must contain at least one numeric capability score" });
 var modelAvailabilityObservationSchema = external_exports.object({
   callable: external_exports.literal(false),
-  kind: external_exports.enum(["unavailable", "quota-exhausted"]).optional(),
+  kind: external_exports.enum(["unavailable", "quota-exhausted", "rate-limited", "transport-unstable"]).optional(),
   observedAt: external_exports.string().datetime({ offset: true }),
   expiresAt: external_exports.string().datetime({ offset: true }).optional(),
   reason: external_exports.string().min(1).max(500),
   source: external_exports.literal("runtime-failure")
 });
 var modelStatusObservationSchema = external_exports.object({
-  state: external_exports.enum(["available", "quota-exhausted", "unavailable"]),
+  state: external_exports.enum(["available", "quota-exhausted", "unavailable", "rate-limited", "transport-unstable"]),
   observedAt: external_exports.string().datetime({ offset: true }),
   reason: external_exports.string().min(1).max(500).optional()
 });
@@ -311157,6 +311157,8 @@ function classifyAvailabilityEvidence(summary) {
     return "rate-limited";
   if (MODEL_QUOTA_MARKERS.some((marker) => message.includes(marker)))
     return "quota-exhausted";
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => message.includes(marker)))
+    return "transport-unstable";
   if (MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker)))
     return "unavailable";
   return void 0;
@@ -311276,12 +311278,22 @@ var MAX_MODEL_ASSESSMENT_FUTURE_SKEW_MS = 5 * 6e4;
 var MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 6e4;
 var MODEL_QUOTA_MARKER_TTL_MS = 6 * 60 * 6e4;
 var MODEL_RATE_LIMIT_MARKER_TTL_MS = 2 * 6e4;
+var MODEL_TRANSPORT_MARKER_TTL_MS = 5 * 6e4;
+var AVAILABILITY_KIND_COVERAGE = {
+  unavailable: true,
+  "quota-exhausted": true,
+  "rate-limited": true,
+  "transport-unstable": true
+};
+var AVAILABILITY_MARKER_KINDS = Object.keys(AVAILABILITY_KIND_COVERAGE);
 var MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
 function markerTtlMs(kind, defaultTtlMs) {
   if (kind === "quota-exhausted")
     return MODEL_QUOTA_MARKER_TTL_MS;
   if (kind === "rate-limited")
     return MODEL_RATE_LIMIT_MARKER_TTL_MS;
+  if (kind === "transport-unstable")
+    return MODEL_TRANSPORT_MARKER_TTL_MS;
   return defaultTtlMs;
 }
 function activeModelAvailability(assessment, now = /* @__PURE__ */ new Date(), ttlMs = MODEL_AVAILABILITY_MARKER_TTL_MS) {
@@ -311308,6 +311320,9 @@ function availabilityWarning(key, marker) {
   }
   if (marker.kind === "rate-limited") {
     return `Model ${key} hit a transient provider rate limit at ${marker.observedAt}: ${marker.reason}. Routing avoids it for ${MODEL_RATE_LIMIT_MARKER_TTL_MS / 1e3}s and retries automatically.`;
+  }
+  if (marker.kind === "transport-unstable") {
+    return `Model ${key} could not be reached through its provider transport at ${marker.observedAt}: ${marker.reason}. This is supplier evidence, not a judgement on the model, so it is excluded from the model's reliability record; routing avoids it only for ${MODEL_TRANSPORT_MARKER_TTL_MS / 1e3}s.`;
   }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
@@ -313462,7 +313477,7 @@ var JsonModelAssessmentStore = class {
     } catch (error61) {
       if (error61.code === "ENOENT")
         return void 0;
-      throw new Error(`Unable to load Expert Council model assessment at ${filePath}: ${error61 instanceof Error ? error61.message : String(error61)}`);
+      throw new Error(`Unable to load Expert Council model assessment at ${filePath}: ${error61 instanceof Error ? error61.message : String(error61)}. This file is written by the runtime and validated on read, so a rejected version usually means it was edited by hand or written by a newer build. Restore routing by moving it aside (for example rename to "${path20.basename(filePath)}.bad") and letting the council rebuild it; no expert work is stored there.`);
     }
   }
   async load() {

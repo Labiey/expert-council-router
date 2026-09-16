@@ -140,7 +140,7 @@ const MODEL_QUOTA_MARKERS = [
   "plan quota exhausted",
 ] as const;
 
-export type AvailabilityEvidence = "unavailable" | "quota-exhausted" | "rate-limited";
+export type AvailabilityEvidence = "unavailable" | "quota-exhausted" | "rate-limited" | "transport-unstable";
 
 /**
  * Classify provider-failure evidence: quota exhaustion wins over the generic
@@ -154,6 +154,10 @@ export function classifyAvailabilityEvidence(summary: unknown): AvailabilityEvid
   // minutes and must not blackhole a whole token plan for hours.
   if (MODEL_RATE_LIMIT_MARKERS.some((marker) => message.includes(marker))) return "rate-limited";
   if (MODEL_QUOTA_MARKERS.some((marker) => message.includes(marker))) return "quota-exhausted";
+  // Checked before the dead-model markers on purpose: "503 Service Unavailable" is an
+  // upstream fault, and a substring collision with the unavailable markers must never
+  // write off a model that is alive and merely unreachable right now.
+  if (TRANSPORT_FAILURE_MARKERS.some((marker) => message.includes(marker))) return "transport-unstable";
   if (MODEL_UNAVAILABLE_MARKERS.some((marker) => message.includes(marker))) return "unavailable";
   return undefined;
 }

@@ -25,11 +25,35 @@ export const MODEL_AVAILABILITY_MARKER_TTL_MS = 24 * 60 * 60_000;
 export const MODEL_QUOTA_MARKER_TTL_MS = 6 * 60 * 60_000;
 /** Transient TPM/RPM throttling recovers in minutes, not hours. */
 export const MODEL_RATE_LIMIT_MARKER_TTL_MS = 2 * 60_000;
+/** An upstream connection fault usually clears within minutes. Longer than a throttle
+ * window, because the attempt that just failed is direct evidence the route is sick. */
+export const MODEL_TRANSPORT_MARKER_TTL_MS = 5 * 60_000;
+
+/**
+ * Every availability marker kind, listed through a `Record` over the union so that a new
+ * kind cannot be added without being handled here (an unlisted kind fails the build).
+ * `rate-limited` is the lesson: the type allowed it, the marker helpers wrote it, and the
+ * persisted-state schema did not - so one legitimate transient marker made
+ * model-assessment.json unreadable by every later process (defect #33). A round-trip test
+ * walks this list against the real parser.
+ */
+const AVAILABILITY_KIND_COVERAGE: Record<AvailabilityMarkerKind, true> = {
+  unavailable: true,
+  "quota-exhausted": true,
+  "rate-limited": true,
+  "transport-unstable": true,
+};
+
+/** All availability kinds, for tests that must stay in step with the union. */
+export const AVAILABILITY_MARKER_KINDS: readonly AvailabilityMarkerKind[] = Object.keys(
+  AVAILABILITY_KIND_COVERAGE,
+) as AvailabilityMarkerKind[];
 export const MAX_MODEL_AVAILABILITY_REASON_LENGTH = 500;
 
 function markerTtlMs(kind: AvailabilityMarkerKind | undefined, defaultTtlMs: number): number {
   if (kind === "quota-exhausted") return MODEL_QUOTA_MARKER_TTL_MS;
   if (kind === "rate-limited") return MODEL_RATE_LIMIT_MARKER_TTL_MS;
+  if (kind === "transport-unstable") return MODEL_TRANSPORT_MARKER_TTL_MS;
   return defaultTtlMs;
 }
 
@@ -61,6 +85,9 @@ function availabilityWarning(key: string, marker: ModelAvailabilityObservation):
   }
   if (marker.kind === "rate-limited") {
     return `Model ${key} hit a transient provider rate limit at ${marker.observedAt}: ${marker.reason}. Routing avoids it for ${MODEL_RATE_LIMIT_MARKER_TTL_MS / 1000}s and retries automatically.`;
+  }
+  if (marker.kind === "transport-unstable") {
+    return `Model ${key} could not be reached through its provider transport at ${marker.observedAt}: ${marker.reason}. This is supplier evidence, not a judgement on the model, so it is excluded from the model's reliability record; routing avoids it only for ${MODEL_TRANSPORT_MARKER_TTL_MS / 1000}s.`;
   }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
