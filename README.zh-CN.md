@@ -151,7 +151,8 @@ node packages/cli/dist/bin.js build "修复设备热插拔竞态问题" --max-ex
 只有在你确定需要实际调用 Pi 模型时才执行委派：
 
 ```bash
-node packages/cli/dist/bin.js delegate architecture-oracle "分析并发调用路径" --workspace /path/to/repo --json
+node packages/cli/dist/bin.js delegate architecture-oracle "分析并发调用路径" \
+  --workspace /path/to/repo --timeout-ms 600000 --reasoning-level high --json
 ```
 
 零配置模式会使用保守的能力默认值，将无法确认的计费类型标记为 `unknown`，并拒绝未隔离的写入操作。它不会猜测某个 API 是免费的，也不会根据模型名称臆测其能力强弱。
@@ -326,6 +327,11 @@ subscription  metered  quota  free  unknown
 
 该配置保存在共享数据目录（与 `model-assessment.json` 同一层）的 `council-config.json` 中。文件可选且默认自动发现——不需要任何环境变量：存在则读取，不存在则全部走默认。`expert_inspect` 会在 `operatorConfig` 下返回其路径，主代理可按用户需求代为编辑（修改在宿主会话重启后生效）。显式的 `configPath` 选项或 `EXPERT_COUNCIL_CONFIG` 环境变量仍优先，且必须指向已存在的文件。
 
+- `mode` 取 `none`（默认，永不预置）、`auto`（检测仓库提交的锁文件并安装）或 `custom`（把 `command` 原样作为 argv 数组运行）。
+- `auto` 运行 `pnpm install --frozen-lockfile --prefer-offline`、`npm ci --prefer-offline --no-audit --no-fund` 或 `bun install --frozen-lockfile`，三者都附加 `--ignore-scripts`。yarn 是刻意的例外：Berry 已把该 flag 从 CLI 移除，加上它只会让安装报错而非加固，因此改由子进程环境提供 `YARN_ENABLE_SCRIPTS=false` 与 `YARN_IGNORE_SCRIPTS=true`，一次覆盖两代 yarn。注册表还会用各工具链自己的全局下载缓存物化 python（`uv sync`、`poetry install`，或宿主 `.venv` 解释器）、rust、go、jvm/maven、dotnet、ruby、php、elixir；这些驱动并不都有等价开关，所以每个驱动各自声明能否抑制构建脚本——用了抑制不了的驱动时，向主 Agent 上报一条 limitation，而不是假装没有这回事。声明了 environment-as-code 后端（`flake.nix`、`.devcontainer/`）的仓库会被检测并交还给它，从不另起炉灶重新实现。
+- 只有变更型工作树会被预置；只读角色在主工作区运行，永不预置。
+- 子进程环境经过白名单 scrub（`PATH`、`HOME`、`USERPROFILE`、`APPDATA`、`LOCALAPPDATA`、`TEMP`、`TMP`、`SYSTEMROOT`、`SYSTEMDRIVE`、`COMSPEC`、`PROGRAMFILES`、`PROGRAMDATA`、`GIT_*`、`npm_config_registry`、`npm_config_cache`）；API token 与云凭据不会被转发。驱动自带的抑制设置项在 scrub **之后**合并，因此既不会被白名单擦掉，父进程里的同名值也无法反向覆盖议会的意图。
+- 预置为 `ready` 时，若配置了 `verifyCommand` 就运行它，否则先 `npm run typecheck` 再 `npm test`。验证门失败会把本已成功的专家结果降级为 `partial`（`failureType: "test_failure"`）。
 供给完成后验证门自动运行仓库的 typecheck 与测试命令；门失败会把本已成功的结果降级为 `partial`（`failureType: "test_failure"`），从而触发既有修正重试路径。
 
 ### 可观测性与专家窗口
@@ -464,7 +470,7 @@ toolReliability bashReliability autonomousExecution speed
 
 硬约束会排除不可用或已禁用模型、不兼容角色、工具可靠性不足、上下文不足、运行时不支持写入、日常任务中的 `escalation-only` 资源，以及带有活跃运行时可用性标记的模型。
 
-Pi 会在会话内缓存模型清单，提供商目录也可能保留失效的模型名称，否则 Council 可能围绕一个上游已无法服务的模型组建。当一次委派尝试以 `provider_error` 失败且带失效模型证据（例如 `model_not_found`、未知或已停产的模型、以及运行时自身的预检可用性检查）时，服务会通过一次原子 read-modify-write 把 `modelAvailability` 标记写入持久化的共享模型评估（`EXPERT_COUNCIL_DATA_DIR`，Windows 上即 `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json`），且不会回退其他正在运行的 Pi/Codex 实例写入的更新快照。受影响的 `expert_result` 会在 `executionMetadata.unavailableModels` 和 `risks` 中点名该模型，`expert_inspect` 会警告活跃标记，后续 `expert_build`、委派和升级会以硬约束拒绝被标记的模型。标记是保守的本地证据：24 小时后自动过期，在提交全新审计时保留，并且显式的 `modelOverrides["provider/model"].overrideUnavailableMarker: true` 可以重新启用某个模型。限流或认证错误等瞬态提供商失败永远不会产生标记。若尚无已保存的评估，标记无法持久化，但失败仍会报告给主代理并记入本地遥测。
+Pi 会在会话内缓存模型清单，提供商目录也可能保留失效的模型名称，否则 Council 可能围绕一个上游已无法服务的模型组建。当一次委派尝试以 `provider_error` 失败且带失效模型证据（例如 `model_not_found`、未知或已停产的模型、以及运行时自身的预检可用性检查）时，服务会通过一次原子 read-modify-write 把 `modelAvailability` 标记写入持久化的共享模型评估（`EXPERT_COUNCIL_DATA_DIR`，Windows 上即 `%LOCALAPPDATA%/ExpertCouncil/model-assessment.json`），且不会回退其他正在运行的 Pi/Codex 实例写入的更新快照。受影响的 `expert_result` 会在 `executionMetadata.unavailableModels` 和 `risks` 中点名该模型，`expert_inspect` 会警告活跃标记，后续 `expert_build`、委派和升级会以硬约束拒绝被标记的模型。标记是保守的本地证据：24 小时后自动过期，在提交全新审计时保留，并且显式的 `modelOverrides["provider/model"].overrideUnavailableMarker: true` 可以重新启用某个模型。标记并不只属于"模型已死"：瞬态 TPM/RPM 限流会记录 `rate-limited` 标记（`MODEL_RATE_LIMIT_MARKER_TTL_MS`，2 分钟），并连带同提供商的兄弟模型——限流是账户级条件；提供商传输不可达记录 `transport-unstable`（5 分钟），且只标记失败的那一条路由；套餐或余额耗尽记录 `quota-exhausted`（6 小时）；而套餐级访问被拒（例如 403 `AccessDenied.Unpurchased`）属于失效模型证据，记录 `unavailable`（24 小时）。这些瞬态种类一律不计入模型自身的可靠性记录——那是模型的数据，上述是供应商的数据。若尚无已保存的评估，标记无法持久化，但失败仍会报告给主代理并记入本地遥测。
 
 推理等级是可选且与模型相关的。只有当 Pi 明确暴露选定模型支持某个等级时，角色偏好才会生效；否则 Pi 会保留或钳制到模型支持的默认值。
 
@@ -536,11 +542,16 @@ CLI 与 MCP、Pi Package 使用完全相同的 Core 和 Pi Runtime：
 ```text
 expert-council models
 expert-council inspect
+expert-council compositions
 expert-council build <task>
 expert-council delegate <role> <task>
 expert-council feedback <execution-id> --verification passed|failed
-expert-council cleanup <execution-id>
 expert-council status
+expert-council abort <execution-id>
+expert-council reset <scope>
+expert-council verify (--exec <id> | --workspace <path>) --command JSON_ARRAY
+expert-council respond <execution-id> --kind decision|tool_approval
+expert-council cleanup <execution-id>
 expert-council watch --exec <execution-id> [--follow]
 ```
 
@@ -639,7 +650,7 @@ MCP 表面刻意保持为 13 个语义工具：
 }
 ```
 
-`expert_wait` 只返回完成状态和任务 ID，随后使用 `expert_result` 获取正式反馈，并在主代理验收后调用 `expert_feedback`。`expert_wait.timeoutMs` 只限制本次等待，不会延长各专家自己的执行期限。所有可能阻断的 Expert Council、Bash、PowerShell 或其他 MCP 调用仍必须按操作难度附带显式的有限超时；其余同步 Expert Council 操作受独立的 30 秒 Server 内部上限保护。`expert_status` 会返回有界的逐次尝试历史。原生 Pi Package 使用主动完成通知，因此不暴露 `expert_wait`。
+`expert_wait` 只返回完成状态和任务 ID，随后使用 `expert_result` 获取正式反馈，并在主代理验收后调用 `expert_feedback`。`expert_wait.timeoutMs` 只限制本次等待，不会延长各专家自己的执行期限。所有可能阻断的 Expert Council、Bash、PowerShell 或其他 MCP 调用仍必须按操作难度附带显式的有限超时；其余同步 Expert Council 操作受独立的 30 秒 Server 内部上限保护，只有一处刻意的例外：`expert_verify` 的上限取该默认值与 60 秒中的较大者，因为把专家的声称变成观察到的退出码，通常意味着要跑一次构建或测试。`expert_status` 会返回有界的逐次尝试历史。原生 Pi Package 使用主动完成通知，因此不暴露 `expert_wait`。
 
 直接启动 stdio Server：
 
@@ -722,7 +733,7 @@ packages/codex-integration/plugin/expert-council/
 
 ### 安装
 
-`v0.5.2` 已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
+当前版本已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
 codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
@@ -871,7 +882,7 @@ npm run pack:check
 npm run validate
 ```
 
-`npm run validate` 会先构建，确保全新克隆在测试前已经生成 workspace 包入口。测试覆盖模型归一化、公开价格与真实策略计费、Worker 可靠性、Oracle 评分、Reviewer 多样性、硬约束、未知和缺失模型、团队规模、重试和逐次诊断、结构化失败分类、升级、重试上限、角色权限、紧凑宿主输出、配置校验、遥测隐私/反馈/用量聚合、Core 宿主独立性、模拟 Pi 发现与执行、CLI JSON、MCP Schema、真实 Pi 0.84.4 扩展加载/包装及异步批量通知、Pi 扩展注册和真实 Git worktree 隔离。
+`npm run validate` 会先构建，确保全新克隆在测试前已经生成 workspace 包入口。测试覆盖模型归一化、公开价格与真实策略计费、Worker 可靠性、Oracle 评分、Reviewer 多样性、硬约束、未知和缺失模型、团队规模、重试和逐次诊断、结构化失败分类、升级、重试上限、角色权限、紧凑宿主输出、配置校验、遥测隐私/反馈/用量聚合、Core 宿主独立性、模拟 Pi 发现与执行、CLI JSON、MCP Schema、真实 Pi 0.85.1 扩展加载/包装及异步批量通知、Pi 扩展注册和真实 Git worktree 隔离。
 
 普通测试只使用 Mock Runtime，绝不会调用付费模型。真实只读 Pi 执行必须同时指定模型并明确确认成本：
 
@@ -901,7 +912,7 @@ npm run smoke:live:pi
 - nudge 需要运行时会话支持 steer。Pi 会话支持；对不支持的运行时，Council 只通知宿主而不去干扰专家。
 - 工具失败计数只记录运行时能观测到的部分，它不是审计面；工具「卡住」而非报错时，在该次尝试超时之前不会计入失败。
 
-- Pi API 变化较快。当前版本已在本机 0.84.4 SDK 上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
+- Pi API 变化较快。当前版本已在本机 0.85.1 SDK（package.json 所钉版本）上验证；运行时会检查 SDK、模型运行时、资源加载器和 Session 必需方法，并在不兼容时明确列出缺失合约。
 - Pi 没有统一的真实计费类型 API。运行时订阅信号和具名 Token Plan 优先；否则非零目录价格按按量计费处理，没有可靠证据的 Provider 保持 `unknown`，直到评估或显式用户配置确认。
 - Expert Council 不会根据模型名称推断主观编码质量，也不会自动下载基准预设。
 - Detached worktree 从已提交的 `HEAD` 开始，不会复制主工作区未提交改动。这是刻意的隔离设计；运行时会检测脏源工作区，并在委派前通过运行时限制和 mutation 委员会警告提示该偏差。

@@ -9,7 +9,7 @@ emitted by the bundler are preserved at the end of `dist/server.mjs`.
 
 Source: <https://github.com/earendil-works/pi>
 
-Version: 0.84.4
+Version: 0.85.1
 
 MIT License
 

@@ -102,7 +102,7 @@ function positional(args: string[]): string[] {
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
   expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]
-  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N]
+  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N] [--quiet-ms N]
 
 watch (run it from a second terminal) tails the live expert event stream that the
 runtime writes to <dataDir>/observability/<execution-id>.jsonl while
