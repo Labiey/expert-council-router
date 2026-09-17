@@ -6,6 +6,25 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### Fixed
 
+- **A third verification round found that the control-character policy still had three holes**, and
+  measured each one before fixing it. The panel's `started` line - the first thing an observer
+  window shows - interpolated `event.role` and `event.model` raw, and a model id arrives from a
+  remote provider catalog rather than from our own constants. A bare carriage return survived the
+  policy everywhere, which is not layout: it drives the cursor to column 0 and lets a later write
+  overwrite a rendered line. And a block header that used the byte-only stripper let an embedded
+  line feed split a one-line field into two visual lines. All three now go through the shared
+  policy, with CRLF kept as one break, a lone CR made visible, and every one-line header re-flowed
+  through `collapseLine`.
+
+  A falsification run then found a fourth hole that was mine rather than the code's: no test
+  covered a break inside a block's own tool name, so reverting that fix changed nothing. The case
+  is in the suite now and the revert goes RED, as do the other three.
+
+  What is verified rather than asserted: every place an event-derived string reaches a rendered
+  surface is enumerated and swept with hostile input across the single-line renderer, the body
+  renderer and the panel in both colour modes, with the renderer's own colour codes excluded from
+  the leak count.
+
 - **A re-audit caught my own incomplete fix, and the repository now has a gate for the class.**
   The first repair of the control-character defect changed only the panel body. Measured after
   the fact: the plain renderer (`formatExpertEvent`) stripped C0 but not C1, and the panel header

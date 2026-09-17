@@ -277,6 +277,52 @@ describe("panel layout for an observer window", () => {
     expect(shown).toContain(String.fromCharCode(0x2423));
   });
 
+  it("renders a hostile role, model, bare carriage return and embedded break without raw controls", () => {
+    // Third-round measurements against the built code: the panel's `started` line - the first
+    // thing an observer window shows - interpolated role and model raw, a lone CR survived, and an
+    // embedded LF inside a block header injected a second visual line into a one-line field.
+    const esc = String.fromCharCode(27);
+    const cr = String.fromCharCode(13);
+    const lf = String.fromCharCode(10);
+    const c1 = String.fromCharCode(0x9b);
+    const open = String.fromCharCode(0x2423);
+    const controlsIn = (text: string) => Array.from(text).filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return (code >= 0x01 && code <= 0x08) || code === 0x0b || code === 0x0c || code === 0x0d
+        || (code >= 0x0e && code <= 0x1f) || code === 0x7f || (code >= 0x80 && code <= 0x9f);
+    });
+    const title = frame("started", { role: "R" + esc + "[31mX", model: "m" + c1 + "Y" });
+    const bareCr = frame("tool_output", { tool: "bash", ok: true, text: "a" + cr + "b" });
+    const embeddedLf = frame("tool_started", { tool: "bash", argsSummary: "A" + lf + "B" });
+    const crlf = frame("assistant_text", { text: "line one" + cr + lf + "line two" });
+
+    for (const event of [title, bareCr, embeddedLf, crlf]) {
+      const panel = formatExpertPanel(event).join(lf);
+      expect(controlsIn(panel)).toEqual([]);
+      expect(controlsIn(formatExpertEvent(event))).toEqual([]);
+      expect(controlsIn(formatExpertEventBody(event, { maxLines: 4, maxChars: 200 }).join(lf))).toEqual([]);
+    }
+
+    // The hostile title is shown as hostile, not obeyed, and keeps its shape.
+    const shown = String(formatExpertPanel(title)[0]);
+    expect(shown).toContain(open);
+    expect(shown).toContain("#1");
+    // A bare CR is a visible placeholder, never a cursor move.
+    expect(formatExpertPanel(bareCr).join(lf)).toContain("a" + open + "b");
+    // A block header is one line: an embedded break must not split it.
+    const header = formatExpertPanel(embeddedLf);
+    expect(header).toHaveLength(1);
+    expect(String(header[0]).includes(lf)).toBe(false);
+    // Same rule when the break is inside the tool name rather than its arguments - the case a
+    // falsification run found untested, because only the argument path was exercised.
+    const namedBreak = frame("tool_output", { tool: "bash" + lf + "x", ok: true, text: "out" });
+    const namedHeader = formatExpertPanel(namedBreak);
+    expect(String(namedHeader[0]).includes(lf)).toBe(false);
+    expect(String(namedHeader[0])).toContain("bash x");
+    // A real CRLF answer still reads as two lines and leaves no placeholder behind.
+    expect(formatExpertPanel(crlf).join(lf)).toBe("line one" + lf + "line two");
+  });
+
   it("strips the C1 range too, not just the 7-bit escape", () => {
     // Excluding U+001b was not enough on its own: Windows Terminal also interprets the 8-bit C1
     // controls, so a recorded line carrying U+009b (CSI) could still drive the observer terminal.

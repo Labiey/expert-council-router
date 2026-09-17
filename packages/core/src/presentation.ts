@@ -248,12 +248,17 @@ const ELLIPSIS = "…";
  * point: excluding U+001b alone was never enough, because Windows Terminal also interprets the
  * 8-bit C1 controls, so a recorded line carrying U+009b could drive the observer terminal through
  * a field nobody thought of as free text - a tool's own `command` argument, summarised verbatim.
- * Tab and newline survive (they are layout, not escape); everything else becomes a visible open
- * box, so nothing is silently eaten (#21's rule that a removal has to be visible).
+ * Tab and line feed survive (they are layout, not escape); everything else becomes a visible open
+ * box, so nothing is silently eaten (#21's rule that a removal has to be visible). A lone carriage
+ * return is deliberately not layout: it can drive the cursor back to column 0 and overwrite a
+ * rendered line, so line endings are normalised first and any remaining CR is neutralised.
  */
 const CONTROL_RUNS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00a0]+/g;
 function stripControlChars(text: string): string {
-  return text.replace(CONTROL_RUNS, "\u2423");
+  // A CRLF pair is one break and stays one break. A carriage return with no line feed after it is
+  // not layout at all - it drives the cursor back to column 0 and lets a later write overwrite a
+  // rendered line - so it becomes visible rather than being turned into a break of its own.
+  return text.replace(/\r\n/g, "\n").replace(/\r/g, "\u2423").replace(CONTROL_RUNS, "\u2423");
 }
 
 export function formatExpertEventBody(
@@ -368,13 +373,13 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
   if (kind === "tool_output") {
     // A tool name arrives from the model's own tool call rather than a registry, so it is input
     // like any other field - and unlike the single-line renderer, the panel has no outer wrapper.
-    const tool = stripControlChars(typeof event.tool === "string" && event.tool ? event.tool : "tool");
+    const tool = collapseLine(typeof event.tool === "string" && event.tool ? event.tool : "tool");
     const streaming = event.streaming === true;
     const args =
       typeof event.argsText === "string" && event.argsText.trim()
         ? collapseLine(event.argsText)
         : typeof event.argsSummary === "string" && event.argsSummary.trim()
-          ? stripControlChars(event.argsSummary)
+          ? collapseLine(event.argsSummary)
           : "";
     const subject = args
       ? tool === "bash" || tool === "shell"
@@ -407,8 +412,10 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
   if (kind === "tool_started" || kind === "tool_finished") {
     // A tool name arrives from the model's own tool call rather than a registry, so it is input
     // like any other field - and unlike the single-line renderer, the panel has no outer wrapper.
-    const tool = stripControlChars(typeof event.tool === "string" && event.tool ? event.tool : "tool");
-    const summary = typeof event.argsSummary === "string" && event.argsSummary ? ` ${stripControlChars(event.argsSummary)}` : "";
+    // collapseLine, not stripControlChars: a header is one line, so an embedded break has to be
+    // re-flowed rather than left to inject a second visual line into the block layout.
+    const tool = collapseLine(typeof event.tool === "string" && event.tool ? event.tool : "tool");
+    const summary = typeof event.argsSummary === "string" && event.argsSummary ? ` ${collapseLine(event.argsSummary)}` : "";
     const outcome = kind === "tool_finished" ? (event.ok === false ? " failed" : " ok") : "";
     const text = `${tool}${summary}${outcome}${attempt}`;
     return [options.color === true ? `${ANSI_DIM}${text}${ANSI_RESET}` : text];
@@ -419,8 +426,10 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
   }
 
   if (kind === "started") {
-    const role = typeof event.role === "string" ? event.role : "expert";
-    const model = typeof event.model === "string" ? event.model : "unknown";
+    // The first line an observer window shows, and both fields are foreign: the role is ours, but
+    // the model id arrives from a provider catalog. It was measured passing raw ESC and C1 through.
+    const role = collapseLine(typeof event.role === "string" ? event.role : "expert");
+    const model = collapseLine(typeof event.model === "string" ? event.model : "unknown");
     return [`\u2500\u2500 ${role} \u00b7 ${model}${attempt} \u2500\u2500`];
   }
 
