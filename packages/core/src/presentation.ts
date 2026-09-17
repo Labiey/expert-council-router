@@ -262,3 +262,134 @@ export function formatExpertEventBody(
   if (hidden > 0) shown.unshift(`[\u2191 ${hidden} earlier line${hidden === 1 ? "" : "s"} not shown]`);
   return shown;
 }
+
+// ---------------------------------------------------------------------------
+// Panel rendering - the observer window's layout
+// ---------------------------------------------------------------------------
+
+/**
+ * The layout an operator actually reads: narration as prose with no per-line attribution, and
+ * each tool call as a shaded block whose header names the tool and shows what it was asked to
+ * run. The stream file is unaffected - this is a view over it, and `--style plain` keeps the
+ * byte-for-byte single-line form for pipes, redirection, and any consumer reading a stream that
+ * interleaves several experts, where attribution has to sit on every line.
+ */
+export interface ExpertPanelOptions {
+  /** Console width when known. Used only to pad a coloured block to the full width. */
+  columns?: number;
+  /** Emit ANSI backgrounds and weights. Off for pipes, `NO_COLOR`, and `TERM=dumb`. */
+  color?: boolean;
+  /** Tail cap for a block body, in lines. */
+  maxLines?: number;
+}
+
+const ANSI_BACKGROUND = "\u001b[48;5;236m";
+const ANSI_BOLD = "\u001b[1m";
+const ANSI_DIM = "\u001b[2m";
+const ANSI_RESET = "\u001b[0m";
+
+const WIDE_RANGES: Array<[number, number]> = [
+  [0x1100, 0x115f], [0x2e80, 0xa4cf], [0xac00, 0xd7a3], [0xf900, 0xfaff],
+  [0xfe30, 0xfe6f], [0xff00, 0xff60], [0xffe0, 0xffe6], [0x1f300, 0x1f64f],
+];
+
+/**
+ * Terminal columns a string occupies. East Asian text is two columns per character, and without
+ * this the right edge of a shaded block lands half a cell off on exactly the lines where it is
+ * most visible. Control sequences are never counted, because they occupy no cells.
+ */
+export function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    if (code === 0x1b) break;                       // our own colour prefix ends the visible text
+    width += WIDE_RANGES.some(([low, high]) => code >= low && code <= high) ? 2 : 1;
+  }
+  return width;
+}
+
+function collapseLine(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f\u0085\u00a0]/g, "\u2423").replace(/\r?\n/g, " ");
+}
+
+/** A shaded block line: background for the whole terminal width, or plain text when uncoloured. */
+function blockLine(text: string, options: ExpertPanelOptions, bold = false): string {
+  if (options.color !== true) return text;
+  const columns = typeof options.columns === "number" && options.columns > 0 ? options.columns : 0;
+  const pad = columns > displayWidth(text) ? " ".repeat(columns - displayWidth(text)) : "";
+  return `${bold ? ANSI_BOLD : ""}${ANSI_BACKGROUND}${text}${pad}${ANSI_RESET}`;
+}
+
+/**
+ * Render one event as the lines it should occupy in an observer window. Returns an empty array
+ * for anything with nothing to say, so a whitespace-only fragment cannot print a blank block.
+ */
+export function formatExpertPanel(event: ExpertObservabilityEvent, options: ExpertPanelOptions = {}): string[] {
+  const kind = typeof event.kind === "string" ? event.kind : "";
+  const attempt = typeof event.attempt === "number" ? ` #${event.attempt}` : "";
+
+  if (kind === "assistant_text") {
+    const text = typeof event.text === "string" ? event.text : "";
+    if (!text.trim()) return [];
+    // Prose: no prefix, no clamp. The terminal wraps it, which is what keeps a sentence whole.
+    return text.replace(/\s+$/, "").split(/\r?\n/).map((line) => collapseLine(line));
+  }
+
+  if (kind === "tool_output") {
+    const tool = typeof event.tool === "string" && event.tool ? event.tool : "tool";
+    const streaming = event.streaming === true;
+    const args =
+      typeof event.argsText === "string" && event.argsText.trim()
+        ? collapseLine(event.argsText)
+        : typeof event.argsSummary === "string" && event.argsSummary.trim()
+          ? event.argsSummary
+          : "";
+    const subject = args
+      ? tool === "bash" || tool === "shell"
+        ? `$ ${args}`
+        : `${tool} ${args}`
+      : tool;
+    const header = `${subject}${attempt}${
+      streaming
+        ? " - running"
+        : typeof event.line === "number"
+          ? ` - full record on line ${event.line}`
+          : event.ok === false
+            ? " - failed"
+            : ""
+    }`;
+    const lines = [blockLine(header, options, true)];
+    const text = typeof event.text === "string" ? event.text : "";
+    if (text.trim()) {
+      const all = text.replace(/\s+$/, "").split(/\r?\n/).map((line) => collapseLine(line));
+      const cap = typeof options.maxLines === "number" && options.maxLines > 0 ? options.maxLines : 0;
+      const shown = cap > 0 && all.length > cap ? all.slice(all.length - cap) : all;
+      if (shown.length < all.length) {
+        lines.push(blockLine(`[\u2191 ${all.length - shown.length} earlier lines not shown]`, options));
+      }
+      for (const line of shown) lines.push(blockLine(`  ${line}`, options));
+    }
+    return lines;
+  }
+
+  if (kind === "tool_started" || kind === "tool_finished") {
+    const tool = typeof event.tool === "string" && event.tool ? event.tool : "tool";
+    const summary = typeof event.argsSummary === "string" && event.argsSummary ? ` ${event.argsSummary}` : "";
+    const outcome = kind === "tool_finished" ? (event.ok === false ? " failed" : " ok") : "";
+    const text = `${tool}${summary}${outcome}${attempt}`;
+    return [options.color === true ? `${ANSI_DIM}${text}${ANSI_RESET}` : text];
+  }
+
+  if (kind === "attention") {
+    return [`! ${collapseLine(typeof event.text === "string" && event.text ? event.text : "expert attention")}${attempt}`];
+  }
+
+  if (kind === "started") {
+    const role = typeof event.role === "string" ? event.role : "expert";
+    const model = typeof event.model === "string" ? event.model : "unknown";
+    return [`\u2500\u2500 ${role} \u00b7 ${model}${attempt} \u2500\u2500`];
+  }
+
+  const body = formatExpertEvent(event);
+  return [options.color === true ? `${ANSI_DIM}${body}${ANSI_RESET}` : body];
+}

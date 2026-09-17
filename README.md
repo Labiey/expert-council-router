@@ -423,14 +423,15 @@ dials, so you pick the risk rather than inheriting it from a checkbox:
 - **Never recorded, at any dial**: `thinking` / `reasoning` parts. Only `type: "text"` content
   can enter the stream, which is a project rule and not a default that can drift - a dedicated
   test fails if a thinking part ever reaches the file.
-- **What the window shows** is smaller than what is stored. A tool block streams at most 3
-  lines at a time, and its final record shows the last `contentWindowLines` lines (default 10),
-  each clamped to `contentWindowChars` (default 120). Narration is coalesced the same way: a
-  live model emits fragments too small to be worth a record, so one is written when a fragment
-  completes a line or reaches 240 bytes, and anything still held is flushed when the message
-  closes - measured on a real run, that turns 129 records for 2.2 KB of text into a handful
-  without losing a character. Hidden lines and omitted bytes are
-  announced rather than silently dropped, and the header names the **line number** in the stream
+- **What the window shows** is smaller than what is stored. A tool block streams at most 3 lines
+  at a time, and its final record shows the last `contentWindowLines` lines (default 10) of the
+  payload. Narration is coalesced before it is ever written, because a live model sends fragments
+  far too small to be worth a record: one is written when a fragment ends a line or a sentence and
+  at least ~80 bytes have accumulated, an unbroken run is released at a 600-byte ceiling cut at the
+  last whitespace rather than inside a word, and anything still held is flushed when the message
+  closes. Measured on real runs: 129 records for 2.2 KB before coalescing, and 28 records for
+  4.2 KB (150 characters each) after it, without losing a character. Hidden lines and omitted bytes
+  are announced rather than silently dropped, and the header names the **line number** in the stream
   file that holds the record, so the whole thing is one jump away:
 
 ```bash
@@ -446,6 +447,32 @@ sed -n '137p' ~/AppData/Local/ExpertCouncil/observability/exec_abc123.jsonl | jq
   cannot pull the file your window is following.
 - Files are still pruned after 7 days, and recording adds nothing to what the Main Agent
   receives: expert results stay the same compact structured summary.
+
+### The observer window's layout
+
+An observer window reads the way a coding agent's own transcript does: narration as plain prose
+with no per-line attribution, and each tool call as a shaded block whose header names the tool and
+what it was asked to run.
+
+```bash
+expert-council watch --exec exec_abc123                        # panel in a terminal, plain when piped
+expert-council watch --exec exec_abc123 --style plain          # one line per event, as before
+expert-council watch --exec exec_abc123 --style panel --columns 100 --no-color
+```
+
+- **`--style auto` (the default) picks panel for a terminal and plain for anything else**, so
+  redirecting a stream to a file keeps producing exactly the bytes it produced before the panel
+  existed. `--json` neither renders nor colours.
+- **A block needs a dial that records tool output.** At `none` and `assistant` there is nothing to
+  put inside one, so each call stays a single dim line naming the tool - which is what those dials
+  are for: activity without content. From `assistant+tool-tail` up, the block carries the result.
+- **The `$ <command>` header needs arguments to be visible**: `redactToolArgs: false` supplies a
+  bounded one-line summary, and only `transcript+args` stores the full text. With redaction on, the
+  header says `bash` and nothing more - a privacy choice, not a rendering limitation.
+- **Colour belongs to the view, not the data.** ANSI is emitted only for a terminal, and never when
+  `NO_COLOR` is set or `TERM=dumb`; `--color` / `--no-color` override that. The stream file stays
+  plain JSON either way. Padding a block to the right edge measures East Asian text as two cells per
+  character, so a Chinese narration line does not leave the shading half a cell short.
 
 ### Struggle detection (guardrails)
 

@@ -43,7 +43,7 @@ import {
 } from "./pi-sdk.js";
 import { WorkspaceBoundary, runBoundedCommand, scrubProvisioningEnv, tailCommandOutput, type BoundedCommandRunner, type PreparedWorkspace, type WorkspaceProvisioningStatus } from "./workspace.js";
 import { ObserverWindowLauncher, type ObserverWindowLauncherOptions } from "./window-launcher.js";
-import { ContentRecorder, recordsToolArgs, resolveContentLevel } from "./content-stream.js";
+import { ContentRecorder, recordsToolArgs, recordsToolOutput, resolveContentLevel } from "./content-stream.js";
 
 export interface PiExpertRuntimeOptions {
   /**
@@ -1449,22 +1449,30 @@ export class PiExpertRuntime implements ExpertRuntime {
           // counters and guardrails above stay on their own path, so turning content
           // recording on cannot change how a run is judged.
           const content = obsState.content;
-          const argsText =
-            content && recordsToolArgs(content.level) ? safeJson(e.args) : undefined;
+          // Arguments reach the closing record through here: the bounded summary only when
+          // redaction is off, the full text only at the top dial.
+          const argsSummary = content ? this.toolArgumentSummary(e.args) : undefined;
+          const argsFull = content && recordsToolArgs(content.level) ? safeJson(e.args) : undefined;
           if (e?.type === "tool_execution_start" && e.toolName) {
-            const summary = this.toolArgumentSummary(e.args);
-            this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
-              tool: e.toolName,
-              ...(summary ? { argsSummary: summary } : {}),
-            });
-            // Pi forwards arguments on the start event only, so the top dial catches them here
-            // and writes them with the closing record the operator actually reads.
-            content?.noteArgs(e.toolCallId ?? e.toolName, e.toolName, argsText ?? "");
+            content?.noteArgs(e.toolCallId ?? e.toolName, { summary: argsSummary, full: argsFull });
+            // Once a dial records tool output, the output itself carries the tool name, the
+            // arguments and the result, so emitting a bare name line as well would only
+            // duplicate what the next block already says. At the lower dials there is no block,
+            // so the name line stays - hiding activity entirely would be the worse trade.
+            if (!content || !recordsToolOutput(content.level)) {
+              const summary = this.toolArgumentSummary(e.args);
+              this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
+                tool: e.toolName,
+                ...(summary ? { argsSummary: summary } : {}),
+              });
+            }
           } else if (e?.type === "tool_execution_end" && e.toolName) {
-            this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
-              tool: e.toolName,
-              ok: e.isError !== true,
-            });
+            if (!content || !recordsToolOutput(content.level)) {
+              this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
+                tool: e.toolName,
+                ok: e.isError !== true,
+              });
+            }
             content?.onToolResult(
               e.toolCallId ?? e.toolName,
               e.toolName,

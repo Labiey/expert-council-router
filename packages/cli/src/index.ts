@@ -90,7 +90,7 @@ function integerOption(args: string[], name: string, minimum: number, maximum: n
   return parsed;
 }
 
-const BOOLEAN_FLAGS = ["--json", "--help", "--follow"];
+const BOOLEAN_FLAGS = ["--json", "--help", "--follow", "--color", "--no-color"];
 
 function positional(args: string[]): string[] {
   const result: string[] = [];
@@ -107,7 +107,7 @@ function positional(args: string[]): string[] {
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
   expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]
-  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N] [--quiet-ms N] [--max-lines N] [--max-chars N]
+  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N] [--quiet-ms N] [--max-lines N] [--max-chars N] [--style panel|plain|auto] [--columns N] [--color|--no-color]
 
 watch (run it from a second terminal) tails the live expert event stream that the
 runtime writes to <dataDir>/observability/<execution-id>.jsonl while
@@ -123,7 +123,17 @@ security.observability.expertWindow is "interactive":
   --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000)
   --max-lines N     body lines shown per recorded content block, 1-50 (default 10; 3 while
                     a tool block is still streaming)
-  --max-chars N     clamp per shown body line, 20-400 (default 120).
+  --style S         panel: narration as prose and each tool call as a block naming the tool and
+                    what it was asked to run (the observer-window layout). plain: one line per
+                    event, as before. auto (default): panel on a terminal, plain when piped, so
+                    redirecting a stream keeps producing the same bytes it always did.
+  --columns N       width used to pad a coloured block, 20-400 (default: the terminal's own)
+  --color           force ANSI block shading on. --no-color forces off. Default: on only for a
+                    terminal, and off when NO_COLOR is set or TERM=dumb. Colour never reaches
+                    --json or the stream file; it is a property of this view only.
+  --max-chars N     clamp per shown body line, 20-400 (default 120). Plain mode only: panel mode
+                    lets the terminal wrap text, which is what keeps a sentence whole instead of
+                    ending it at an arbitrary column.
                     Applies only once a terminal event has been seen and the final marker is
                     missing or still being flushed; a stream that never reached a terminal
                     event is bounded by --timeout-ms, because a fresh expert can be silent
@@ -193,17 +203,26 @@ export async function resolveExpertEventFormatter(): Promise<(event: ExpertEvent
 export async function resolveExpertEventBody(): Promise<{
   isContent: (event: ExpertEventFrame) => boolean;
   body: (event: ExpertEventFrame, options: { maxLines: number; maxChars: number }) => string[];
+  panel: (
+    event: ExpertEventFrame,
+    options: { columns?: number; color?: boolean; maxLines?: number },
+  ) => string[];
 }> {
   const core: unknown = await import("@expert-council/core");
   const shaped = core as {
     isContentEvent?: unknown;
     formatExpertEventBody?: unknown;
+    formatExpertPanel?: unknown;
   };
-  if (typeof shaped.isContentEvent !== "function" || typeof shaped.formatExpertEventBody !== "function") {
+  if (
+    typeof shaped.isContentEvent !== "function" ||
+    typeof shaped.formatExpertEventBody !== "function" ||
+    typeof shaped.formatExpertPanel !== "function"
+  ) {
     throw new Error(
       "watch cannot render recorded content: @expert-council/core in this build does not export "
-        + "isContentEvent/formatExpertEventBody. Rebuild the workspace so the installed core provides "
-        + "them, or run watch with --json to read the raw stream.",
+        + "isContentEvent/formatExpertEventBody/formatExpertPanel. Rebuild the workspace so the installed "
+        + "core provides them, or run watch with --json to read the raw stream.",
     );
   }
   return {
@@ -211,6 +230,10 @@ export async function resolveExpertEventBody(): Promise<{
     body: shaped.formatExpertEventBody as (
       event: ExpertEventFrame,
       options: { maxLines: number; maxChars: number },
+    ) => string[],
+    panel: shaped.formatExpertPanel as (
+      event: ExpertEventFrame,
+      options: { columns?: number; color?: boolean; maxLines?: number },
     ) => string[],
   };
 }
@@ -358,6 +381,26 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   // line to read for the rest.
   const maxLines = integerOption(args, "--max-lines", 1, 50) ?? 10;
   const maxChars = integerOption(args, "--max-chars", 20, 400) ?? 120;
+  // Layout. `panel` is the observer-window look: narration as prose with no per-line
+  // attribution, each tool call as a block naming the tool and what it was asked to run. `auto`
+  // picks it for a terminal and the single-line form for anything else, so redirecting a stream
+  // to a file keeps producing exactly the bytes it produced before this existed.
+  const styleOption = option(args, "--style");
+  if (styleOption !== undefined && !["auto", "panel", "plain"].includes(styleOption)) {
+    throw new Error(`watch --style must be auto, panel or plain (got ${styleOption})`);
+  }
+  const isTty = process.stdout.isTTY === true;
+  const style = styleOption ?? (isTty ? "panel" : "plain");
+  const columns =
+    integerOption(args, "--columns", 20, 400)
+    ?? (isTty && typeof process.stdout.columns === "number" ? process.stdout.columns : 0);
+  const color =
+    style === "panel"
+    && (args.includes("--color")
+      ? true
+      : args.includes("--no-color")
+        ? false
+        : isTty && process.env.NO_COLOR === undefined && process.env.TERM !== "dumb");
   const file = path.join(dir, `${executionId}${WATCH_STREAM_SUFFIX}`);
   if (!(await streamExists(file))) {
     const listed = describeStreams(dir, await listStreamExecutions(dir));
@@ -378,6 +421,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   let vanished = false;
   let malformed = 0;
   let printed = 0;
+  let previousKind: string | undefined;
   const deadline = Date.now() + (follow ? timeoutMs : 0);
   // Bounded by construction: one pass without --follow, and with --follow at most
   // ceil(timeout/interval) polls plus the deadline check on each pass.
@@ -414,17 +458,38 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
           io.stdout.write(`${line}\n`);
           printed += 1;
         } else if (event !== undefined) {
-          io.stdout.write(`${format!(event)}\n`);
-          if (content?.isContent(event)) {
-            // Three live lines while a tool block streams, the configured tail once it is
-            // final: a growing `npm test` should move without scrolling the operator out of
-            // their own view. The stream still holds the whole payload for reading afterwards.
-            const bodyLines = content.body(event, {
+          const kind = String(event.kind ?? "");
+          if (style === "panel" && content !== undefined) {
+            // A block and the prose around it are different things, so they get a blank line
+            // between them; consecutive records of one kind do not, or a long answer turns
+            // into a picket fence.
+            if (
+              (previousKind === "tool_output" && kind === "assistant_text")
+              || (previousKind === "assistant_text" && kind === "tool_output")
+            ) {
+              io.stdout.write("\n");
+            }
+            for (const panelLine of content.panel(event, {
+              columns,
+              color,
               maxLines: event.streaming === true ? Math.min(3, maxLines) : maxLines,
-              maxChars,
-            });
-            for (const bodyLine of bodyLines) io.stdout.write(`      ${bodyLine}\n`);
+            })) {
+              io.stdout.write(`${panelLine}\n`);
+            }
+          } else {
+            io.stdout.write(`${format!(event)}\n`);
+            if (content?.isContent(event)) {
+              // Three live lines while a tool block streams, the configured tail once it is
+              // final: a growing `npm test` should move without scrolling the operator out of
+              // their own view. The stream still holds the whole payload for reading afterwards.
+              const bodyLines = content.body(event, {
+                maxLines: event.streaming === true ? Math.min(3, maxLines) : maxLines,
+                maxChars,
+              });
+              for (const bodyLine of bodyLines) io.stdout.write(`      ${bodyLine}\n`);
+            }
           }
+          previousKind = kind;
           printed += 1;
         } else {
           malformed += 1;

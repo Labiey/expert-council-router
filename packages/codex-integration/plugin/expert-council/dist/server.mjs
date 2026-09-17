@@ -319421,6 +319421,23 @@ function headTailSeam(text, maxBytes) {
 function headTailBytes(head, tail) {
   return Buffer.byteLength(head) + Buffer.byteLength(tail);
 }
+var NARRATION_BOUNDARY = /[\n.!?\u3002\uff01\uff1f]["')\]]?$/;
+function flushPoint(held, final, minBytes = 80, maxBytes = 600) {
+  if (final)
+    return held.length;
+  const bytes = Buffer.byteLength(held);
+  if (bytes >= minBytes && NARRATION_BOUNDARY.test(held))
+    return held.length;
+  if (bytes < maxBytes)
+    return 0;
+  const ceiling = Math.min(held.length, maxBytes);
+  for (let index3 = ceiling; index3 > 0; index3 -= 1) {
+    const char = held[index3 - 1];
+    if (char === " " || char === "	" || char === "\n")
+      return index3;
+  }
+  return ceiling;
+}
 function tailOnly(text, maxBytes) {
   const bytes = Buffer.byteLength(text);
   if (bytes <= maxBytes)
@@ -319457,29 +319474,36 @@ var ContentRecorder = class {
     return { bytes: this.bytesConsidered, records: this.recordsWritten };
   }
   /**
-   * A cumulative assistant message. One slot is enough: if the new text starts with what was
-   * already sent, the remainder is appended; anything else is a new block and is written whole.
+   * A cumulative assistant message. One slot is enough: text that extends what was already
+   * sent appends only the new characters; anything else is a new block and is written whole.
    * Keying on message-object identity was tried first and re-sent the entire paragraph at
    * `message_end`, because the runtime is not promised the same object twice.
    *
-   * A live model narrates in fragments too small to be worth a record - measured on a real
-   * run at 129 records for 2.2 KB, which would exhaust the event ceiling inside a long answer
-   * - so a fragment is held until it completes a line or reaches 240 bytes, exactly like a
-   * streamed tool block. `final` flushes whatever is held, because dropping the last sentence
-   * of a message would be the worst possible place to lose text.
+   * When to write is a readability decision, measured rather than imagined. The first rule
+   * ("a newline or 240 bytes is worth a record") produced 28 records for 4.2 KB on a real
+   * run - two of them nothing but `],`, and three splitting the word "Defect" across records,
+   * because a byte threshold cuts wherever it lands. So: hold a short fragment, flush at a
+   * line or sentence boundary once there is something to say, and when a fragment must be
+   * cut, cut it at the last whitespace instead of mid-word. `final` flushes the remainder,
+   * because losing the last sentence is the worst possible place to lose text.
    */
   onAssistantText(fullText, final = false) {
     if (!recordsAssistant(this.options.level) || !fullText)
       return;
     const sent = this.assistantSent;
-    const fresh = fullText.startsWith(sent) ? fullText.slice(sent.length) : fullText;
-    if (!fresh)
+    const continuation = fullText.startsWith(sent);
+    const held = continuation ? fullText.slice(sent.length) : fullText;
+    if (!held)
       return;
-    if (!final && !fresh.includes("\n") && Buffer.byteLength(fresh) < 240)
+    const cut = flushPoint(held, final, this.options.minFlushBytes, this.options.maxFlushBytes);
+    if (cut <= 0)
       return;
-    this.assistantSent = fullText;
-    this.bytesConsidered += Buffer.byteLength(fresh);
-    this.push("assistant_text", { text: headTailSeam(fresh, this.options.eventBytes).text });
+    const emitText = held.slice(0, cut);
+    if (!final && !emitText.trim())
+      return;
+    this.assistantSent = continuation ? sent + emitText : emitText;
+    this.bytesConsidered += Buffer.byteLength(emitText);
+    this.push("assistant_text", { text: headTailSeam(emitText, this.options.eventBytes).text });
   }
   /**
    * A growing tool result. Recorded live only when it has actually grown a line (or 240
@@ -319502,12 +319526,18 @@ var ContentRecorder = class {
   }
   /**
    * Pi forwards arguments on `tool_execution_start` only - the closing event carries just
-   * `result`/`isError` - so the top dial has to remember them until the record is written.
+   * `result`/`isError` - so the recorder holds whatever is allowed until the record is written.
+   * The bounded summary is governed by `redactToolArgs` (the caller hands it over only when
+   * redaction is off); the full text only ever arrives from the top dial. Carrying them on the
+   * same record as the result is deliberate: a follower that had to pair two events would need
+   * state across lines and could not survive a capped or truncated stream.
    */
-  noteArgs(callId, tool, argsText) {
-    if (!recordsToolArgs(this.options.level))
+  noteArgs(callId, args) {
+    if (!recordsToolOutput(this.options.level))
       return;
-    this.pendingArgs.set(callId, argsText);
+    if (args.summary === void 0 && args.full === void 0)
+      return;
+    this.pendingArgs.set(callId, args);
   }
   /**
    * A finished tool call. `transcript` and above store the whole payload behind a head+tail
@@ -319522,10 +319552,14 @@ var ContentRecorder = class {
     if (seam.omittedBytes > 0)
       fields.omittedBytes = seam.omittedBytes;
     fields.text = resultText === null ? "[no result returned]" : seam.text;
-    const argsText = this.pendingArgs.get(callId);
-    if (argsText !== void 0) {
+    const args = this.pendingArgs.get(callId);
+    if (args) {
       this.pendingArgs.delete(callId);
-      fields.argsText = headTailSeam(argsText, this.options.eventBytes).text;
+      if (recordsToolArgs(this.options.level) && args.full !== void 0) {
+        fields.argsText = headTailSeam(args.full, this.options.eventBytes).text;
+      } else if (args.summary !== void 0) {
+        fields.argsSummary = args.summary;
+      }
     }
     this.bytesConsidered += Buffer.byteLength(seam.text);
     this.toolStreams.set(callId, { chars: Number.MAX_SAFE_INTEGER, lines: Number.MAX_SAFE_INTEGER });
@@ -320597,19 +320631,24 @@ Apply this decision and continue the assigned task now. If the decision changed 
         const obsState = this.observabilityState(request.executionId);
         if (obsState) {
           const content = obsState.content;
-          const argsText = content && recordsToolArgs(content.level) ? safeJson(e2.args) : void 0;
+          const argsSummary = content ? this.toolArgumentSummary(e2.args) : void 0;
+          const argsFull = content && recordsToolArgs(content.level) ? safeJson(e2.args) : void 0;
           if (e2?.type === "tool_execution_start" && e2.toolName) {
-            const summary = this.toolArgumentSummary(e2.args);
-            this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
-              tool: e2.toolName,
-              ...summary ? { argsSummary: summary } : {}
-            });
-            content?.noteArgs(e2.toolCallId ?? e2.toolName, e2.toolName, argsText ?? "");
+            content?.noteArgs(e2.toolCallId ?? e2.toolName, { summary: argsSummary, full: argsFull });
+            if (!content || !recordsToolOutput(content.level)) {
+              const summary = this.toolArgumentSummary(e2.args);
+              this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
+                tool: e2.toolName,
+                ...summary ? { argsSummary: summary } : {}
+              });
+            }
           } else if (e2?.type === "tool_execution_end" && e2.toolName) {
-            this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
-              tool: e2.toolName,
-              ok: e2.isError !== true
-            });
+            if (!content || !recordsToolOutput(content.level)) {
+              this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
+                tool: e2.toolName,
+                ok: e2.isError !== true
+              });
+            }
             content?.onToolResult(e2.toolCallId ?? e2.toolName, e2.toolName, e2.isError !== true, toolResultText(e2.result));
           } else if (e2?.type === "tool_execution_update" && e2.toolName) {
             content?.onToolPartial(e2.toolCallId ?? e2.toolName, e2.toolName, toolResultText(e2.partialResult) ?? "");

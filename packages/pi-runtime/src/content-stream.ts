@@ -17,6 +17,10 @@ export interface ContentRecorderOptions {
   level: ContentStreamLevel;
   /** Cap for one stored payload; beyond it a head+tail seam is written instead. */
   eventBytes: number;
+  /** Narration is held until it reaches this many bytes, then flushed at a boundary. */
+  minFlushBytes?: number;
+  /** Ceiling for held narration; an oversized cut backs off to the last whitespace. */
+  maxFlushBytes?: number;
   /** One record per line of the stream file, so the emitter can supply the line pointer. */
   emit: (kind: "assistant_text" | "tool_output", fields: Record<string, unknown>) => void;
   /** Test seam. */
@@ -98,6 +102,29 @@ function headTailBytes(head: string, tail: string): number {
   return Buffer.byteLength(head) + Buffer.byteLength(tail);
 }
 
+/**
+ * How much held narration to write now; 0 means keep holding. A boundary is a line end or a
+ * sentence end. The ceiling exists so an unbroken wall of text still arrives eventually, and it
+ * backs off to the last whitespace rather than cutting a word in half - that mid-word cut is
+ * what the operator saw as `"Def` / `ect numbers` in the window.
+ */
+const NARRATION_BOUNDARY = /[\n.!?\u3002\uff01\uff1f]["')\]]?$/;
+
+export function flushPoint(held: string, final: boolean, minBytes = 80, maxBytes = 600): number {
+  if (final) return held.length;
+  const bytes = Buffer.byteLength(held);
+  if (bytes >= minBytes && NARRATION_BOUNDARY.test(held)) return held.length;
+  if (bytes < maxBytes) return 0;
+  const ceiling = Math.min(held.length, maxBytes);
+  for (let index = ceiling; index > 0; index -= 1) {
+    const char = held[index - 1];
+    // Include the whitespace in what is emitted, so the held remainder starts on a word.
+    if (char === " " || char === "\t" || char === "\n") return index;
+  }
+  // One enormous unbroken token: nothing better exists, and stalling forever is worse.
+  return ceiling;
+}
+
 /** Keep only the tail of a payload: the `assistant+tool-tail` storage policy. The cut is
  * byte-exact and walks back from the end, so a multi-byte character is never split. */
 export function tailOnly(text: string, maxBytes: number): { text: string; omittedBytes: number } {
@@ -125,7 +152,7 @@ export class ContentRecorder {
   /** What has already been written for the current narration stream. */
   private assistantSent = "";
   /** Arguments seen at `tool_execution_start`, keyed for the closing record. */
-  private readonly pendingArgs = new Map<string, string>();
+  private readonly pendingArgs = new Map<string, { summary?: string; full?: string }>();
   private readonly toolStreams = new Map<string, StreamState>();
   private bytesConsidered = 0;
   private recordsWritten = 0;
@@ -142,26 +169,32 @@ export class ContentRecorder {
   }
 
   /**
-   * A cumulative assistant message. One slot is enough: if the new text starts with what was
-   * already sent, the remainder is appended; anything else is a new block and is written whole.
+   * A cumulative assistant message. One slot is enough: text that extends what was already
+   * sent appends only the new characters; anything else is a new block and is written whole.
    * Keying on message-object identity was tried first and re-sent the entire paragraph at
    * `message_end`, because the runtime is not promised the same object twice.
    *
-   * A live model narrates in fragments too small to be worth a record - measured on a real
-   * run at 129 records for 2.2 KB, which would exhaust the event ceiling inside a long answer
-   * - so a fragment is held until it completes a line or reaches 240 bytes, exactly like a
-   * streamed tool block. `final` flushes whatever is held, because dropping the last sentence
-   * of a message would be the worst possible place to lose text.
+   * When to write is a readability decision, measured rather than imagined. The first rule
+   * ("a newline or 240 bytes is worth a record") produced 28 records for 4.2 KB on a real
+   * run - two of them nothing but `],`, and three splitting the word "Defect" across records,
+   * because a byte threshold cuts wherever it lands. So: hold a short fragment, flush at a
+   * line or sentence boundary once there is something to say, and when a fragment must be
+   * cut, cut it at the last whitespace instead of mid-word. `final` flushes the remainder,
+   * because losing the last sentence is the worst possible place to lose text.
    */
   onAssistantText(fullText: string, final = false): void {
     if (!recordsAssistant(this.options.level) || !fullText) return;
     const sent = this.assistantSent;
-    const fresh = fullText.startsWith(sent) ? fullText.slice(sent.length) : fullText;
-    if (!fresh) return;
-    if (!final && !fresh.includes("\n") && Buffer.byteLength(fresh) < 240) return;
-    this.assistantSent = fullText;
-    this.bytesConsidered += Buffer.byteLength(fresh);
-    this.push("assistant_text", { text: headTailSeam(fresh, this.options.eventBytes).text });
+    const continuation = fullText.startsWith(sent);
+    const held = continuation ? fullText.slice(sent.length) : fullText;
+    if (!held) return;
+    const cut = flushPoint(held, final, this.options.minFlushBytes, this.options.maxFlushBytes);
+    if (cut <= 0) return;
+    const emitText = held.slice(0, cut);
+    if (!final && !emitText.trim()) return;
+    this.assistantSent = continuation ? sent + emitText : emitText;
+    this.bytesConsidered += Buffer.byteLength(emitText);
+    this.push("assistant_text", { text: headTailSeam(emitText, this.options.eventBytes).text });
   }
 
   /**
@@ -183,11 +216,16 @@ export class ContentRecorder {
 
   /**
    * Pi forwards arguments on `tool_execution_start` only - the closing event carries just
-   * `result`/`isError` - so the top dial has to remember them until the record is written.
+   * `result`/`isError` - so the recorder holds whatever is allowed until the record is written.
+   * The bounded summary is governed by `redactToolArgs` (the caller hands it over only when
+   * redaction is off); the full text only ever arrives from the top dial. Carrying them on the
+   * same record as the result is deliberate: a follower that had to pair two events would need
+   * state across lines and could not survive a capped or truncated stream.
    */
-  noteArgs(callId: string, tool: string, argsText: string): void {
-    if (!recordsToolArgs(this.options.level)) return;
-    this.pendingArgs.set(callId, argsText);
+  noteArgs(callId: string, args: { summary?: string; full?: string }): void {
+    if (!recordsToolOutput(this.options.level)) return;
+    if (args.summary === undefined && args.full === undefined) return;
+    this.pendingArgs.set(callId, args);
   }
 
   /**
@@ -203,10 +241,14 @@ export class ContentRecorder {
     const fields: Record<string, unknown> = { tool, ok };
     if (seam.omittedBytes > 0) fields.omittedBytes = seam.omittedBytes;
     fields.text = resultText === null ? "[no result returned]" : seam.text;
-    const argsText = this.pendingArgs.get(callId);
-    if (argsText !== undefined) {
+    const args = this.pendingArgs.get(callId);
+    if (args) {
       this.pendingArgs.delete(callId);
-      fields.argsText = headTailSeam(argsText, this.options.eventBytes).text;
+      if (recordsToolArgs(this.options.level) && args.full !== undefined) {
+        fields.argsText = headTailSeam(args.full, this.options.eventBytes).text;
+      } else if (args.summary !== undefined) {
+        fields.argsSummary = args.summary;
+      }
     }
     this.bytesConsidered += Buffer.byteLength(seam.text);
     this.toolStreams.set(callId, { chars: Number.MAX_SAFE_INTEGER, lines: Number.MAX_SAFE_INTEGER });

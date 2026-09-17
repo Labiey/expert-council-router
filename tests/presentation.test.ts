@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   EXPERT_EVENT_KINDS,
+  displayWidth,
   formatExpertEvent,
+  formatExpertPanel,
   presentCouncilPlan,
   presentResourceInventory,
   type CouncilPlan,
@@ -202,5 +204,98 @@ describe("every event kind the stream can carry renders meaningfully", () => {
     const rendered = formatExpertEvent({ t: at, executionId: "exec_1", role: "scout", model: "p/m", kind, ...event });
     expect(rendered).toContain(expected);
     expect(rendered.includes(String.fromCharCode(10))).toBe(false);
+  });
+});
+
+describe("panel layout for an observer window", () => {
+  const frame = (
+    kind: ExpertObservabilityEvent["kind"],
+    extra: Partial<ExpertObservabilityEvent> = {},
+  ): ExpertObservabilityEvent => ({
+    t: "2026-09-17T00:00:00.000Z",
+    executionId: "exec_panel",
+    role: "scout",
+    model: "vendor/m",
+    attempt: 1,
+    kind,
+    ...extra,
+  });
+  const escape = String.fromCharCode(27);
+
+  it("shows narration as prose, with no attribution and no clamp", () => {
+    // The window follows one delegation, so `scout vendor/m says:` on every line was noise, and
+    // the 120-character clamp cut sentences at an arbitrary column while the terminal wrapped
+    // them again. Pi's own layout is the reference: the text is the point.
+    const long = "a".repeat(400);
+    expect(formatExpertPanel(frame("assistant_text", { text: `Line one.\n${long}\n` }))).toEqual([
+      "Line one.",
+      long,
+    ]);
+    // Text that carries nothing at all - whitespace, or an empty fragment - prints nothing.
+    expect(formatExpertPanel(frame("assistant_text", { text: "\n   \n  " }))).toEqual([]);
+  });
+
+  it("names the tool and what it was asked to run, and points at the full record", () => {
+    const bash = formatExpertPanel(frame("tool_output", {
+      tool: "bash",
+      argsSummary: "npm test",
+      text: "3 passed",
+      line: 7,
+    }));
+    expect(bash[0]).toBe("$ npm test #1 - full record on line 7");
+    expect(bash[1]).toBe("  3 passed");
+    // A write names the path the way Pi does, and a tool with nothing allowed to show stays bare.
+    expect(formatExpertPanel(frame("tool_output", { tool: "write", argsSummary: "src/a.ts", text: "ok" }))[0])
+      .toBe("write src/a.ts #1");
+    expect(formatExpertPanel(frame("tool_output", { tool: "grep", text: "hit" }))[0]).toBe("grep #1");
+    // The top dial stores full arguments; the first line becomes the subject.
+    expect(formatExpertPanel(frame("tool_output", { tool: "bash", argsText: "cd /tmp\n&& make", text: "ok" }))[0])
+      .toBe("$ cd /tmp && make #1");
+    expect(formatExpertPanel(frame("tool_output", { tool: "bash", text: "boom", ok: false }))[0])
+      .toBe("bash #1 - failed");
+    // A block still running says so instead of pretending to be finished.
+    expect(formatExpertPanel(frame("tool_output", { tool: "bash", text: "building", streaming: true }))[0])
+      .toBe("bash #1 - running");
+  });
+
+  it("caps a block body at the configured tail and says what it hid", () => {
+    const text = Array.from({ length: 12 }, (_, index) => `line ${index}`).join("\n");
+    const shown = formatExpertPanel(frame("tool_output", { tool: "bash", text }), { maxLines: 3 });
+    expect(shown[1]).toBe("[\u2191 9 earlier lines not shown]");
+    expect(shown.slice(2)).toEqual(["  line 9", "  line 10", "  line 11"]);
+  });
+
+  it("keeps colour out of the output unless it is asked for", () => {
+    const plain = formatExpertPanel(frame("tool_output", { tool: "bash", text: "ok" }));
+    expect(plain.join("\n")).not.toContain(escape);
+    const coloured = formatExpertPanel(frame("tool_output", { tool: "bash", text: "ok" }), {
+      color: true,
+      columns: 30,
+    });
+    expect(coloured[0]).toContain(escape);
+    // The background has to reach the right edge, which needs the padded width measured in
+    // terminal cells, not in characters.
+    const cjk = formatExpertPanel(frame("tool_output", { tool: "bash", text: "\u4e2d\u6587" }), {
+      color: true,
+      columns: 30,
+    });
+    const visible = cjk[0]!.replace(/\u001b\[[0-9;]*m/g, "");
+    expect(displayWidth(visible)).toBe(30);
+  });
+
+  it("measures display width in cells, not characters", () => {
+    expect(displayWidth("abcd")).toBe(4);
+    expect(displayWidth("\u4e2d\u6587")).toBe(4);
+    expect(displayWidth("\u4e2d\u6587ab")).toBe(6);
+    expect(displayWidth("")).toBe(0);
+  });
+
+  it("falls back to the single-line form for structure and terminal events", () => {
+    const completed = formatExpertPanel(frame("completed", { status: "success", durationMs: 76_000 }));
+    expect(completed).toEqual([formatExpertEvent(frame("completed", { status: "success", durationMs: 76_000 }))]);
+    expect(formatExpertPanel(frame("delegation_final"))[0]).toContain("delegation finished");
+    // Name-only tool lines survive, because at the lower dials they are the only tool visibility.
+    expect(formatExpertPanel(frame("tool_started", { tool: "read" }))[0]).toBe("read #1");
+    expect(formatExpertPanel(frame("tool_finished", { tool: "read", ok: true }))[0]).toBe("read ok #1");
   });
 });

@@ -558,6 +558,70 @@ ${line("failed", { status: "failed", failureType: "timeout" })}
       expect(err.join("")).toContain("rejected value");
     });
   });
+
+  it("keeps piped output byte-for-byte in the single-line form and offers the window layout on request", async () => {
+    const stream = [
+      line("assistant_text", { attempt: 1, text: "Reading the file now.\nIt has two exports." }),
+      line("tool_output", { attempt: 1, tool: "bash", argsSummary: "npm test", text: "3 passed", line: 5 }),
+      line("assistant_text", { attempt: 1, text: "Tests are green." }),
+      line("completed", { attempt: 1, status: "success", durationMs: 76_000 }),
+      line("delegation_final"),
+    ].join("\n") + "\n";
+    await withStream(stream, async (dir) => {
+      // Plain mode is what a pipe, a redirect and a file that interleaves experts get. The
+      // injected formatter proves the header still comes from the single-line renderer and the
+      // body is still indented under it - exactly the shape from before the panel existed.
+      const plain = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--style", "plain"],
+        plain.io,
+        undefined,
+        { formatEvent: (frame: { kind: string }) => `FMT ${frame.kind}` },
+      )).toBe(0);
+      expect(plain.out.join("")).toBe(
+        "FMT assistant_text\n      Reading the file now.\n      It has two exports.\n"
+        + "FMT tool_output\n      3 passed\nFMT assistant_text\n      Tests are green.\n"
+        + "FMT completed\nFMT delegation_final\n",
+      );
+
+      // Panel mode: prose carries no attribution, a tool call becomes a block naming what ran,
+      // and the two kinds are separated because they are different things.
+      const panel = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--style", "panel", "--no-color"],
+        panel.io,
+      )).toBe(0);
+      const lines = panel.out.join("").split("\n");
+      expect(lines[0]).toBe("Reading the file now.");
+      expect(lines[1]).toBe("It has two exports.");
+      expect(lines.join("")).not.toContain("says:");
+      expect(lines).toContain("$ npm test #1 - full record on line 5");
+      expect(lines).toContain("  3 passed");
+      expect(lines[lines.indexOf("$ npm test #1 - full record on line 5") + 2]).toBe("");
+      // The closing notice belongs to stderr, so stdout stays clean enough to redirect.
+      expect(panel.err.join("")).toContain("stream closed");
+
+      // Colour is opt-in per view, never per stream.
+      const coloured = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--style", "panel", "--color", "--columns", "40"],
+        coloured.io,
+      )).toBe(0);
+      expect(coloured.out.join("")).toContain(String.fromCharCode(27));
+      const raw = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--json", "--color"],
+        raw.io,
+      )).toBe(0);
+      expect(raw.out.join("")).not.toContain(String.fromCharCode(27));
+      expect(raw.out.join("").split("\n")[1]).toContain('"kind":"tool_output"');
+
+      // A layout name that does not exist is refused with the list of ones that do.
+      const bogus = capture();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--style", "fancy"], bogus.io)).toBe(1);
+      expect(bogus.err.join("")).toContain("auto, panel or plain");
+    });
+  });
 });
 
 describe("MCP semantic surface", () => {

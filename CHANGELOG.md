@@ -37,6 +37,22 @@ All notable changes to Expert Council are documented here. Versions follow seman
   alarm** - the TTL is honoured on the read path through `activeModelAvailability` ->
   `markerTtlMs(kind)`, already pinned by a test - so no code changed, and the entry exists so a
   reader of the ledger is not left counting a missing number.
+- **The window duplicated every narration line and cut words in half (defect #46).** Three
+  separate causes behind one screenshot: the single-line formatter inlined a content record's text
+  into its header while the follower printed the same text again as a body; narration flushed at
+  *any* newline, so `],` and a bare code fence each became their own record; and the 240-byte
+  ceiling cut wherever it happened to land, splitting `"Defect"` into `"Def` / `ect` across two
+  records - 5 of the 28 records on a real run sat on that boundary. Narration now flushes at a
+  line or sentence boundary once roughly 80 bytes have accumulated, releases an unbroken run at
+  600 bytes backed off to the last whitespace, and is printed once, as prose. The 120-character
+  clamp - which was *wider* than the terminal it was clamping for, so the console broke the line
+  again mid-word - now applies only in plain mode, where wrapping is not guaranteed. And once a
+  dial records tool output, the bare `tool read` / `tool read ok` lines stop being written, since
+  the block says all of that better. Each rule was falsified by removing it; one falsification
+  came back **inert**, and the reason was a hole in my test rather than in the code: `"alpha bravo "`
+  is 12 characters and 600 divides by 12, so the cut landed on a space by arithmetic accident. The
+  test now uses a 14-character unit that cannot, and the suppression above needed a test written
+  for it after the first attempt at falsifying it stayed green.
 - **Published packages no longer ship dead links (#38, found while sweeping the audit's
   findings).** The per-package READMEs are generated mirrors that go inside the tarballs, and
   three of their links pointed at repository-root files that were never packaged -
@@ -293,6 +309,14 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### Added
 
+- **The observer window reads like a transcript now.** Narration is printed as prose with no
+  per-line attribution and no mid-sentence clamp, and each tool call becomes a shaded block whose
+  header names the tool and - when arguments are visible - what it was asked to run
+  (`$ npm test`, `write src/a.ts`). `--style auto` picks that layout for a terminal and keeps the
+  single-line form for anything else, so redirected output is byte-identical to what it was before
+  the panel existed; `--columns` and `--color` / `--no-color` bound and disable the ANSI, which is
+  never written to the stream file; and padding a block to the right edge measures East Asian text
+  as two cells per character, so a Chinese line does not leave the shading half a cell short.
 - **Recorded conversation content, in five dials.** `security.observability.contentStream`
   goes from `none` (names, counters and outcome markers - the historical behaviour) through
   `assistant`, `assistant+tool-tail` and `transcript` up to `transcript+args`, so an operator
@@ -462,6 +486,17 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **缺陷 #36，记在这里以免编号出现无声的洞。** 有审查者报告 `transport-unstable` 标记不遵守
   TTL；经查证**判为误报**——读路径经 `activeModelAvailability` -> `markerTtlMs(kind)` honour 了
   TTL，且早有测试钉住——所以代码没有改动，但这条记录本身值得留下，免得台账数出一个缺号。
+- **窗口把每行叙述印了两遍，还把单词从中间切断（缺陷 #46）。** 一张截图背后是三个独立成因：单行
+  格式化器把内容记录的正文内联进了标题，而跟随器又把同一段文字当正文再印一次；叙述在**任何**换行处就
+  冲刷，于是 `],` 和孤零零的代码围栏各自成了一条记录；而 240 字节上限切在正好撞到的地方，把
+  `"Defect"` 勈成 `"Def` / `ect` 两条——真机那次 28 条里有 5 条就卡在这个边界上。现在叙述要等结束一行
+  或一句、且攒够约 80 字节才冲刷；不间断的长文本在 600 字节释放并**回退到最近的空白**；而且只印一次、
+  以散文形式。那个 120 字符截断（它比它要服务的终端**还宽**，所以终端会再折一次、正好折在词中）现在
+  只在 plain 模式生效，因为那种模式下不保证会折行。另外，挡位一旦开始记工具输出，光秃秃的
+  `tool read` / `tool read ok` 就不写了——块里说得更全。每条规则都做过反证；其中一次反证**回来是绿的**，
+  而问题不在代码在我的测试：`"alpha bravo "` 是 12 字符、600 能被 12 整除，切点因此靠算术巧合落在
+  了空格上。测试现在换成 14 字符的单元，不可能再巧合；而上面那条"不再重复输出名字行"也是第一次反证
+  没咬动之后，才补上专门测试钉住的。
 
 - **发布出去的包不再带死链接（#38，清扫审计结论时顺带查出）。** 各包的 README 是会被打进 tarball 的生成镜像，而其中三条链接指向从未被打包的仓库根文件——`SECURITY.md`、`shared/skills/expert-council/SKILL.md`、`config/examples/balanced.example.json`——每语言 10 条、五个包全是死链；另有一个语言切换器指向 `README.zh-CN.md`，而同步流程从来就没拷过它。现在镜像步骤会把中文 README 一并装入包内，并在生成时**只重写那些在包内无法解析的相对链接**为仓库 URL；其余字节与源文件保持一致，源 README 仍保留相对链接以便离线阅读。新增守卫测试遍历所有随包发布的 README，任何指向包外的相对链接即失败。该修复做了反证：把重写摘掉，恰好点名三条 offender；并且先确认"重新生成真的执行了"再采信结果（第一次反证因为我在 cmd 里用了 `>/dev/null`，构建根本没跑，于是得出"守卫无效"的假结论——错在我的探针，不在守卫）。
 - **文档准确性清扫（#34-#38 审计的后续，中英双份）。** 七条陈述描述的是代码没有的行为，还有一条示例跑不通：
@@ -506,6 +541,11 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### 新增
 
+- **观察窗口现在按会话记录的样子读。** 叙述以散文呈现，每行不加署名、不在句中截断；每次工具调用
+  变成一个**带底色的块**，标题写明是哪个工具、以及（在入参可见时）被要求跑什么（`$ npm test`、
+  `write src/a.ts`）。`--style auto` 在终端里选这个版式、其他情况保持单行，所以重定向出去的字节与
+  面板出现之前完全一致；`--columns` 与 `--color` / `--no-color` 约束并关闭 ANSI，而颜色永远不写进流
+  文件；把块补到右边缘时东亚文字按每字符两格计算，中文行不会让底色短半格。
 - **可记录的会话内容，共五挡。** `security.observability.contentStream` 从 `none`（只有名字、计数与
   结局标记，即历史行为）依次升到 `assistant`、`assistant+tool-tail`、`transcript`，最高一档是
   `transcript+args`——落盘多少由操作员挑，而不是被一个勾选框替你决定。`contentByRole` 按角色设挡，

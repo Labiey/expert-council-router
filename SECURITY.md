@@ -48,6 +48,13 @@ applies a dial per role and `EXPERT_COUNCIL_CONTENT` overrides both for one proc
   exactly where a token or a key can appear on a command line. It exists because reproducing an
   expert's failure often requires seeing the command, and it is reachable only by an operator
   typing that word into a config file.
+- **`redactToolArgs: false` is a smaller version of the same decision.** It writes a bounded
+  one-line summary of each call's main argument - a command, a path, a pattern - into the stream,
+  which is what lets an observer window show `$ npm test` in a block header. Treat it as a
+  deliberate step down from full redaction, not as a display setting.
+- **Layout and colour move no data.** `--style`, `--columns` and `--color` change only how an
+  existing stream file is printed into one terminal. The file itself, `--json`, and everything the
+  Main Agent receives are unaffected by them.
 - **Ceilings bound content, never the outcome.** One payload (`contentEventBytes`, default
   64 KB - larger ones are stored as head plus tail with the gap counted), one stream
   (`contentFileBytes`, default 10 MB), one directory (`contentTotalBytes`, default 200 MB,

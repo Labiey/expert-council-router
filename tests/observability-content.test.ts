@@ -122,15 +122,49 @@ describe("a recorder pushes only what has not been pushed", () => {
   it("appends assistant text as it grows, and never repeats a character", () => {
     const { rec, records } = recorder("assistant");
     const newline = String.fromCharCode(10);
-    rec.onAssistantText("the race is in ");                     // too small to be a record yet
+    const first = "the race is in applyHotplug(), which is called from the hotplug path without a lock, ";
+    const second = first + "so two arrivals can overwrite each other." + newline;
+    rec.onAssistantText(first);                      // no boundary yet: held
     expect(records).toHaveLength(0);
-    rec.onAssistantText("the race is in applyHotplug()" + newline);
+    rec.onAssistantText(second);
     expect(records).toHaveLength(1);
-    expect(String(records[0]?.text)).toBe("the race is in applyHotplug()" + newline);
-    rec.onAssistantText("the race is in applyHotplug()" + newline);
+    expect(String(records[0]?.text)).toBe(second);
+    rec.onAssistantText(second);
     expect(records).toHaveLength(1);                            // no growth, no record
     const joined = records.map((record) => String(record.text)).join("");
-    expect(joined).toBe("the race is in applyHotplug()" + newline);
+    expect(joined).toBe(second);
+  });
+
+  it("does not turn a punctuation-only line into a record", () => {
+    // What the operator saw as `says: ],`: a JSON report streams line by line, and flushing at
+    // every newline made `],` and a bare fence their own record. A boundary must carry substance.
+    const quiet = recorder("assistant");
+    quiet.rec.onAssistantText(String.fromCharCode(10) + "  ]," + String.fromCharCode(10));
+    quiet.rec.onAssistantText(String.fromCharCode(10) + "  ]," + String.fromCharCode(10) + "  }" + String.fromCharCode(10));
+    expect(quiet.records).toHaveLength(0);            // held until there is something to show
+    quiet.rec.onAssistantText(
+      String.fromCharCode(10) + "  ]," + String.fromCharCode(10) + "  }" + String.fromCharCode(10),
+      true,
+    );
+    expect(quiet.records).toHaveLength(1);
+    expect(String(quiet.records[0]?.text)).toContain("],");
+  });
+
+  it("cuts an oversized fragment at whitespace rather than inside a word", () => {
+    // The mid-word splits in the window (`"Def` / `ect numbers`) came from a byte threshold that
+    // cut wherever the limit happened to fall.
+    // A 14-character unit: 600 does not divide by 14, so the ceiling lands inside a word and the
+    // test cannot pass by arithmetic accident. (It did pass that way at first: "alpha bravo " is
+    // 12 characters, 600 / 12 is exact, and the falsification came back inert.)
+    const words = "alpha bravo12 ".repeat(80);       // 1120 bytes, no sentence boundary
+    const { rec, records } = recorder("assistant");
+    rec.onAssistantText(words);
+    expect(records).toHaveLength(1);
+    const emitted = String(records[0]?.text);
+    expect(emitted.length).toBeLessThan(words.length);
+    expect(emitted.endsWith(" ")).toBe(true);
+    expect(/\w$/.test(emitted.trimEnd())).toBe(true); // a whole word, not half of one
+    expect(words.slice(emitted.length).startsWith("bravo12")).toBe(true);  // cut before a whole word
   });
 
   it("holds a stream of tiny fragments and flushes them once", () => {
@@ -147,11 +181,13 @@ describe("a recorder pushes only what has not been pushed", () => {
     rec.onAssistantText(text, true);
     expect(records).toHaveLength(1);
     expect(String(records[0]?.text)).toBe(text);
-    // And the threshold really is a threshold rather than an unconditional buffer: a fragment
-    // large enough to be worth showing is written immediately, no flush required.
+    // And a long unbroken run is not held forever: the ceiling releases it, at whitespace.
     const eager = recorder("assistant");
     eager.rec.onAssistantText("x".repeat(300));
+    expect(eager.records).toHaveLength(0);            // under the ceiling: still worth holding
+    eager.rec.onAssistantText("lead " + "y".repeat(700));
     expect(eager.records).toHaveLength(1);
+    expect(/\s$/.test(String(eager.records[0]?.text))).toBe(true);
   });
 
   it("writes a block that is not a continuation whole, without inventing a gap", () => {
@@ -208,12 +244,12 @@ describe("a recorder pushes only what has not been pushed", () => {
     // has to hold one until the other arrives; a dial that quietly loses them is worse than
     // one that was never turned on.
     const quiet = recorder("transcript");
-    quiet.rec.noteArgs("tc1", "bash", '{"command":"rm -rf /tmp/x"}');
+    quiet.rec.noteArgs("tc1", { summary: 'cmd=npm test' });
     quiet.rec.onToolResult("tc1", "bash", true, "ok");
     expect(quiet.records[0]?.argsText).toBeUndefined();
 
     const loud = recorder("transcript+args");
-    loud.rec.noteArgs("tc2", "bash", '{"command":"npm test"}');
+    loud.rec.noteArgs("tc2", { full: '{"command":"npm test"}' });
     loud.rec.onToolResult("tc2", "bash", true, "ok");
     expect(String(loud.records[0]?.argsText)).toContain("npm test");
 
@@ -226,7 +262,7 @@ describe("a recorder pushes only what has not been pushed", () => {
   it("records nothing at all while the dial is none", () => {
     const { rec, records } = recorder("none");
     rec.onAssistantText("hello");
-    rec.noteArgs("tc1", "bash", '{"command":"ls"}');
+    rec.noteArgs("tc1", { summary: "cmd=ls", full: '{"command":"ls"}' });
     rec.onToolPartial("tc1", "bash", "line\nline2");
     rec.onToolResult("tc1", "bash", true, "output");
     expect(records).toEqual([]);
@@ -469,6 +505,24 @@ describe("the stream records what the dial promises", () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+
+  it("replaces the bare name lines with the block once a dial records tool output", async () => {
+    // The window showed `tool read`, `tool read ok`, then a block repeating both. Once a dial
+    // records the output, that output carries the tool name, the arguments and the result, so
+    // the name lines are pure duplication. At the lower dials there is no block, and hiding
+    // them there would leave an operator with no tool visibility at all - the worse trade.
+    const loud = await runStream({ level: "transcript", executionId: "exec_loud_lines" });
+    const loudKinds = loud.events.map((record) => record.kind);
+    expect(loudKinds).toContain("tool_output");
+    expect(loudKinds).not.toContain("tool_started");
+    expect(loudKinds).not.toContain("tool_finished");
+
+    const quiet = await runStream({ level: "assistant", executionId: "exec_quiet_lines" });
+    const quietKinds = quiet.events.map((record) => record.kind);
+    expect(quietKinds).toContain("tool_started");
+    expect(quietKinds).toContain("tool_finished");
+    expect(quietKinds).not.toContain("tool_output");
   });
 
   it("honours a per-role dial", async () => {
