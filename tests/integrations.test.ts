@@ -244,6 +244,25 @@ describe("CLI expert-window watch", () => {
     });
   });
 
+  it("drains a stream larger than one read chunk when not following", async () => {
+    // The non-following reader used to take exactly one pass, so a stream past the 1 MiB chunk -
+    // trivial to reach once the content dials are on - was printed only in part, silently.
+    const records: string[] = [];
+    for (let index = 0; index < 12000; index += 1) {
+      records.push(JSON.stringify({
+        t: index, executionId: "exec_watch", kind: "assistant_text", text: "x".repeat(120),
+      }));
+    }
+    const body = records.join(String.fromCharCode(10)) + String.fromCharCode(10);
+    expect(Buffer.byteLength(body)).toBeGreaterThan(1048576);
+    await withStream(body, async (dir) => {
+      const { io, out } = capture();
+      const code = await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--json"], io);
+      expect(code).toBe(0);
+      expect(out.join("").trimEnd().split(String.fromCharCode(10))).toHaveLength(records.length);
+    });
+  });
+
   it("emits raw objects with --json and never touches the formatter", async () => {
     await withStream(`${line("assistant_text", { text: "reading" })}\n`, async (dir) => {
       const { io, out } = capture();

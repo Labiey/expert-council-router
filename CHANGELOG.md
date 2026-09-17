@@ -6,6 +6,31 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### Fixed
 
+- **A pre-release audit found five real defects in the observability subsystem, and one false
+  alarm.** The audit was delegated read-only with a shell, and reported `VERDICT: NOT-READY`;
+  each claim was then verified independently before being adopted or rejected.
+
+  - `headTailSeam` compared bytes but sliced UTF-16 units, so a CJK payload came out at 2.7x and
+    astral emoji at 1.8x of the configured `contentEventBytes`: the privacy dial was silently
+    wider than the number the operator set. Measured before fixing, and the fix walks code points.
+  - `watch` without `--follow` took exactly one read pass, so any stream past 1 MiB - trivial to
+    reach once content recording is on - was printed only in part, with nothing said about it.
+    It now drains to end of file, and admits it if the (4 GiB) bound is ever reached.
+  - `collapseLine` excluded U+001b but not the C1 range, and Windows Terminal interprets 8-bit
+    controls too: a recorded line carrying U+009b could still drive the observer terminal. The
+    whole of U+007f-U+009f is now rendered as visible open boxes rather than passed through.
+  - The last-resort `JSON.stringify` of an unknown tool payload wrote `thinking` into a record
+    that is not marked as reasoning, bypassing the switch by payload shape instead of policy.
+    Chain-of-thought keys are now stripped from that fallback.
+  - Narration held for coalescing could be written *after* the tool block that followed it, so
+    the stream order stopped matching the conversation order. Held text is now flushed at each
+    block boundary.
+
+  Rejected: the claim that line pointers and the per-file byte budget reset per attempt. Line
+  pointers come from a per-execution state object that survives retries; only the recorder's own
+  counters reset, and nothing reads those as file positions. Each fix is pinned by a test that
+  was confirmed to fail when the fix was reverted.
+
 - **A cursor cannot key on object identity (defect #41).** The assistant-text cursor was
   indexed by message object, but the runtime is not promised the same object on
   `message_update` and `message_end`, so the whole narration was re-sent when a message

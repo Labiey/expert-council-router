@@ -316,7 +316,11 @@ export function displayWidth(text: string): number {
 }
 
 function collapseLine(text: string): string {
-  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001b\u001c-\u001f\u007f\u0085\u00a0]/g, "\u2423").replace(/\r?\n/g, " ");
+  // Control characters are stripped at render, not at store, so the file stays a faithful record.
+  // The range matters: excluding U+001b alone was not enough, because the C1 controls (U+0080-U+009f)
+  // are the 8-bit equivalents that Windows Terminal also interprets, so a recorded tool line
+  // carrying U+009b could still drive the observer terminal - CSI and OSC injection by another door.
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00a0]/g, "\u2423").replace(/\r?\n/g, " ");
 }
 
 /** A shaded block line: background for the whole terminal width, or plain text when uncoloured. */

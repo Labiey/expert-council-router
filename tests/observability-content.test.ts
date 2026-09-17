@@ -22,7 +22,7 @@ import {
   resolveContentLevel,
   tailOnly,
 } from "../packages/pi-runtime/src/content-stream.js";
-import { PiExpertRuntime, type PiSdkLike } from "../packages/pi-runtime/src/index.js";
+import { PiExpertRuntime, toolResultText, type PiSdkLike } from "../packages/pi-runtime/src/index.js";
 
 const roleDirectory = path.resolve("packages/core/src/roles/prompts");
 
@@ -371,6 +371,48 @@ describe("a recorder pushes only what has not been pushed", () => {
       rec.onToolPartial("tc1", "bash", text);
     }
     expect(records.filter((r) => r.streaming === true)).toHaveLength(4);
+  });
+
+  it("keeps a head/tail seam inside the byte ceiling it was given", () => {
+    // The ceiling is documented in bytes. Slicing by UTF-16 units let CJK come out at ~2.7x and
+    // astral emoji at ~1.8x of what the operator configured, so the privacy dial was silently
+    // wider than the number they set.
+    for (const [name, payload] of [
+      ["ascii", "a".repeat(4000)],
+      ["cjk", String.fromCharCode(0x4e2d).repeat(4000)],
+      ["emoji", String.fromCodePoint(0x1f600).repeat(2000)],
+    ] as const) {
+      const seam = headTailSeam(payload, 600);
+      expect(Buffer.byteLength(seam.text)).toBeLessThanOrEqual(600);
+      expect(seam.omittedBytes).toBeGreaterThan(0);
+      expect(seam.text).not.toMatch(/[\ud800-\udbff](?![\udc00-\udfff])/);
+    }
+  });
+
+  it("writes held narration before the tool block that follows it", () => {
+    // Coalescing waits for ~80 bytes, so a short sentence followed straight by a tool result used
+    // to land in the file *after* that result: the observer read the outcome before the sentence
+    // that announced it, and the stream order stopped matching the conversation order.
+    const { rec, records } = recorder("transcript");
+    rec.onAssistantText("Reading the failing test now.");        // 28 bytes: below the floor
+    rec.onToolResult("tc1", "read", true, "assertion failed" + String.fromCharCode(10));
+    expect(records).toHaveLength(2);
+    expect(String(records[0]?.text)).toContain("Reading the failing test");
+    expect(records[0]?.text === undefined).toBe(false);
+    expect(records[1]?.tool).toBe("read");
+    expect(records[1]?.streaming).toBeUndefined();
+  });
+
+  it("does not let the whole-object fallback smuggle chain-of-thought into a tool record", () => {
+    // When a host's tool result carries no content array the recorder serialises the object as a
+    // last resort. Unfiltered, that fallback writes `thinking` into a record that is not marked as
+    // reasoning - the one place the switch could be bypassed by payload shape rather than policy.
+    const text = toolResultText({ ok: true, thinking: "SECRET-CHAIN-FALLBACK", detail: "kept" });
+    expect(text).toContain("kept");
+    expect(text ?? "").not.toContain("SECRET-CHAIN-FALLBACK");
+    expect(text ?? "").not.toContain("thinking");
+    // A content array still wins, and reasoning parts in it stay the runtime's business.
+    expect(toolResultText({ content: [{ type: "text", text: "plain result" }] })).toBe("plain result");
   });
 
   it("never returns a flush cut inside a surrogate pair", () => {

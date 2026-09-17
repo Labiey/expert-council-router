@@ -221,6 +221,19 @@ describe("panel layout for an observer window", () => {
     ...extra,
   });
   const escape = String.fromCharCode(27);
+  it("strips the C1 range too, not just the 7-bit escape", () => {
+    // Excluding U+001b was not enough on its own: Windows Terminal also interprets the 8-bit C1
+    // controls, so a recorded line carrying U+009b (CSI) could still drive the observer terminal.
+    const hostile = frame("tool_output", {
+      tool: "bash", ok: true, text: "done" + String.fromCharCode(0x9b) + "]0;pwned" + String.fromCharCode(0x9c),
+    });
+    const rendered = formatExpertPanel(hostile).join("\n");
+    expect(rendered).not.toContain(String.fromCharCode(0x9b));
+    expect(rendered).not.toContain(String.fromCharCode(0x9c));
+    expect(rendered).toContain("done");
+    expect(rendered).toContain(String.fromCharCode(0x2423));   // shown, not silently eaten
+  });
+
 
   it("shows narration as prose, with no attribution and no clamp", () => {
     // The window follows one delegation, so `scout vendor/m says:` on every line was noise, and

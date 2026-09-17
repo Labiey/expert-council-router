@@ -94,6 +94,11 @@ When `security.observability.expertWindow` is `interactive`, the runtime additio
 
 Guardrail warnings (`security.guardrails`) carry tool names, counts and budget fractions - never tool output, arguments, or narration. They are an observation made for the operator and the Main Agent, not an audit record, and turning `warnHost` or `nudgeExpert` off changes nothing about isolation or permissions. A nudge can only tell an expert to stop repeating a failing call, to hand the task back with `report_and_stop`, or to ask a question via `request_decision`; **nothing in this mechanism can abort, approve, or rewrite anything on an expert's behalf.** Failure counts are what the runtime observed on its own event view, so a tool that hangs rather than errors produces no count until the attempt times out - treat the signal as advisory.
 
+Recorded content is rendered, never interpreted: control characters, including the 8-bit C1
+range that some terminals treat as escape sequences, are replaced with visible placeholders before
+anything reaches an observer window, so a tool that prints hostile bytes cannot retitle the window
+or drive the terminal that displays it.
+
 ## Reporting
 
 Do not open a public issue containing credentials, private prompts, or source code from a confidential repository. Report the smallest reproducible security boundary failure to the project maintainers through the repository's private security-reporting channel once one is configured.

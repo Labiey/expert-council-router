@@ -183,6 +183,12 @@ const WATCH_STREAM_SUFFIX = ".jsonl";
 /** Why an operator sees nothing: the prerequisite is a configuration the runtime honoured at start. */
 const WATCH_PREREQUISITE_HINT = 'The runtime writes this stream only for a run started while security.observability.expertWindow is "interactive" (the default "off" writes nothing).';
 const WATCH_MAX_CHUNK_BYTES = 1_048_576;
+/**
+ * How many chunks a non-following reader may drain. The reader used to take exactly one pass,
+ * so any stream past 1 MiB was printed only in part with no notice; this bound keeps the drain
+ * finite while making the truncation case impossible to hit silently (4 GiB of stream).
+ */
+const WATCH_MAX_DRAIN_PASSES = 4096;
 const WATCH_MAX_LINE_BYTES = 4_194_304;
 const WATCH_LISTED_IDS = 20;
 
@@ -446,7 +452,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   const deadline = Date.now() + (follow ? timeoutMs : 0);
   // Bounded by construction: one pass without --follow, and with --follow at most
   // ceil(timeout/interval) polls plus the deadline check on each pass.
-  const maxPasses = follow ? Math.ceil(timeoutMs / intervalMs) + 2 : 1;
+  const maxPasses = follow ? Math.ceil(timeoutMs / intervalMs) + 2 : WATCH_MAX_DRAIN_PASSES;
   for (let pass = 0; pass < maxPasses; pass += 1) {
     const chunk = await readStreamChunk(file, offset);
     if (chunk.missing) {
@@ -526,7 +532,17 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
       }
     }
     if (finalSeen) break;
-    if (!follow) break;
+    if (!follow) {
+      // Drain to end of file rather than stopping after one chunk, and never sleep between chunks.
+      if (chunk.data.length === 0) break;
+      if (pass + 1 >= maxPasses) {
+        io.stderr.write(`[watch] ${executionId}: stopped after draining ${maxPasses} chunks of `
+          + `${WATCH_MAX_CHUNK_BYTES} bytes; the stream is larger than that. Use --follow to keep `
+          + "reading, or narrow --dir.\n");
+        break;
+      }
+      continue;
+    }
     // A per-attempt terminal is not the end of the story: the council may escalate to
     // another model, which keeps appending to this same stream. Only a file that has
     // stopped growing counts as finished when no final marker was written.

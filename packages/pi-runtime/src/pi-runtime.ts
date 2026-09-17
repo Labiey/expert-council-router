@@ -196,21 +196,45 @@ function reasoningFromContent(content: unknown): string {
  * Tool results arrive in several shapes (Pi's content blocks, a plain string, or a host
  * object). Only `text` parts are ever extracted, so a `thinking`/`reasoning` part cannot
  * reach the stream by riding in a tool payload; anything unrecognised is serialised rather
- * than dropped, because a missing record is a worse observer failure than an ugly one.
+ * than dropped, because a missing record is a worse observer failure than an ugly one - except
+ * chain-of-thought keys, which are stripped from that fallback: an unmarked record must never
+ * carry reasoning, whatever shape the host happened to send.
+ *
+ * Exported for tests, because this is where that promise is kept or broken.
  */
-function toolResultText(value: unknown): string | null {
+export function toolResultText(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "string") return value;
   const record = value as Record<string, unknown>;
   if (Array.isArray(record.content)) return textFromContent(record.content) || textFromContent(value);
-  return textFromContent(value) || safeJson(value) || null;
+  return textFromContent(value) || safeJson(value, true) || null;
+}
+
+/** Keys that carry chain-of-thought when they appear in an unknown tool payload. */
+const REASONING_KEYS = new Set(["thinking", "reasoning", "reasoning_content"]);
+
+/** Strip chain-of-thought keys from a plain structure, depth-bounded and cycle-safe. */
+function withoutReasoningKeys(value: unknown, depth = 0, seen = new Set<unknown>()): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (depth > 8) return "[depth limit]";
+  if (seen.has(value)) return "[cyclic]";
+  seen.add(value);
+  if (Array.isArray(value)) {
+    return value.map((item) => withoutReasoningKeys(item, depth + 1, seen));
+  }
+  const out: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (REASONING_KEYS.has(key)) continue;
+    out[key] = withoutReasoningKeys(item, depth + 1, seen);
+  }
+  return out;
 }
 
 /** JSON that never throws: a cyclic or exotic payload must not break an observer. */
-function safeJson(value: unknown): string | undefined {
+function safeJson(value: unknown, redactReasoning = false): string | undefined {
   if (value === undefined) return undefined;
   try {
-    return JSON.stringify(value);
+    return JSON.stringify(redactReasoning ? withoutReasoningKeys(value) : value);
   } catch {
     return undefined;
   }

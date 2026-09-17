@@ -95,13 +95,14 @@ export function resolveContentLevel(input: {
 export function headTailSeam(text: string, maxBytes: number): { text: string; omittedBytes: number } {
   const bytes = Buffer.byteLength(text);
   if (bytes <= maxBytes) return { text, omittedBytes: 0 };
-  const chars = Math.max(0, Math.floor(maxBytes / 2) - 40);
-  if (chars < 1) return { text: "", omittedBytes: bytes };
-  // Slicing by UTF-16 index can cut an astral character in half and leave a lone surrogate in the
-  // stored text, which then survives JSON and shows up as a replacement glyph. Snap both edges
-  // back onto a character boundary.
-  const head = snapToBoundary(text.slice(0, chars), "end");
-  const tail = snapToBoundary(text.slice(text.length - chars), "start");
+  const budget = Math.max(0, Math.floor(maxBytes / 2) - 40);
+  if (budget < 1) return { text: "", omittedBytes: bytes };
+  // The ceiling is stated in bytes, so the slice has to be measured in bytes. Counting UTF-16
+  // units instead let a CJK payload come out at ~2.7x the configured limit and astral emoji at
+  // ~1.8x, because each unit costs three or four bytes on the wire - the operator's dial was
+  // silently wider than the number they set. Walking code points also means no split surrogate.
+  const head = takeByBytes(text, budget, "start");
+  const tail = takeByBytes(text, budget, "end");
   const seam = `
 [+${bytes - headTailBytes(head, tail)} bytes between head and tail omitted]
 `;
@@ -110,6 +111,20 @@ export function headTailSeam(text: string, maxBytes: number): { text: string; om
 
 function headTailBytes(head: string, tail: string): number {
   return Buffer.byteLength(head) + Buffer.byteLength(tail);
+}
+
+/** Take at most `maxBytes` from one end, never splitting a code point. */
+function takeByBytes(text: string, maxBytes: number, edge: "start" | "end"): string {
+  const characters = edge === "start" ? Array.from(text) : Array.from(text).reverse();
+  let used = 0;
+  const taken: string[] = [];
+  for (const character of characters) {
+    const size = Buffer.byteLength(character);
+    if (used + size > maxBytes) break;
+    used += size;
+    taken.push(character);
+  }
+  return edge === "start" ? taken.join("") : taken.reverse().join("");
 }
 
 /** Drop a split surrogate from one edge of a byte-sliced string. */
@@ -269,6 +284,9 @@ export class ContentRecorder {
   onToolPartial(callId: string, tool: string, partialText: string): void {
     if (!recordsToolOutput(this.options.level) || !partialText) return;
     const seen = this.toolStreams.get(callId) ?? { chars: 0, lines: 0 };
+    // A first partial for this call is a block boundary: prose held for coalescing has to land
+    // before it, or the observer reads the result of a command before the sentence announcing it.
+    if (seen.chars === 0 && seen.lines === 0) this.flushHeld();
     const lines = countLines(partialText);
     if (partialText.length <= seen.chars) return;
     // A byte floor, not a line floor. The gate used to be "any new line", so a command printing
@@ -299,10 +317,24 @@ export class ContentRecorder {
   }
 
   /**
+   * Write out narration that is still being coalesced, so a tool record never overtakes the
+   * sentence that introduced it. Without this the file's order stops matching the conversation's
+   * order: the block appears first and the prose that led to it arrives afterwards.
+   */
+  flushHeld(): void {
+    if (!recordsAssistant(this.options.level)) return;
+    for (const channel of ["text", "reasoning"] as const) {
+      const state = this.narration.get(channel);
+      if (state && state.last.length > state.sent.length) this.narrate(channel, "", true, true);
+    }
+  }
+
+  /**
    * A finished tool call. `transcript` and above store the whole payload behind a head+tail
    * seam; `assistant+tool-tail` stores only the tail, which is what the dial's name promises.
    */
   onToolResult(callId: string, tool: string, ok: boolean, resultText: string | null): void {
+    this.flushHeld();   // prose held for coalescing belongs before this block
     if (!recordsToolOutput(this.options.level)) return;
     const full = resultText ?? "";
     const seam = FULL_TOOL.has(this.options.level)

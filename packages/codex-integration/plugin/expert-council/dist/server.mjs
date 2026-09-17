@@ -319435,11 +319435,11 @@ function headTailSeam(text, maxBytes) {
   const bytes = Buffer.byteLength(text);
   if (bytes <= maxBytes)
     return { text, omittedBytes: 0 };
-  const chars = Math.max(0, Math.floor(maxBytes / 2) - 40);
-  if (chars < 1)
+  const budget = Math.max(0, Math.floor(maxBytes / 2) - 40);
+  if (budget < 1)
     return { text: "", omittedBytes: bytes };
-  const head = snapToBoundary(text.slice(0, chars), "end");
-  const tail = snapToBoundary(text.slice(text.length - chars), "start");
+  const head = takeByBytes(text, budget, "start");
+  const tail = takeByBytes(text, budget, "end");
   const seam = `
 [+${bytes - headTailBytes(head, tail)} bytes between head and tail omitted]
 `;
@@ -319448,15 +319448,18 @@ function headTailSeam(text, maxBytes) {
 function headTailBytes(head, tail) {
   return Buffer.byteLength(head) + Buffer.byteLength(tail);
 }
-function snapToBoundary(text, edge) {
-  if (text.length === 0)
-    return text;
-  if (edge === "end") {
-    const last = text.charCodeAt(text.length - 1);
-    return last >= 55296 && last <= 56319 ? text.slice(0, -1) : text;
+function takeByBytes(text, maxBytes, edge) {
+  const characters = edge === "start" ? Array.from(text) : Array.from(text).reverse();
+  let used = 0;
+  const taken = [];
+  for (const character of characters) {
+    const size = Buffer.byteLength(character);
+    if (used + size > maxBytes)
+      break;
+    used += size;
+    taken.push(character);
   }
-  const first = text.charCodeAt(0);
-  return first >= 56320 && first <= 57343 ? text.slice(1) : text;
+  return edge === "start" ? taken.join("") : taken.reverse().join("");
 }
 var NARRATION_BOUNDARY = /[\n.!?\u3002\uff01\uff1f]["')\]]?$/;
 function flushPoint(held, final, minBytes = 80, maxBytes = 600) {
@@ -319588,6 +319591,8 @@ var ContentRecorder = class {
     if (!recordsToolOutput(this.options.level) || !partialText)
       return;
     const seen = this.toolStreams.get(callId) ?? { chars: 0, lines: 0 };
+    if (seen.chars === 0 && seen.lines === 0)
+      this.flushHeld();
     const lines = countLines(partialText);
     if (partialText.length <= seen.chars)
       return;
@@ -319616,10 +319621,25 @@ var ContentRecorder = class {
     this.pendingArgs.set(callId, args);
   }
   /**
+   * Write out narration that is still being coalesced, so a tool record never overtakes the
+   * sentence that introduced it. Without this the file's order stops matching the conversation's
+   * order: the block appears first and the prose that led to it arrives afterwards.
+   */
+  flushHeld() {
+    if (!recordsAssistant(this.options.level))
+      return;
+    for (const channel of ["text", "reasoning"]) {
+      const state2 = this.narration.get(channel);
+      if (state2 && state2.last.length > state2.sent.length)
+        this.narrate(channel, "", true, true);
+    }
+  }
+  /**
    * A finished tool call. `transcript` and above store the whole payload behind a head+tail
    * seam; `assistant+tool-tail` stores only the tail, which is what the dial's name promises.
    */
   onToolResult(callId, tool, ok2, resultText) {
+    this.flushHeld();
     if (!recordsToolOutput(this.options.level))
       return;
     const full = resultText ?? "";
@@ -319756,11 +319776,31 @@ function toolResultText(value3) {
     return textFromContent(record4.content) || textFromContent(value3);
   return textFromContent(value3) || safeJson(value3) || null;
 }
-function safeJson(value3) {
+var REASONING_KEYS = /* @__PURE__ */ new Set(["thinking", "reasoning", "reasoning_content"]);
+function withoutReasoningKeys(value3, depth = 0, seen = /* @__PURE__ */ new Set()) {
+  if (value3 === null || typeof value3 !== "object")
+    return value3;
+  if (depth > 8)
+    return "[depth limit]";
+  if (seen.has(value3))
+    return "[cyclic]";
+  seen.add(value3);
+  if (Array.isArray(value3)) {
+    return value3.map((item) => withoutReasoningKeys(item, depth + 1, seen));
+  }
+  const out = {};
+  for (const [key, item] of Object.entries(value3)) {
+    if (REASONING_KEYS.has(key))
+      continue;
+    out[key] = withoutReasoningKeys(item, depth + 1, seen);
+  }
+  return out;
+}
+function safeJson(value3, redactReasoning = false) {
   if (value3 === void 0)
     return void 0;
   try {
-    return JSON.stringify(value3);
+    return JSON.stringify(redactReasoning ? withoutReasoningKeys(value3) : value3);
   } catch {
     return void 0;
   }
