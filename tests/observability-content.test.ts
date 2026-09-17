@@ -235,24 +235,24 @@ describe("a recorder pushes only what has not been pushed", () => {
   });
 
   it("streams a tool block only when it actually advanced", () => {
-    const { rec, records } = recorder("transcript");
-    rec.onToolPartial("tc1", "bash", "one line");        // the block opened: worth one record
-    rec.onToolPartial("tc1", "bash", "one line");        // no growth at all
-    rec.onToolPartial("tc1", "bash", "one line");        // still nothing new
-    expect(records).toHaveLength(1);
-    rec.onToolPartial("tc1", "bash", "one line\ntwo lines");
-    expect(records).toHaveLength(2);
-    expect(records[0]?.streaming).toBe(true);
-    expect(String(records[1]?.text)).toContain("two lines");
-    // Growth that adds no line is held back until it is worth a record. This branch is the one
-    // a duplicate-only assertion cannot reach: the first falsification of the line gate came
-    // back green precisely because nothing here exercised it.
     const newline = String.fromCharCode(10);
-    rec.onToolPartial("tc1", "bash", "one line" + newline + "two lines" + "x".repeat(200));
+    const { rec, records } = recorder("transcript");
+    rec.onToolPartial("tc1", "bash", "one line");        // below the floor: held
+    rec.onToolPartial("tc1", "bash", "one line");        // no growth at all
+    expect(records).toHaveLength(0);
+    const first = "one line" + newline + "x".repeat(240);
+    rec.onToolPartial("tc1", "bash", first);             // past the byte floor
+    expect(records).toHaveLength(1);
+    expect(records[0]?.streaming).toBe(true);
+    const second = first + newline + "y".repeat(240);
+    rec.onToolPartial("tc1", "bash", second);
     expect(records).toHaveLength(2);
-    rec.onToolPartial("tc1", "bash", "one line" + newline + "two lines" + "x".repeat(400));
+    expect(String(records[1]?.text)).toContain("yyyy");
+    // Ten short lines is the other trigger, so a chatty tool still visibly moves.
+    const lines = second + Array.from({ length: 10 }, (_unused, i) => newline + "line " + i).join("");
+    rec.onToolPartial("tc1", "bash", lines);
     expect(records).toHaveLength(3);
-    expect(String(records[2]?.text).trim().length).toBeGreaterThan(150);
+    expect(String(records[2]?.text)).toContain("line 9");
   });
 
   it("stores the tail only for the tool-tail dial and the whole block above it", () => {
@@ -358,6 +358,31 @@ describe("a recorder pushes only what has not been pushed", () => {
     expect(String(records[1]?.text)).toBe("So a chatty tool, not a chatty model, is what squeezes the budget out.");
     // Nothing is lost or duplicated across the two records, apart from the separator itself.
     expect(String(records[0]?.text) + " " + String(records[1]?.text)).toBe(second);
+  });
+
+  it("gives a streaming tool a byte floor, not a line floor", () => {
+    // The gate used to be "any new line", so output that prints thousands of short progress
+    // lines wrote roughly one record per line and squeezed narration out of the per-stream
+    // ceiling: the chatty tool, not the chatty model, was the real pressure.
+    const { rec, records } = recorder("transcript");
+    let text = "";
+    for (let index = 0; index < 40; index += 1) {
+      text += "x\n";                       // 40 short lines, 80 bytes in total
+      rec.onToolPartial("tc1", "bash", text);
+    }
+    expect(records.filter((r) => r.streaming === true)).toHaveLength(4);
+  });
+
+  it("never returns a flush cut inside a surrogate pair", () => {
+    // The ceiling walks code points; a future edit back to `held.length` arithmetic would split
+    // emoji in half. Swept across every ceiling the recorder can be given.
+    const mixed = "\u{1F600}a\u4e2d ".repeat(60);
+    const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+    for (let maxBytes = 1; maxBytes <= 600; maxBytes += 7) {
+      const cut = flushPoint(mixed, false, 80, maxBytes);
+      expect(isHigh(mixed.charCodeAt(cut - 1))).toBe(false);
+      expect(Buffer.byteLength(mixed.slice(0, cut))).toBeLessThanOrEqual(maxBytes);
+    }
   });
 
   it("records nothing at all while the dial is none", () => {
@@ -476,7 +501,7 @@ const ASSISTANT_EVENTS = [
     type: "tool_execution_update",
     toolCallId: "tc1",
     toolName: "bash",
-    partialResult: { content: [{ type: "text", text: "running tests\nfirst block" }] },
+    partialResult: { content: [{ type: "text", text: "running tests\nfirst block\n" + "watching the suite ".repeat(20) + "\n" }] },
   },
   {
     type: "tool_execution_end",

@@ -343,6 +343,13 @@ export class ExpertCouncilService implements ExpertCouncil {
           expertWindow: this.config.security.observability.expertWindow,
           streamToHost: this.config.security.observability.streamToHost,
           redactToolArgs: this.config.security.observability.redactToolArgs,
+          // The four switches added since this summary was written. Omitting them meant
+          // `expert_inspect` described an operator's posture as three settings when the runtime
+          // honours seven, and the missing ones are the privacy-adjacent ones.
+          autoOpenWindow: this.config.security.observability.autoOpenWindow,
+          recordReasoning: this.config.security.observability.recordReasoning,
+          contentStream: this.config.security.observability.contentStream,
+          contentByRole: this.config.security.observability.contentByRole,
         },
         guardrails: {
           warnHost: this.config.security.guardrails.warnHost,

@@ -263,13 +263,19 @@ describe("retry and escalation", () => {
       security: { observability: { expertWindow: "interactive" } },
     });
     const inventory = await interactive.inspectResources();
-    expect(inventory.operatorConfig?.observability).toEqual({ expertWindow: "interactive", streamToHost: true, redactToolArgs: true });
+    expect(inventory.operatorConfig?.observability).toEqual({
+      expertWindow: "interactive", streamToHost: true, redactToolArgs: true,
+      autoOpenWindow: false, recordReasoning: false, contentStream: "none", contentByRole: {},
+    });
     // This mock runtime cannot write an event stream, so the requested tier must say so.
     expect(inventory.warnings.join(" ")).toContain("cannot write a live event stream");
 
     const quiet = new ExpertCouncilService(new MockRuntime([model("cheap", "one")]), { profiles: { models: profiles } });
     const quietInventory = await quiet.inspectResources();
-    expect(quietInventory.operatorConfig?.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true });
+    expect(quietInventory.operatorConfig?.observability).toEqual({
+      expertWindow: "off", streamToHost: true, redactToolArgs: true,
+      autoOpenWindow: false, recordReasoning: false, contentStream: "none", contentByRole: {},
+    });
     expect(quietInventory.warnings.join(" ")).not.toContain("cannot write a live event stream");
 
     // A runtime that CAN write the stream must not be warned about the same tier.

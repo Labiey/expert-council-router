@@ -876,8 +876,12 @@ export interface ResourceInventory {
   operatorConfig?: {
     path?: string;
     provisioningMode: string;
-    /** Effective progress-visibility settings, so a host can see what the toggle actually does. */
-    observability?: { expertWindow: string; streamToHost: boolean; redactToolArgs: boolean };
+    /** Effective progress-visibility settings, so a host can see what the toggle actually does.
+     * Every observability key the runtime honours belongs here: a summary that lists three of
+     * eight lets a host report the wrong thing about the operator's own privacy posture. */
+    observability?: { expertWindow: string; streamToHost: boolean; redactToolArgs: boolean;
+      autoOpenWindow?: boolean; recordReasoning?: boolean; contentStream?: string;
+      contentByRole?: Record<string, string> };
     /** Effective struggle-detection thresholds, so a host can tell whether warnings/nudges are live. */
     guardrails?: { warnHost: boolean; nudgeExpert: boolean; consecutiveToolFailures: number; maxTotalWallMs?: number };
   };

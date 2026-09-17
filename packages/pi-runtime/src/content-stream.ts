@@ -271,7 +271,13 @@ export class ContentRecorder {
     const seen = this.toolStreams.get(callId) ?? { chars: 0, lines: 0 };
     const lines = countLines(partialText);
     if (partialText.length <= seen.chars) return;
-    if (lines <= seen.lines && partialText.length - seen.chars < 240) return;
+    // A byte floor, not a line floor. The gate used to be "any new line", so a command printing
+    // thousands of short progress lines wrote roughly one record per line and squeezed the
+    // narration out of the per-stream ceiling - the chatty tool, not the chatty model, was the
+    // real pressure. Ten new lines still counts as visible progress; one new line does not.
+    const linesGrown = lines - seen.lines;
+    const charsGrown = partialText.length - seen.chars;
+    if (charsGrown < 240 && linesGrown < 10) return;
     const fresh = partialText.slice(seen.chars);
     this.toolStreams.set(callId, { chars: partialText.length, lines });
     this.bytesConsidered += Buffer.byteLength(fresh);
