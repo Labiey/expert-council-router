@@ -26,6 +26,17 @@ All notable changes to Expert Council are documented here. Versions follow seman
   which under a content dial would have re-broken #17: a window waiting for a signal that
   arrives no more. Terminal kinds are exempt now; they are four small records, so the exemption
   cannot meaningfully widen a file an operator capped.
+- **A validator's message stole the operator's instructions (defect #45).** `delegate` requires
+  an explicit `--reasoning-level` on purpose, but `bounded("")` threw before the sentence that
+  says what to pass, so the CLI answered its own documented usage with "reasoning level must be
+  non-empty, at most 40 characters, and contain no NUL bytes". Presence is checked first now,
+  and a value that is really the next flag (`--reasoning-level --json`) is refused rather than
+  sent as a reasoning level.
+- **Defect #36, recorded so the numbering carries no silent gap.** A reviewer reported that
+  `transport-unstable` markers ignored their TTL; it was investigated and **rejected as a false
+  alarm** - the TTL is honoured on the read path through `activeModelAvailability` ->
+  `markerTtlMs(kind)`, already pinned by a test - so no code changed, and the entry exists so a
+  reader of the ledger is not left counting a missing number.
 - **Published packages no longer ship dead links (#38, found while sweeping the audit's
   findings).** The per-package READMEs are generated mirrors that go inside the tarballs, and
   three of their links pointed at repository-root files that were never packaged -
@@ -444,6 +455,13 @@ All notable changes to Expert Council are documented here. Versions follow seman
 - **上限不能吞掉结局标记（缺陷 #44）。** 触顶后原先丢弃*所有*后续事件，包括 `completed/failed/stopped`
   与 `delegation_final`——那会让窗口等不到它唯一在等的信号，等于在有内容挡位时把 #17 的修复打回原形。
   现在结局类事件豁免：它们一共四条、体积可忽略，撞上限的流仍会说明自己撞了。
+- **校验器的抱怨抢走了给操作员的指引（缺陷 #45）。** `delegate` 有意要求显式给
+  `--reasoning-level`，但 `bounded("")` 比那句"该传什么"的提示先抛出，于是 CLI 用自己的文档用法
+  回答了一句"reasoning level must be non-empty…不含 NUL 字节"。现在先查有无该参数，并且
+  "参数值其实是下一个 flag"（`--reasoning-level --json`）会被拒绝，而不是被当成挡位发出去。
+- **缺陷 #36，记在这里以免编号出现无声的洞。** 有审查者报告 `transport-unstable` 标记不遵守
+  TTL；经查证**判为误报**——读路径经 `activeModelAvailability` -> `markerTtlMs(kind)` honour 了
+  TTL，且早有测试钉住——所以代码没有改动，但这条记录本身值得留下，免得台账数出一个缺号。
 
 - **发布出去的包不再带死链接（#38，清扫审计结论时顺带查出）。** 各包的 README 是会被打进 tarball 的生成镜像，而其中三条链接指向从未被打包的仓库根文件——`SECURITY.md`、`shared/skills/expert-council/SKILL.md`、`config/examples/balanced.example.json`——每语言 10 条、五个包全是死链；另有一个语言切换器指向 `README.zh-CN.md`，而同步流程从来就没拷过它。现在镜像步骤会把中文 README 一并装入包内，并在生成时**只重写那些在包内无法解析的相对链接**为仓库 URL；其余字节与源文件保持一致，源 README 仍保留相对链接以便离线阅读。新增守卫测试遍历所有随包发布的 README，任何指向包外的相对链接即失败。该修复做了反证：把重写摘掉，恰好点名三条 offender；并且先确认"重新生成真的执行了"再采信结果（第一次反证因为我在 cmd 里用了 `>/dev/null`，构建根本没跑，于是得出"守卫无效"的假结论——错在我的探针，不在守卫）。
 - **文档准确性清扫（#34-#38 审计的后续，中英双份）。** 七条陈述描述的是代码没有的行为，还有一条示例跑不通：
