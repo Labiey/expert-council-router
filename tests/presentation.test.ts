@@ -253,6 +253,10 @@ describe("panel layout for an observer window", () => {
       frame("tool_finished", { tool: "bash", ok: true, argsSummary: hostile }),
       frame("tool_output", { tool: "bash", ok: true, text: hostile, argsSummary: hostile }),
       frame("assistant_text", { text: hostile }),
+      // A tool name is the model's own choice of string, not a registry lookup, and the panel has
+      // no outer sanitiser wrapping it the way the single-line renderer does.
+      frame("tool_started", { tool: hostile }),
+      frame("tool_output", { tool: hostile, ok: true, text: "out" }),
     ];
     for (const event of framesToCheck) {
       const surfaces = [

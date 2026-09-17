@@ -366,7 +366,9 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
   }
 
   if (kind === "tool_output") {
-    const tool = typeof event.tool === "string" && event.tool ? event.tool : "tool";
+    // A tool name arrives from the model's own tool call rather than a registry, so it is input
+    // like any other field - and unlike the single-line renderer, the panel has no outer wrapper.
+    const tool = stripControlChars(typeof event.tool === "string" && event.tool ? event.tool : "tool");
     const streaming = event.streaming === true;
     const args =
       typeof event.argsText === "string" && event.argsText.trim()
@@ -403,7 +405,9 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
   }
 
   if (kind === "tool_started" || kind === "tool_finished") {
-    const tool = typeof event.tool === "string" && event.tool ? event.tool : "tool";
+    // A tool name arrives from the model's own tool call rather than a registry, so it is input
+    // like any other field - and unlike the single-line renderer, the panel has no outer wrapper.
+    const tool = stripControlChars(typeof event.tool === "string" && event.tool ? event.tool : "tool");
     const summary = typeof event.argsSummary === "string" && event.argsSummary ? ` ${stripControlChars(event.argsSummary)}` : "";
     const outcome = kind === "tool_finished" ? (event.ok === false ? " failed" : " ok") : "";
     const text = `${tool}${summary}${outcome}${attempt}`;
