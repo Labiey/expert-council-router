@@ -19,6 +19,15 @@ function sources(dir: string): string[] {
 }
 
 describe("source hygiene", () => {
+  it("builds with a forced full compile, so generated artifacts cannot lag the source", () => {
+    // Incremental `tsc -b` decided its output was current after a falsification script restored a
+    // source file, and the tracked Codex bundle was committed without the fix that had just landed
+    // in source. A gate that compares artifacts against a build is worthless if that build can lag.
+    const scripts = JSON.parse(readFileSync("package.json", "utf8")).scripts;
+    expect(scripts.build).toContain("tsc -b --force");
+    expect(scripts.validate).toContain("artifacts:check");
+  });
+
   it("leaves no documentation block orphaned above another block", () => {
     // Shape: a `*/` with nothing between it and the next `/**`. That means an earlier doc
     // comment no longer documents anything, because a new declaration was inserted between

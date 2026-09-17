@@ -319576,6 +319576,8 @@ var ContentRecorder = class {
     state2.sent = continuation ? state2.sent + emitText : emitText;
     this.narration.set(channel, state2);
     this.bytesConsidered += Buffer.byteLength(emitText);
+    if (!shown.trim())
+      return;
     this.push("assistant_text", {
       text: headTailSeam(shown, this.options.eventBytes).text,
       ...channel === "reasoning" ? { reasoning: true } : {}

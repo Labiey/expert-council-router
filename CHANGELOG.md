@@ -13,13 +13,22 @@ All notable changes to Expert Council are documented here. Versions follow seman
   the input was never ours to trust. Every rendered field now goes through one shared control
   policy: C0 apart from tab, the whole of C1, DEL and NBSP become a visible open box, and the
   renderer's own colour codes are untouched. A whitespace-only closing message no longer stores
-  an empty record.
+  an empty record. Following the same thread found a third field of the same class: `event.tool`
+  is the model's own string rather than a registry lookup, and the panel rendered it raw -
+  measured at control characters reaching the terminal. It now goes through the same policy.
 
 - **A tracked build artifact had been committed behind its source.** The committed Codex plugin
-  bundle still carried the pre-fix `safeJson` call. Cause: the build had been run with its output
-  discarded and its exit code never checked, which is how a stale 14 MB generated file reaches a
-  commit. `npm run validate` now runs `scripts/check-tracked-artifacts.mjs` after the build, which
-  fails when tracked generated files do not match a fresh build, ignoring pure line-ending churn.
+  bundle still carried the pre-fix `safeJson` call. `npm run validate` now runs
+  `scripts/check-tracked-artifacts.mjs` after the build, which fails when tracked generated files
+  do not match a fresh build, ignoring pure line-ending churn.
+
+  The first diagnosis of the cause was wrong, and it took a second occurrence to see it: the
+  build's exit code was not the problem, `tsc -b` being incremental was. After a falsification
+  script restored a source file, the incremental compiler considered its output current, so the
+  bundle was assembled from a stale `dist` - and an artifact gate that compares against a build
+  which can itself lag the source proves nothing. `npm run build` now compiles with `--force`,
+  pinned by a test, and the same mechanism is what let a second fix (the empty-record guard) miss
+  the committed bundle until the gate caught the two-line difference.
 
   Each of these was confirmed by reverting the fix and watching the test fail: the plain
   renderer, the panel dim line, the body renderer, and the empty-record guard all go RED. The

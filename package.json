@@ -17,7 +17,7 @@
     "packages/*"
   ],
   "scripts": {
-    "build": "tsc -b && node scripts/sync-shared-assets.mjs && node scripts/build-codex-plugin.mjs",
+    "build": "tsc -b --force && node scripts/sync-shared-assets.mjs && node scripts/build-codex-plugin.mjs",
     "artifacts:check": "node scripts/check-tracked-artifacts.mjs",
     "clean": "tsc -b --clean",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
