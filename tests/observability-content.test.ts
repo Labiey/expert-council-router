@@ -330,6 +330,20 @@ describe("a recorder pushes only what has not been pushed", () => {
     expect(records[0]?.reasoning).toBe(true);
   });
 
+  it("counts recorded bytes once, not twice", () => {
+    // A delegated scout found a duplicated `bytesConsidered` line in the narration path, which
+    // made the recorder report twice the content it stored. The stat is what an operator is told
+    // about ceiling pressure, so an inflated number is a false alarm about a privacy switch.
+    const { rec, records } = recorder("assistant", { reasoning: true });
+    const narration = "The caller takes no lock so two arrivals can race.\n";
+    const thought = "Weighing whether the ceiling is per record or per byte.\n";
+    rec.onAssistantText(narration, true);
+    rec.onReasoningText(thought, true);
+    expect(records).toHaveLength(2);
+    expect(rec.stats.bytes).toBe(Buffer.byteLength(narration) + Buffer.byteLength(thought));
+    expect(rec.stats.records).toBe(2);
+  });
+
   it("records nothing at all while the dial is none", () => {
     const { rec, records } = recorder("none");
     rec.onAssistantText("hello");
