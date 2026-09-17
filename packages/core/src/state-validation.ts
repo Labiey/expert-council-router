@@ -146,14 +146,26 @@ const expertResult = z.object({
       command: boundedText(8_000).optional(),
       durationMs: z.number().finite().min(0).optional(),
       detail: boundedText(8_000).optional(),
-    }).strict().optional(),
+      // How dependency-install scripts were suppressed while preparing the workspace. The
+      // runtime has written this field since 0.8.6, and a strict schema that does not know it
+      // makes a state file unreadable to the very build that produced it - which is how the
+      // installed-plugin smoke test failed while every unit test stayed green.
+      scriptSuppression: z.enum(["flag", "env", "unavailable", "unverified"]).optional(),
+    })
+      // The same forward-compatibility rule the outer record already carries: this object is an
+      // extension surface, and a strict schema here reproduces the 0.7.7 failure one level down -
+      // which is precisely what happened to `scriptSuppression` in 0.8.6. A known key keeps its
+      // enum, so this is not a free-text hole; an unknown *key* can no longer make a state file
+      // unreadable to the build that wrote it.
+      .passthrough()
+      .optional(),
     verification: z.array(z.object({
       command: boundedText(1_000).optional(),
       status: z.enum(["passed", "failed", "not-run"]),
       summary: boundedText(2_000).optional(),
       exitCode: z.number().int().min(0).max(255).optional(),
       outputTail: boundedText(2_000).optional(),
-    }).strict()).max(20).optional(),
+    }).passthrough()).max(20).optional(),
   })
     // Forward compatibility: executionMetadata is the fast-moving extension
     // surface — a schema lag on a new optional field must never render the

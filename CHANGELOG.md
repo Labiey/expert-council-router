@@ -64,10 +64,51 @@ All notable changes to Expert Council are documented here. Versions follow seman
   six-space indents I took for the plain body were the expert's own JSON. No test had ever asserted
   the launcher's full command line, which is why the flags could be missing and 16 tests still
   passed; one now does, and removing the flags turns it red.
-- **相邻的工具块看起来像一个块（缺陷 #48）。** 空行只在散文与块相遇时才会插入，所以两条灰带背靠背时
-  会合并成一堆，操作员看不出一次工具调用在哪里结束。现在相邻块之间也会隔开，标题比正文浅一档底色，
-  即使行相接也留着接缝；而一个正在运行的工具重绘时不会被拆散，因为它就是一个块在长。两条规则各自做过
-  反证。
+- **Adjacent tool blocks read as one block (defect #48).** The blank line existed only where prose
+  met a block, so two grey bands back to back merged into one mass and an operator could not tell
+  where one tool call ended. Consecutive blocks are separated now, the header band is one shade
+  lighter than its body so a seam survives even when lines touch, and a tool that repaints while it
+  runs stays whole, because that is one block growing rather than two. Both rules are falsified
+  individually.
+- **`--style auto` selected neither layout (defect #49).** The option was validated against
+  `auto|panel|plain` and then compared to `"panel"`, so the documented default - typed by hand -
+  rendered the plain single-line form on a terminal while the help promised blocks. `auto` is now
+  resolved before any comparison, and the terminal branch is reachable from tests through an
+  injected `isTty`: without that seam a suite running under a pipe can only ever exercise plain, so
+  the bug had nowhere to be observed.
+- **Recorded escape sequences reached the operator's terminal (defect #50).** The panel view
+  sanitised control characters except `0x1b`, so a tool result containing `ESC ] 0 ; … BEL` - file
+  content, build output, anything an expert read - could rename the observer window. Plain mode
+  already stripped the whole control range; the panel path now does the same, and a test pushes an
+  OSC sequence through both branches and asserts that the only escapes present are the ones the
+  renderer added itself.
+- **A state file could not be read back by the build that wrote it (defect #51).** 0.8.6 added
+  `provisioning.scriptSuppression` while that nested schema stayed `.strict()`, so loading such
+  state threw `Unrecognized key`. The field is now declared, provisioning and verification pass
+  unknown keys through the way the outer record already does, and a test round-trips a written
+  record. This is the 0.7.7 `stoppedByExpert` lesson repeated one level down: the rule was recorded
+  as a comment above the object that later changed, and never applied to the object itself.
+- **The plugin smoke test read the developer's live data (defect #52).** It isolated `APPDATA` and
+  `NODE_PATH` so a marketplace install could not pass by accident, but not the council's own data
+  root, so `npm run validate` read and wrote the operator's real state, telemetry and model
+  assessment - which is why #51 arrived as a build failure rather than a warning. It now runs
+  against a temporary data directory.
+- **Two byte-accounting defects (defects #53, #54).** The narration ceiling compared *bytes* but cut
+  *UTF-16 indices*, so a CJK run passed 1500 bytes through a 600-byte limit; and `headTailSeam`
+  sliced by index, which could leave a lone surrogate at either edge of a seam - text that survives
+  JSON and shows up as a replacement glyph in the window. Both now measure by code point, with tests
+  written against the previous arithmetic.
+- **Four claims that described no behaviour** (same audit): `formatExpertEventBody` promised "at most
+  `maxLines`" while returning `maxLines` + 1 with its notice line; the `--max-chars` help entry had
+  swallowed `--quiet-ms`'s explanation when the panel options were inserted; `WATCH_TERMINAL_KINDS`
+  said the follower "must stop at the first one it sees" when the rule has been last-terminal-wins
+  since #17; and `displayWidth`'s comment said control sequences are "never counted" where the code
+  stops at the first `ESC` - true of the renderer's own prefix, which is now the only escape that
+  can reach it. Corrected in place. One audit finding was **rejected**: `tailOnly` was reported to
+  split astral characters, but `tailOnly('x'*10 + an emoji + 'y'*10, 12)` returns `"yyyyyyyyyy"`
+  with `omittedBytes: 14` and no orphan surrogate, and the reported example `tailOnly("ab", 4)`
+  returns `"ab"` unchanged - two bytes cannot truncate. The claim's own numbers were inconsistent.
+
 - **Published packages no longer ship dead links (#38, found while sweeping the audit's
   findings).** The per-package READMEs are generated mirrors that go inside the tarballs, and
   three of their links pointed at repository-root files that were never packaged -
@@ -524,6 +565,31 @@ All notable changes to Expert Council are documented here. Versions follow seman
   会合并成一堆，操作员看不出一次工具调用在哪里结束。现在相邻块之间也会隔开，标题比正文浅一档底色，
   即使行相接也留着接缝；而一个正在运行的工具重绘时不会被拆散，因为它就是一个块在长。两条规则各自做过
   反证。
+- **`--style auto` 两个版式都没选中（缺陷 #49）。** 该选项按 `auto|panel|plain` 校验之后，代码又去和
+  `"panel"` 比较，于是**手打文档里的默认值**在终端里拿到单行版，而帮助文本承诺的是块。现在 `auto` 在任何
+  比较之前就被解析；并且通过注入的 `isTty` 让"终端分支"在测试里可达——没有这个缝，跑在管道里的测试永远只能
+  走 plain，这个 bug 根本没有被观察到的地方。
+- **记录里的转义序列被推到了操作员的终端上（缺陷 #50）。** 面板视图会清洗控制字符，却独独漏了 `0x1b`，所以
+  一条含 `ESC ] 0 ; … BEL` 的工具结果（文件内容、构建输出、专家读到的任何东西）都能改掉观察窗口的标题。
+  plain 模式本来就剥掉整个控制字符区间；面板路径现在同样处理，并有测试把一条 OSC 序列从两个分支都推过去，
+  断言输出里除了渲染器自己加的转义以外没有别的。
+- **自己写下的 state 自己读不回来（缺陷 #51）。** 0.8.6 加了 `provisioning.scriptSuppression`，而那层 schema
+  还是 `.strict()`，于是加载这种 state 直接抛 `Unrecognized key`。现在字段已声明，provisioning 与 verification
+  像外层记录一样放行未知键，并有测试把一条写出的记录原样读回。这是 0.7.7 `stoppedByExpert` 教训在下一层的重演：
+  规则被写成注释留在了**上面一层**，而后来改动的是下面那层。
+- **插件冒烟测试读的是开发者的真实数据（缺陷 #52）。** 它隔离了 `APPDATA` 与 `NODE_PATH`，以免市场安装"因为巧合"
+  通过，却没隔离 council 自己的数据根目录，于是 `npm run validate` 会读写操作员真实的 state、遥测与模型评估——
+  这正是 #51 以构建失败而非警告现形的原因。现在它跑在临时数据目录里。
+- **两处字节记账错误（缺陷 #53、#54）。** 叙述上限用**字节**比较、却按 **UTF-16 单元**下刀，所以一段中文能把
+  1500 字节放过 600 字节的闸；`headTailSeam` 按下标切片，可能在缝的任一侧留下孤立代理项——它能活着穿过 JSON，
+  在窗口里变成一个替换字符。两处现在都按码点计量，测试是照着"改之前的算法会失败"写的。
+- **四处描述不存在行为的说法**（同一次审计）：`formatExpertEventBody` 承诺"最多 `maxLines` 行"，实际会在有隐藏
+  行时返回 `maxLines + 1`；`--max-chars` 的帮助条目在插入面板选项时把 `--quiet-ms` 的说明吞成了自己的尾巴；
+  `WATCH_TERMINAL_KINDS` 说跟随器"必须在看到第一个终止事件时停下"，而自 #17 起规则是"最后一个终止事件说了算"；
+  `displayWidth` 的注释说控制序列"永不计数"，代码却是在第一个 `ESC` 处**截断**——对渲染器自己的前缀而言是对的，
+  而现在也只有它可能带 ESC。均已就地修正。审计有一条结论被**判为误报**：它称 `tailOnly` 会切断 astral 字符，
+  但实测 `tailOnly('x'*10 + 一个表情 + 'y'*10, 12)` 返回 `"yyyyyyyyyy"`、`omittedBytes: 14`、无孤立代理项；
+  而它举的 `tailOnly("ab", 4)` 原样返回 `"ab"`——2 字节根本触发不了截断。该说法自身的数字就互相矛盾。
 - **发布出去的包不再带死链接（#38，清扫审计结论时顺带查出）。** 各包的 README 是会被打进 tarball 的生成镜像，而其中三条链接指向从未被打包的仓库根文件——`SECURITY.md`、`shared/skills/expert-council/SKILL.md`、`config/examples/balanced.example.json`——每语言 10 条、五个包全是死链；另有一个语言切换器指向 `README.zh-CN.md`，而同步流程从来就没拷过它。现在镜像步骤会把中文 README 一并装入包内，并在生成时**只重写那些在包内无法解析的相对链接**为仓库 URL；其余字节与源文件保持一致，源 README 仍保留相对链接以便离线阅读。新增守卫测试遍历所有随包发布的 README，任何指向包外的相对链接即失败。该修复做了反证：把重写摘掉，恰好点名三条 offender；并且先确认"重新生成真的执行了"再采信结果（第一次反证因为我在 cmd 里用了 `>/dev/null`，构建根本没跑，于是得出"守卫无效"的假结论——错在我的探针，不在守卫）。
 - **文档准确性清扫（#34-#38 审计的后续，中英双份）。** 七条陈述描述的是代码没有的行为，还有一条示例跑不通：
   - README 写着"限流或认证错误等瞬态提供商失败绝不产生标记"。事实上从 0.8.5 起它们**就是刻意产生标记的**：瞬态 TPM/RPM 限流写 2 分钟的 `rate-limited` 并连带同提供商兄弟模型；传输不可达写 5 分钟的 `transport-unstable` 且只标记失败路由；配额耗尽 6 小时；套餐级 403 访问被拒属失效模型证据，写 24 小时的 `unavailable`——这些一律不计入模型自身可靠性记录。这句话同时与代码和本变更日志自己的 #25 条目矛盾。

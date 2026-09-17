@@ -6,6 +6,13 @@ import { createExpertCouncil, defaultCouncilDataRoot } from "@expert-council/pi-
 export interface CliIo {
   stdout: { write(value: string): unknown };
   stderr: { write(value: string): unknown };
+  /**
+   * Terminal-ness, when the caller knows better than `process.stdout`. Tests need this because
+   * the layout choice and the colour default hang off it, and a suite running under a pipe
+   * otherwise cannot reach either branch - which is exactly how an explicit `--style auto` could
+   * claim to work while no test had ever run it on a terminal.
+   */
+  isTty?: boolean;
 }
 
 /**
@@ -120,7 +127,11 @@ security.observability.expertWindow is "interactive":
                     stream_truncated), at --timeout-ms, or if the stream file disappears
   --interval-ms N   poll interval, 50-60000 (default 1000)
   --timeout-ms N    maximum total follow time, 1000-3600000 (default 300000)
-  --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000)
+  --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000).
+                    Applies only once a terminal event has been seen and the final marker is
+                    missing or still being flushed; a stream that never reached a terminal
+                    event is bounded by --timeout-ms, because a fresh expert can be silent
+                    while the model thinks.
   --max-lines N     body lines shown per recorded content block, 1-50 (default 10; 3 while
                     a tool block is still streaming)
   --style S         panel: narration as prose and each tool call as a block naming the tool and
@@ -134,10 +145,6 @@ security.observability.expertWindow is "interactive":
   --max-chars N     clamp per shown body line, 20-400 (default 120). Plain mode only: panel mode
                     lets the terminal wrap text, which is what keeps a sentence whole instead of
                     ending it at an arbitrary column.
-                    Applies only once a terminal event has been seen and the final marker is
-                    missing or still being flushed; a stream that never reached a terminal
-                    event is bounded by --timeout-ms, because a fresh expert can be silent
-                    while the model thinks.
 Without --follow it prints what already exists and exits. Never feed a path from
 model output or task text into --exec or --dir; both are operator arguments.\n\nGlobal options:\n  --config PATH       JSON configuration file\n  --cwd PATH          project workspace\n  --telemetry PATH    local JSONL outcome store\n  --state PATH        durable council state file\n  --cost-policy NAME  economy, balanced, speed, or legacy quality\n  --composition NAME  saved council composition from council-compositions.json\n  --model KEY         pin one provider/id model for a delegation\n`;
 }
@@ -152,7 +159,12 @@ function human(command: string, value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-/** Kinds that close a stream; `watch --follow` must stop at the first one it sees. */
+/**
+ * Kinds that end a delegation's turn. `watch --follow` does not stop at the first one it sees:
+ * a retried or escalated delegation keeps appending to the same file, so the last terminal wins
+ * and the follower closes on `delegation_final`, or - when no final marker ever arrives - once
+ * the stream has been silent for `--quiet-ms`.
+ */
 const WATCH_TERMINAL_KINDS = new Set(["completed", "failed", "stopped", "stream_truncated"]);
 /** Written by a runtime that knows the delegation, not merely one attempt, has ended. */
 const WATCH_FINAL_KIND = "delegation_final";
@@ -389,8 +401,12 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   if (styleOption !== undefined && !["auto", "panel", "plain"].includes(styleOption)) {
     throw new Error(`watch --style must be auto, panel or plain (got ${styleOption})`);
   }
-  const isTty = process.stdout.isTTY === true;
-  const style = styleOption ?? (isTty ? "panel" : "plain");
+  const isTty = io.isTty ?? process.stdout.isTTY === true;
+  // `auto` is a request, not a layout: it has to be resolved before anything compares against
+  // "panel", or passing `--style auto` by hand selects neither branch and the operator gets the
+  // single-line form on a terminal while the help text promises the opposite.
+  const requested = styleOption ?? "auto";
+  const style = requested === "auto" ? (isTty ? "panel" : "plain") : requested;
   const columns =
     integerOption(args, "--columns", 20, 400)
     ?? (isTty && typeof process.stdout.columns === "number" ? process.stdout.columns : 0);

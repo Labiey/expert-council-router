@@ -295,6 +295,31 @@ describe("panel layout for an observer window", () => {
     expect(displayWidth("")).toBe(0);
   });
 
+  it("keeps recorded escape sequences out of the terminal", () => {
+    // A tool result can contain anything a build printed or a repository holds, including an OSC
+    // sequence that renames the window. Plain mode already stripped control bytes; the panel view
+    // must not become a way for recorded data to drive the operator's terminal.
+    const esc = String.fromCharCode(27);
+    const bel = String.fromCharCode(7);
+    const hostile = `before${esc}]0;PWNED${bel}after`;
+    const plain = formatExpertPanel(frame("tool_output", { tool: "bash", text: hostile }), { maxLines: 10 });
+    expect(plain.join("|")).not.toContain(esc);
+    expect(plain.join("|")).not.toContain(bel);
+    expect(plain.join("|")).toContain("before");
+    expect(plain.join("|")).toContain("after");
+    // With colour on, the only escapes present are the ones this renderer added itself.
+    const coloured = formatExpertPanel(frame("tool_output", { tool: "bash", text: hostile }), {
+      color: true,
+      columns: 40,
+      maxLines: 10,
+    });
+    expect(coloured.join("|").split(esc).length - 1).toBeLessThanOrEqual(6);
+    // The introducer is gone, so the surviving letters cannot re-form a sequence.
+    expect(coloured.join("")).not.toContain(esc + "]");
+    // The same holds for narration, which is printed verbatim apart from control sanitising.
+    expect(formatExpertPanel(frame("assistant_text", { text: `x${esc}[2Y` })).join("")).not.toContain(esc);
+  });
+
   it("falls back to the single-line form for structure and terminal events", () => {
     const completed = formatExpertPanel(frame("completed", { status: "success", durationMs: 76_000 }));
     expect(completed).toEqual([formatExpertEvent(frame("completed", { status: "success", durationMs: 76_000 }))]);

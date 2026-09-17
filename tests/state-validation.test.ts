@@ -171,3 +171,53 @@ describe("council state snapshot schema", () => {
     expect(input.filesChanged).toHaveLength(1_500);
   });
 });
+
+describe("a written state record must be readable by the build that wrote it (#51)", () => {
+  const snapshotWith = (provisioning: Record<string, unknown>) => ({
+    version: 1,
+    plans: [],
+    executions: [],
+    results: [{
+      executionId: "exec_one",
+      result: {
+        status: "success",
+        role: "debugger",
+        model: "p/m",
+        summary: "audited the scope",
+        executionMetadata: {
+          attempts: 1,
+          workspace: "C:/ws",
+          isolated: true,
+          provisioning,
+          verification: [{ command: "npm test", status: "passed", someFutureField: 7 }],
+        },
+      },
+    }],
+  });
+
+  it("carries the provisioning script-suppression class through a round trip", () => {
+    // 0.8.6 started writing `provisioning.scriptSuppression`. The nested schema was strict, so a
+    // state file became unreadable to the very build that produced it, and the installed-plugin
+    // smoke test failed on an operator's real data directory while every unit test stayed green:
+    // nothing had ever fed a written record back through the parser.
+    const parsed = parseCouncilStateSnapshot(snapshotWith({
+      status: "ready",
+      packageManager: "npm",
+      command: "npm ci --ignore-scripts",
+      durationMs: 1_700,
+      detail: "Provisioned with npm.",
+      scriptSuppression: "flag",
+    }));
+    const metadata = parsed.results[0]?.result.executionMetadata as
+      | { provisioning?: { scriptSuppression?: string } }
+      | undefined;
+    expect(metadata?.provisioning?.scriptSuppression).toBe("flag");
+  });
+
+  it("keeps a known field's enum while tolerating a key it has not met", () => {
+    // Forward compatibility must not mean "accept anything": a wrong value for a field the schema
+    // knows about is still refused.
+    expect(() => parseCouncilStateSnapshot(snapshotWith({ status: "ready", scriptSuppression: "trust-me" }))).toThrow();
+    expect(() => parseCouncilStateSnapshot(snapshotWith({ status: "ready", aFieldFromNextRelease: { deep: true } }))).not.toThrow();
+  });
+});

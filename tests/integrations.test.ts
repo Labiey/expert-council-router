@@ -655,6 +655,35 @@ ${line("failed", { status: "failed", failureType: "timeout" })}
       expect(lines[at("bash #1 - full record on line 9") - 1]).toBe("");
     });
   });
+
+  it("resolves an explicit --style auto the same way as the default on a terminal", async () => {
+    // `auto` is a request, not a layout. Comparing the raw option against "panel" meant that a
+    // caller who typed `--style auto` - the documented default - got the single-line form in a
+    // terminal while the help promised blocks, and no test could see it because a suite under a
+    // pipe only ever exercises the plain branch.
+    const stream = [
+      line("assistant_text", { attempt: 1, text: "Prose should arrive without a timestamp prefix." }),
+      line("tool_output", { attempt: 1, tool: "bash", argsSummary: "npm test", text: "ok", line: 2 }),
+      line("delegation_final"),
+    ].join("\n") + "\n";
+    await withStream(stream, async (dir) => {
+      const onTerminal = () => {
+        const captured = capture();
+        return { io: { ...captured.io, isTty: true }, out: captured.out };
+      };
+      const explicit = onTerminal();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--style", "auto", "--no-color"], explicit.io)).toBe(0);
+      const implicit = onTerminal();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--no-color"], implicit.io)).toBe(0);
+      expect(explicit.out.join("")).toBe(implicit.out.join(""));
+      expect(explicit.out.join("")).toContain("$ npm test #1 - full record on line 2");
+      expect(explicit.out.join("")).not.toContain("says:");
+      // And on a pipe, `auto` still means plain - the byte-for-byte form redirect relies on.
+      const piped = capture();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--style", "auto", "--no-color"], piped.io)).toBe(0);
+      expect(piped.out.join("")).toContain("says:");
+    });
+  });
 });
 
 describe("MCP semantic surface", () => {

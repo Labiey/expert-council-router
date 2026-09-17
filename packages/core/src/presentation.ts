@@ -236,10 +236,11 @@ export function isContentEvent(event: Pick<ExpertObservabilityEvent, "kind">): b
 
 /**
  * Body lines for an observer window: the *tail* (the newest part is what one watches for),
- * at most `maxLines` lines, each clamped to `maxChars` so a single minified line cannot wrap
- * the console. Control characters are stripped per line - a stream is data, not a terminal
- * protocol - and hidden lines are announced rather than silently dropped (#21's rule that a
- * truncation must be visible where it happened).
+ * at most `maxLines` lines of the payload plus one notice line when some were hidden - so a
+ * caller asking for 10 can receive 11, which the repo's own test pins - each clamped to
+ * `maxChars` so a single minified line cannot wrap the console. Control characters are stripped
+ * per line - a stream is data, not a terminal protocol - and hidden lines are announced rather
+ * than silently dropped (#21's rule that a truncation must be visible where it happened).
  */
 const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f]", "g");
 const ELLIPSIS = "…";
@@ -284,6 +285,9 @@ export interface ExpertPanelOptions {
 }
 
 const ANSI_BACKGROUND = "\u001b[48;5;236m";
+// One step lighter than the body, so two blocks that end up adjacent still show a seam. The grey
+// ramp runs 232 (darkest) to 255 (lightest), so 238 reads as a header band rather than a new block.
+const ANSI_HEADER_BACKGROUND = "\u001b[48;5;238m";
 const ANSI_BOLD = "\u001b[1m";
 const ANSI_DIM = "\u001b[2m";
 const ANSI_RESET = "\u001b[0m";
@@ -309,7 +313,7 @@ export function displayWidth(text: string): number {
 }
 
 function collapseLine(text: string): string {
-  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001a\u001c-\u001f\u007f\u0085\u00a0]/g, "\u2423").replace(/\r?\n/g, " ");
+  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001b\u001c-\u001f\u007f\u0085\u00a0]/g, "\u2423").replace(/\r?\n/g, " ");
 }
 
 /** A shaded block line: background for the whole terminal width, or plain text when uncoloured. */
@@ -317,7 +321,7 @@ function blockLine(text: string, options: ExpertPanelOptions, bold = false): str
   if (options.color !== true) return text;
   const columns = typeof options.columns === "number" && options.columns > 0 ? options.columns : 0;
   const pad = columns > displayWidth(text) ? " ".repeat(columns - displayWidth(text)) : "";
-  return `${bold ? ANSI_BOLD : ""}${ANSI_BACKGROUND}${text}${pad}${ANSI_RESET}`;
+  return `${bold ? ANSI_BOLD : ""}${bold ? ANSI_HEADER_BACKGROUND : ANSI_BACKGROUND}${text}${pad}${ANSI_RESET}`;
 }
 
 /**

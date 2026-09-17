@@ -14,6 +14,7 @@ import {
 } from "../packages/core/src/index.js";
 import {
   ContentRecorder,
+  flushPoint,
   headTailSeam,
   recordsAssistant,
   recordsToolArgs,
@@ -165,6 +166,37 @@ describe("a recorder pushes only what has not been pushed", () => {
     expect(emitted.endsWith(" ")).toBe(true);
     expect(/\w$/.test(emitted.trimEnd())).toBe(true); // a whole word, not half of one
     expect(words.slice(emitted.length).startsWith("bravo12")).toBe(true);  // cut before a whole word
+  });
+
+  it("measures the narration ceiling in bytes, not UTF-16 units", () => {
+    // An audit of this file found that the ceiling was compared in bytes but cut in units, so one
+    // CJK character - three bytes each - let 1500 bytes through a 600-byte limit.
+    const cjk = "\u4e2d".repeat(500);
+    const cut = flushPoint(cjk, false, 80, 600);
+    expect(cut).toBeGreaterThan(0);
+    expect(Buffer.byteLength(cjk.slice(0, cut))).toBeLessThanOrEqual(600);
+    // The same holds for the minimum: it is a byte threshold, not a character count.
+    expect(flushPoint("\u4e2d".repeat(30) + "\n", false, 80, 600)).toBe(31);
+  });
+
+  it("never leaves a lone surrogate at a head/tail seam", () => {
+    // Slicing by index can cut an astral character in half; the orphan survives JSON and shows up
+    // as a replacement glyph in the operator's window.
+    const text = "a".repeat(80) + "\u{1F600}".repeat(40) + "b".repeat(80);
+    // 262 bytes gives a 91-unit half: 80 'a' plus 11 units, which lands one surrogate into the
+    // emoji run - and 91 units from the end starts on the other half of a pair.
+    const seam = headTailSeam(text, 262).text;
+    const isHigh = (code: number) => code >= 0xd800 && code <= 0xdbff;
+    const isLow = (code: number) => code >= 0xdc00 && code <= 0xdfff;
+    let orphan = false;
+    for (let index = 0; index < seam.length; index += 1) {
+      const code = seam.charCodeAt(index);
+      if (isHigh(code) && !isLow(seam.charCodeAt(index + 1))) orphan = true;
+      if (isLow(code) && !isHigh(seam.charCodeAt(index - 1))) orphan = true;
+    }
+    expect(orphan).toBe(false);
+    expect(seam).toContain("omitted");
+    expect(headTailSeam("ab", 4).text).toBe("ab");   // a short string is never truncated
   });
 
   it("holds a stream of tiny fragments and flushes them once", () => {

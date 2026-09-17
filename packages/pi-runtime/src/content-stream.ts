@@ -90,8 +90,11 @@ export function headTailSeam(text: string, maxBytes: number): { text: string; om
   if (bytes <= maxBytes) return { text, omittedBytes: 0 };
   const chars = Math.max(0, Math.floor(maxBytes / 2) - 40);
   if (chars < 1) return { text: "", omittedBytes: bytes };
-  const head = text.slice(0, chars);
-  const tail = text.slice(text.length - chars);
+  // Slicing by UTF-16 index can cut an astral character in half and leave a lone surrogate in the
+  // stored text, which then survives JSON and shows up as a replacement glyph. Snap both edges
+  // back onto a character boundary.
+  const head = snapToBoundary(text.slice(0, chars), "end");
+  const tail = snapToBoundary(text.slice(text.length - chars), "start");
   const seam = `
 [+${bytes - headTailBytes(head, tail)} bytes between head and tail omitted]
 `;
@@ -100,6 +103,17 @@ export function headTailSeam(text: string, maxBytes: number): { text: string; om
 
 function headTailBytes(head: string, tail: string): number {
   return Buffer.byteLength(head) + Buffer.byteLength(tail);
+}
+
+/** Drop a split surrogate from one edge of a byte-sliced string. */
+function snapToBoundary(text: string, edge: "start" | "end"): string {
+  if (text.length === 0) return text;
+  if (edge === "end") {
+    const last = text.charCodeAt(text.length - 1);
+    return last >= 0xd800 && last <= 0xdbff ? text.slice(0, -1) : text;
+  }
+  const first = text.charCodeAt(0);
+  return first >= 0xdc00 && first <= 0xdfff ? text.slice(1) : text;
 }
 
 /**
@@ -115,7 +129,17 @@ export function flushPoint(held: string, final: boolean, minBytes = 80, maxBytes
   const bytes = Buffer.byteLength(held);
   if (bytes >= minBytes && NARRATION_BOUNDARY.test(held)) return held.length;
   if (bytes < maxBytes) return 0;
-  const ceiling = Math.min(held.length, maxBytes);
+  // The ceiling is stated in bytes but a cut is a UTF-16 index, and one CJK character is three
+  // bytes: measuring the limit in units emitted 1500 bytes against a 600-byte ceiling. Walk
+  // forward by code points to the last index that still fits, which also cannot split a pair.
+  let ceiling = 0;
+  let used = 0;
+  for (const character of held) {
+    const size = Buffer.byteLength(character);
+    if (used + size > maxBytes) break;
+    used += size;
+    ceiling += character.length;
+  }
   for (let index = ceiling; index > 0; index -= 1) {
     const char = held[index - 1];
     // Include the whitespace in what is emitted, so the held remainder starts on a word.
@@ -124,7 +148,6 @@ export function flushPoint(held: string, final: boolean, minBytes = 80, maxBytes
   // One enormous unbroken token: nothing better exists, and stalling forever is worse.
   return ceiling;
 }
-
 /** Keep only the tail of a payload: the `assistant+tool-tail` storage policy. The cut is
  * byte-exact and walks back from the end, so a multi-byte character is never split. */
 export function tailOnly(text: string, maxBytes: number): { text: string; omittedBytes: number } {

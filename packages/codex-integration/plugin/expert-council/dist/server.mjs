@@ -313381,15 +313381,20 @@ var expertResult = external_exports.object({
       packageManager: identifier.optional(),
       command: boundedText(8e3).optional(),
       durationMs: external_exports.number().finite().min(0).optional(),
-      detail: boundedText(8e3).optional()
-    }).strict().optional(),
+      detail: boundedText(8e3).optional(),
+      // How dependency-install scripts were suppressed while preparing the workspace. The
+      // runtime has written this field since 0.8.6, and a strict schema that does not know it
+      // makes a state file unreadable to the very build that produced it - which is how the
+      // installed-plugin smoke test failed while every unit test stayed green.
+      scriptSuppression: external_exports.enum(["flag", "env", "unavailable", "unverified"]).optional()
+    }).passthrough().optional(),
     verification: external_exports.array(external_exports.object({
       command: boundedText(1e3).optional(),
       status: external_exports.enum(["passed", "failed", "not-run"]),
       summary: boundedText(2e3).optional(),
       exitCode: external_exports.number().int().min(0).max(255).optional(),
       outputTail: boundedText(2e3).optional()
-    }).strict()).max(20).optional()
+    }).passthrough()).max(20).optional()
   }).passthrough().optional()
 }).strict();
 var councilStateSnapshotSchema = external_exports.object({
@@ -319418,8 +319423,8 @@ function headTailSeam(text, maxBytes) {
   const chars = Math.max(0, Math.floor(maxBytes / 2) - 40);
   if (chars < 1)
     return { text: "", omittedBytes: bytes };
-  const head = text.slice(0, chars);
-  const tail = text.slice(text.length - chars);
+  const head = snapToBoundary(text.slice(0, chars), "end");
+  const tail = snapToBoundary(text.slice(text.length - chars), "start");
   const seam = `
 [+${bytes - headTailBytes(head, tail)} bytes between head and tail omitted]
 `;
@@ -319427,6 +319432,16 @@ function headTailSeam(text, maxBytes) {
 }
 function headTailBytes(head, tail) {
   return Buffer.byteLength(head) + Buffer.byteLength(tail);
+}
+function snapToBoundary(text, edge) {
+  if (text.length === 0)
+    return text;
+  if (edge === "end") {
+    const last = text.charCodeAt(text.length - 1);
+    return last >= 55296 && last <= 56319 ? text.slice(0, -1) : text;
+  }
+  const first = text.charCodeAt(0);
+  return first >= 56320 && first <= 57343 ? text.slice(1) : text;
 }
 var NARRATION_BOUNDARY = /[\n.!?\u3002\uff01\uff1f]["')\]]?$/;
 function flushPoint(held, final, minBytes = 80, maxBytes = 600) {
@@ -319437,7 +319452,15 @@ function flushPoint(held, final, minBytes = 80, maxBytes = 600) {
     return held.length;
   if (bytes < maxBytes)
     return 0;
-  const ceiling = Math.min(held.length, maxBytes);
+  let ceiling = 0;
+  let used = 0;
+  for (const character of held) {
+    const size = Buffer.byteLength(character);
+    if (used + size > maxBytes)
+      break;
+    used += size;
+    ceiling += character.length;
+  }
   for (let index3 = ceiling; index3 > 0; index3 -= 1) {
     const char = held[index3 - 1];
     if (char === " " || char === "	" || char === "\n")

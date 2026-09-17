@@ -11,6 +11,13 @@ try {
   await cp(source, temporaryPlugin, { recursive: true });
   const isolatedAppData = path.join(temporaryPlugin, "empty-appdata");
   await mkdir(isolatedAppData);
+  // The council's own data root has to be isolated too. Without this the smoke test reads the
+  // operator's live state, telemetry and model assessment, so it can pass or fail depending on
+  // what their real delegations left behind - and it writes into their private directory during
+  // a routine `npm run validate`. APPDATA and NODE_PATH were already fenced off for the same
+  // "must not pass by accident" reason; this was the handle still open.
+  const isolatedDataDir = path.join(temporaryPlugin, "empty-council-data");
+  await mkdir(isolatedDataDir);
 
   const mcpFile = JSON.parse(await readFile(path.join(temporaryPlugin, ".mcp.json"), "utf8"));
   const servers = mcpFile.mcp_servers ?? mcpFile.mcpServers ?? mcpFile;
@@ -36,6 +43,7 @@ try {
       // A Git marketplace install must not accidentally pass because the
       // developer has a compatible SDK in their global npm directory.
       APPDATA: isolatedAppData,
+      EXPERT_COUNCIL_DATA_DIR: isolatedDataDir,
       NODE_PATH: "",
       PI_CODING_AGENT_MODULE: "",
     },
