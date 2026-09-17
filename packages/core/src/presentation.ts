@@ -251,9 +251,12 @@ const ELLIPSIS = "…";
  * Tab and line feed survive (they are layout, not escape); everything else becomes a visible open
  * box, so nothing is silently eaten (#21's rule that a removal has to be visible). A lone carriage
  * return is deliberately not layout: it can drive the cursor back to column 0 and overwrite a
- * rendered line, so line endings are normalised first and any remaining CR is neutralised.
+ * rendered line, so line endings are normalised first and any remaining CR is neutralised. The
+ * Unicode line and paragraph separators join them: the single-line renderer already swallowed U+2028
+ * and U+2029 through its whitespace collapse, so leaving them in panel output let the two renderers
+ * disagree about what one line is.
  */
-const CONTROL_RUNS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00a0]+/g;
+const CONTROL_RUNS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00a0\u2028\u2029]+/g;
 function stripControlChars(text: string): string {
   // A CRLF pair is one break and stays one break. A carriage return with no line feed after it is
   // not layout at all - it drives the cursor back to column 0 and lets a later write overwrite a

@@ -6,6 +6,20 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### Fixed
 
+- **Closed the last disagreement between the two renderers.** A fourth verification round reported
+  no BLOCKER and no MAJOR, and named one residual: U+2028 and U+2029 (Unicode line and paragraph
+  separators) were swallowed by the single-line renderer's whitespace collapse but survived inside a
+  panel line, so the two views disagreed about what one line is. They now go through the same
+  policy as the rest of the family. Confirmed by removing them from the character class and watching
+  the new case fail.
+
+  The round also confirmed the shape of the rest by measurement rather than by reading: 880 hostile
+  render calls (20 event/field templates, 11 characters, 4 renderer surfaces, against both the
+  in-repo build and a freshly installed tarball) produced zero raw control characters; CRLF, tab and
+  line-feed layout and SGR colour output were verified intact; two consecutive builds left no diff
+  while a deliberate byte-changing edit made the artifact gate exit 1 and name the stale file, and
+  restoring it returned the gate to zero with blob hashes matching the index.
+
 - **A third verification round found that the control-character policy still had three holes**, and
   measured each one before fixing it. The panel's `started` line - the first thing an observer
   window shows - interpolated `event.role` and `event.model` raw, and a model id arrives from a

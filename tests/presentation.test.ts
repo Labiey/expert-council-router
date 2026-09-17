@@ -321,6 +321,15 @@ describe("panel layout for an observer window", () => {
     expect(String(namedHeader[0])).toContain("bash x");
     // A real CRLF answer still reads as two lines and leaves no placeholder behind.
     expect(formatExpertPanel(crlf).join(lf)).toBe("line one" + lf + "line two");
+    // Unicode line and paragraph separators are treated like the rest of the family, so the panel
+    // and the single-line renderer cannot disagree about what one line means.
+    const separators = frame("tool_output", {
+      tool: "bash", ok: true, text: "a" + String.fromCharCode(0x2028) + "b" + String.fromCharCode(0x2029) + "c",
+    });
+    const sepRendered = formatExpertPanel(separators).join(lf);
+    expect(sepRendered.includes(String.fromCharCode(0x2028))).toBe(false);
+    expect(sepRendered.includes(String.fromCharCode(0x2029))).toBe(false);
+    expect(sepRendered).toContain("a" + open + "b" + open + "c");
   });
 
   it("strips the C1 range too, not just the 7-bit escape", () => {
