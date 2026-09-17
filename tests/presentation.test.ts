@@ -332,7 +332,7 @@ describe("panel layout for an observer window", () => {
     expect(formatExpertEvent(thought)).not.toContain("says:");
     expect(formatExpertPanel(thought)).toEqual([
       "thinks \u2502 The lock is taken too late.",
-      "      So two arrivals race.",
+      "         So two arrivals race.",
     ]);
     const coloured = formatExpertPanel(thought, { color: true, columns: 40 });
     expect(coloured[0]).toContain(String.fromCharCode(27) + "[2m");

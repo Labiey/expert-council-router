@@ -344,6 +344,22 @@ describe("a recorder pushes only what has not been pushed", () => {
     expect(rec.stats.records).toBe(2);
   });
 
+  it("does not leave a stray leading space on the next chunk after a sentence cut", () => {
+    // The boundary rule ends a record at the period and hands the separating space to whatever
+    // comes next, which rendered as `thinks |  Read-only` with two spaces after the marker.
+    const { rec, records } = recorder("assistant", { reasoning: true });
+    const first = "The ceiling is per stream, so the recorder holds a fragment until there is something to show.";
+    const second = first + " So a chatty tool, not a chatty model, is what squeezes the budget out.";
+    rec.onReasoningText(first);
+    expect(records).toHaveLength(1);
+    expect(String(records[0]?.text)).toBe(first);
+    rec.onReasoningText(second, true);
+    expect(records).toHaveLength(2);
+    expect(String(records[1]?.text)).toBe("So a chatty tool, not a chatty model, is what squeezes the budget out.");
+    // Nothing is lost or duplicated across the two records, apart from the separator itself.
+    expect(String(records[0]?.text) + " " + String(records[1]?.text)).toBe(second);
+  });
+
   it("records nothing at all while the dial is none", () => {
     const { rec, records } = recorder("none");
     rec.onAssistantText("hello");

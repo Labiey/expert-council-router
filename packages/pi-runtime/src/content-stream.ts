@@ -248,11 +248,15 @@ export class ContentRecorder {
     if (cut <= 0) return;
     const emitText = held.slice(0, cut);
     if (!final && !emitText.trim()) return;
+    // A sentence-boundary cut leaves the separating space at the head of the next chunk, which
+    // showed up as a double space after the marker. Leading blanks carry nothing here - real
+    // indentation survives, because it belongs to lines *inside* the chunk, not before its first.
+    const shown = emitText.replace(/^[ \t]+/, "");
     state.sent = continuation ? state.sent + emitText : emitText;
     this.narration.set(channel, state);
     this.bytesConsidered += Buffer.byteLength(emitText);
     this.push("assistant_text", {
-      text: headTailSeam(emitText, this.options.eventBytes).text,
+      text: headTailSeam(shown, this.options.eventBytes).text,
       ...(channel === "reasoning" ? { reasoning: true } : {}),
     });
   }

@@ -342,9 +342,12 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
     const lines = text.replace(/\s+$/, "").split(/\r?\n/).map((line) => collapseLine(line));
     if (event.reasoning !== true) return lines;
     // Reasoning is marked wherever it appears, so a window cannot be read as the expert's speech
-    // by accident: a left rule in plain text, dim and italic once colour is on.
+    // by accident: a left rule in plain text, dim and italic once colour is on. Continuation lines
+    // indent to the cell *after* the rule, not to an arbitrary width - six spaces against a nine
+    // cell marker left every wrapped line hanging three cells to the left of the rule it follows.
+    const marker = "thinks \u2502 ";
     return lines.map((line, index) => {
-      const marked = index === 0 ? `thinks \u2502 ${line}` : `      ${line}`;
+      const marked = index === 0 ? marker + line : " ".repeat(displayWidth(marker)) + line;
       return options.color === true ? `${ANSI_DIM}${ANSI_ITALIC}${marked}${ANSI_RESET}` : marked;
     });
   }

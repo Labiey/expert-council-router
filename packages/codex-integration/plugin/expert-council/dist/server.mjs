@@ -319563,11 +319563,12 @@ var ContentRecorder = class {
     const emitText = held.slice(0, cut);
     if (!final && !emitText.trim())
       return;
+    const shown = emitText.replace(/^[ \t]+/, "");
     state2.sent = continuation ? state2.sent + emitText : emitText;
     this.narration.set(channel, state2);
     this.bytesConsidered += Buffer.byteLength(emitText);
     this.push("assistant_text", {
-      text: headTailSeam(emitText, this.options.eventBytes).text,
+      text: headTailSeam(shown, this.options.eventBytes).text,
       ...channel === "reasoning" ? { reasoning: true } : {}
     });
   }
