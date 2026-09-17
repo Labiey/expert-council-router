@@ -319203,6 +319203,13 @@ function buildWatchInvocation(cli, executionId2, windowTimeoutMs, limits) {
     "250",
     "--timeout-ms",
     String(Math.trunc(windowTimeoutMs)),
+    // The layout is stated, not guessed. `start` hands the child the handles this process was
+    // given, and the launcher spawns with stdio ignored, so the follower's own `isTTY` sniff
+    // reports a pipe and falls back to the single-line plain form - which is exactly what an
+    // operator saw: no blocks, no shading, in a window that is a terminal by construction.
+    "--style",
+    "panel",
+    "--color",
     // The configured display limits travel with the window: an operator who raised
     // contentWindowLines must not still get the follower's own default.
     ...limits ? ["--max-lines", String(Math.trunc(limits.maxLines)), "--max-chars", String(Math.trunc(limits.maxChars))] : []

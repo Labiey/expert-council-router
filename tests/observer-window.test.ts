@@ -67,6 +67,13 @@ describe("observer window command line", () => {
     expect(command).toContain("--exec exec_abc_1");
     expect(command).toContain("--follow");
     expect(command).toContain("--timeout-ms 900000");
+    // The window is *told* it is a terminal instead of left to sniff it. The launcher spawns with
+    // stdio ignored and `start` hands those handles down, so an isTTY probe inside the follower
+    // reports a pipe - which is how an operator ended up with the plain single-line form, no
+    // blocks and no shading, in a window that is a console by construction. Layout must be
+    // explicit here; `--style auto` is for a human at their own terminal.
+    expect(command).toContain("--style panel");
+    expect(command).toContain("--color");
     // A path with spaces must survive as one token inside the cmd command line.
     expect(command).toContain('"C:\\Program Files\\council\\cli\\dist\\index.js"');
     expect(quoteCmdToken("plain")).toBe("plain");

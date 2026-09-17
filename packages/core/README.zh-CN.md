@@ -473,6 +473,9 @@ expert-council watch --exec exec_abc123 --style panel --columns 100 --no-color
 
 - **`--style auto`（默认）只在终端里选 panel，其他一律 plain**，所以把流重定向到文件时，
   字节与面板出现之前完全一致。`--json` 既不渲染也不上色。
+- **观察窗口用的是显式版式。** 启动器在命令行里直接传 `--style panel --color`，不让跟随器去猜有没有
+  终端：它开出来的窗口继承的是被忽略的 stdio 句柄，在那里"猜"会报成管道，否则操作员会在真终端里看到
+  plain 版式。`--style auto` 仍是给"人坐在自己终端前"用的正确默认。
 - **要有块，挡位得真的记工具输出。** `none` 与 `assistant` 没有可放进块的内容，于是每次调用仍是一行
   暗淡的工具名——这正是那两挡的用途：看见活动，但不记内容。从 `assistant+tool-tail` 起，块里才有结果。
 - **`$ <命令>` 这个标题需要入参可见**：`redactToolArgs: false` 给一条有界的单行摘要，只有

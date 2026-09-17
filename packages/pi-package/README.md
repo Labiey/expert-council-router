@@ -463,6 +463,11 @@ expert-council watch --exec exec_abc123 --style panel --columns 100 --no-color
 - **`--style auto` (the default) picks panel for a terminal and plain for anything else**, so
   redirecting a stream to a file keeps producing exactly the bytes it produced before the panel
   existed. `--json` neither renders nor colours.
+- **An observer window is told which layout to use.** The launcher passes `--style panel --color`
+  explicitly rather than letting the follower sniff for a terminal: the window it spawns inherits
+  ignored stdio handles, where a sniff reports a pipe, and an operator would otherwise get the plain
+  form inside a real console. `--style auto` stays the right default for a human at their own
+  terminal.
 - **A block needs a dial that records tool output.** At `none` and `assistant` there is nothing to
   put inside one, so each call stays a single dim line naming the tool - which is what those dials
   are for: activity without content. From `assistant+tool-tail` up, the block carries the result.
