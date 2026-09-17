@@ -622,6 +622,39 @@ ${line("failed", { status: "failed", failureType: "timeout" })}
       expect(bogus.err.join("")).toContain("auto, panel or plain");
     });
   });
+
+  it("separates one block from the next, but not a block from itself", async () => {
+    // Seen in an operator's screenshot: two grey bands touching read as one block, so the seam
+    // between them is invisible. A running tool that repaints is the opposite case - it is one
+    // block growing, and blank lines through the middle of it would shred it.
+    const block = (tool: string, text: string, extra: Record<string, unknown> = {}) =>
+      line("tool_output", { attempt: 1, tool, text, ...extra });
+    const stream = [
+      block("read", "first payload", { line: 3 }),
+      block("grep", "second payload", { line: 4 }),
+      block("bash", "building", { streaming: true }),
+      block("bash", "building\ncompiled", { streaming: true }),
+      block("bash", "done", { line: 9 }),
+      line("delegation_final"),
+    ].join("\n") + "\n";
+    await withStream(stream, async (dir) => {
+      const { io, out } = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--style", "panel", "--no-color"],
+        io,
+      )).toBe(0);
+      const lines = out.join("").split("\n");
+      const at = (needle: string) => lines.findIndex((value) => value === needle);
+      // The second block starts on its own line, with a blank above it.
+      expect(lines[at("grep #1 - full record on line 4") - 1]).toBe("");
+      // Two repaints of the same running tool carry no blank between them.
+      expect(at("bash #1 - running")).toBeGreaterThan(-1);
+      expect(lines[at("bash #1 - running") + 1]).toBe("  building");
+      expect(lines[at("bash #1 - running") + 2]).toBe("bash #1 - running");
+      // The finished block is a new block, so it is separated again.
+      expect(lines[at("bash #1 - full record on line 9") - 1]).toBe("");
+    });
+  });
 });
 
 describe("MCP semantic surface", () => {

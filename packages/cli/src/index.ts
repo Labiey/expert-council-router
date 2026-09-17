@@ -422,6 +422,8 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   let malformed = 0;
   let printed = 0;
   let previousKind: string | undefined;
+  let previousTool: string | undefined;
+  let previousStreaming = false;
   const deadline = Date.now() + (follow ? timeoutMs : 0);
   // Bounded by construction: one pass without --follow, and with --follow at most
   // ceil(timeout/interval) polls plus the deadline check on each pass.
@@ -460,13 +462,19 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
         } else if (event !== undefined) {
           const kind = String(event.kind ?? "");
           if (style === "panel" && content !== undefined) {
-            // A block and the prose around it are different things, so they get a blank line
-            // between them; consecutive records of one kind do not, or a long answer turns
-            // into a picket fence.
-            if (
-              (previousKind === "tool_output" && kind === "assistant_text")
-              || (previousKind === "assistant_text" && kind === "tool_output")
-            ) {
+            // Separation rules, learned from an operator's screenshot: two grey blocks touching
+            // each other read as one block, so a block boundary gets a blank line even when no
+            // prose intervenes. Prose to prose does not, or a streamed answer becomes a picket
+            // fence. And two partial renders of the *same* running tool are one block growing,
+            // which must not be broken apart.
+            const streaming = event.streaming === true;
+            const tool = typeof event.tool === "string" ? event.tool : undefined;
+            const previousWasBlock = previousKind === "tool_output";
+            const isBlock = kind === "tool_output";
+            const growingSameBlock = previousWasBlock && isBlock && streaming && previousStreaming
+              && tool === previousTool;
+            if ((isBlock || previousWasBlock) && (kind === "assistant_text" || isBlock)
+              && previousKind !== undefined && !growingSameBlock) {
               io.stdout.write("\n");
             }
             for (const panelLine of content.panel(event, {
@@ -490,6 +498,8 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
             }
           }
           previousKind = kind;
+          previousTool = typeof event.tool === "string" ? event.tool : undefined;
+          previousStreaming = event.streaming === true;
           printed += 1;
         } else {
           malformed += 1;

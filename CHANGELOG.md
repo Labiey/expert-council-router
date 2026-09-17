@@ -64,6 +64,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
   six-space indents I took for the plain body were the expert's own JSON. No test had ever asserted
   the launcher's full command line, which is why the flags could be missing and 16 tests still
   passed; one now does, and removing the flags turns it red.
+- **相邻的工具块看起来像一个块（缺陷 #48）。** 空行只在散文与块相遇时才会插入，所以两条灰带背靠背时
+  会合并成一堆，操作员看不出一次工具调用在哪里结束。现在相邻块之间也会隔开，标题比正文浅一档底色，
+  即使行相接也留着接缝；而一个正在运行的工具重绘时不会被拆散，因为它就是一个块在长。两条规则各自做过
+  反证。
 - **Published packages no longer ship dead links (#38, found while sweeping the audit's
   findings).** The per-package READMEs are generated mirrors that go inside the tarballs, and
   three of their links pointed at repository-root files that were never packaged -
@@ -516,6 +520,10 @@ All notable changes to Expert Council are documented here. Versions follow seman
   自己的屏幕发现的；我当时读了同一个窗口的尾部，得出"什么都没变"的**错误**结论——块只是被滚出了屏幕顶部，
   而我当成 plain 正文缩进的那六个空格，其实是专家自己 JSON 里的缩进。而且从来没有测试去断言启动器拼出的
   完整命令行，所以 flag 丢了 16 个测试照样全绿；现在有了，摘掉 flag 就会变红。
+- **相邻的工具块看起来像一个块（缺陷 #48）。** 空行只在散文与块相遇时才会插入，所以两条灰带背靠背时
+  会合并成一堆，操作员看不出一次工具调用在哪里结束。现在相邻块之间也会隔开，标题比正文浅一档底色，
+  即使行相接也留着接缝；而一个正在运行的工具重绘时不会被拆散，因为它就是一个块在长。两条规则各自做过
+  反证。
 - **发布出去的包不再带死链接（#38，清扫审计结论时顺带查出）。** 各包的 README 是会被打进 tarball 的生成镜像，而其中三条链接指向从未被打包的仓库根文件——`SECURITY.md`、`shared/skills/expert-council/SKILL.md`、`config/examples/balanced.example.json`——每语言 10 条、五个包全是死链；另有一个语言切换器指向 `README.zh-CN.md`，而同步流程从来就没拷过它。现在镜像步骤会把中文 README 一并装入包内，并在生成时**只重写那些在包内无法解析的相对链接**为仓库 URL；其余字节与源文件保持一致，源 README 仍保留相对链接以便离线阅读。新增守卫测试遍历所有随包发布的 README，任何指向包外的相对链接即失败。该修复做了反证：把重写摘掉，恰好点名三条 offender；并且先确认"重新生成真的执行了"再采信结果（第一次反证因为我在 cmd 里用了 `>/dev/null`，构建根本没跑，于是得出"守卫无效"的假结论——错在我的探针，不在守卫）。
 - **文档准确性清扫（#34-#38 审计的后续，中英双份）。** 七条陈述描述的是代码没有的行为，还有一条示例跑不通：
   - README 写着"限流或认证错误等瞬态提供商失败绝不产生标记"。事实上从 0.8.5 起它们**就是刻意产生标记的**：瞬态 TPM/RPM 限流写 2 分钟的 `rate-limited` 并连带同提供商兄弟模型；传输不可达写 5 分钟的 `transport-unstable` 且只标记失败路由；配额耗尽 6 小时；套餐级 403 访问被拒属失效模型证据，写 24 小时的 `unavailable`——这些一律不计入模型自身可靠性记录。这句话同时与代码和本变更日志自己的 #25 条目矛盾。

@@ -463,6 +463,10 @@ expert-council watch --exec exec_abc123 --style panel --columns 100 --no-color
 - **`--style auto` (the default) picks panel for a terminal and plain for anything else**, so
   redirecting a stream to a file keeps producing exactly the bytes it produced before the panel
   existed. `--json` neither renders nor colours.
+- **Blocks are separated from each other, not only from prose.** Two grey bands touching read as a
+  single block, so a blank line now goes between consecutive blocks and the header band is one shade
+  lighter than its body, so a seam survives even when lines do touch. A tool that repaints while it
+  runs is deliberately *not* broken apart: that is one block growing.
 - **An observer window is told which layout to use.** The launcher passes `--style panel --color`
   explicitly rather than letting the follower sniff for a terminal: the window it spawns inherits
   ignored stdio handles, where a sniff reports a pipe, and an operator would otherwise get the plain

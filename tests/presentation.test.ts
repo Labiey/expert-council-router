@@ -273,6 +273,11 @@ describe("panel layout for an observer window", () => {
       columns: 30,
     });
     expect(coloured[0]).toContain(escape);
+    // The header band is one step lighter than the body, so two blocks that end up adjacent
+    // still show a seam instead of merging into one grey mass.
+    expect(coloured[0]).toContain("48;5;238");
+    expect(coloured[1]).toContain("48;5;236");
+    expect(coloured[1]).not.toContain("48;5;238");
     // The background has to reach the right edge, which needs the padded width measured in
     // terminal cells, not in characters.
     const cjk = formatExpertPanel(frame("tool_output", { tool: "bash", text: "\u4e2d\u6587" }), {
