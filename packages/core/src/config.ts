@@ -256,6 +256,12 @@ export const councilConfigSchema = z.object({
            * to show would look like a broken feature rather than a configuration mistake.
            */
           autoOpenWindow: z.boolean().default(false),
+          // Records the model's reasoning parts as well, on the same cursor rules as narration and
+          // marked `reasoning: true` on the event. Default off, and it does nothing unless a
+          // content dial is already on. Deliberately reachable only from configuration and the
+          // environment: the project rule is not to store chain of thought, so the exception has
+          // to be something an operator typed, never something a task or tool argument produced.
+          recordReasoning: z.boolean().default(false),
           /**
            * How much of the conversation the event stream records. Five ascending dials so
            * the operator chooses the risk rather than a boolean choosing it for them:
@@ -315,6 +321,7 @@ export const councilConfigSchema = z.object({
           streamToHost: true,
           redactToolArgs: true,
           autoOpenWindow: false,
+          recordReasoning: false,
           contentStream: "none",
           contentByRole: {},
           contentWindowLines: 10,
@@ -389,7 +396,7 @@ export const councilConfigSchema = z.object({
       toolGrants: {},
       expertLifetime: "host-bound",
       observability: {
-        expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false,
+        expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false, recordReasoning: false,
         contentStream: "none", contentByRole: {}, contentWindowLines: 10, contentWindowChars: 120,
         contentEventBytes: 65536, contentFileBytes: 10485760, contentTotalBytes: 209715200,
       },

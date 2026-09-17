@@ -623,6 +623,31 @@ ${line("failed", { status: "failed", failureType: "timeout" })}
     });
   });
 
+  it("carries the reasoning marker through the frame whitelist into both layouts", async () => {
+    // The recorder marks reasoning on the event; if the follower's whitelist dropped the field,
+    // reasoning would print as ordinary speech, which is the one outcome that must not happen.
+    const stream = [
+      line("assistant_text", { attempt: 1, reasoning: true, text: "The caller holds no lock here." }),
+      line("assistant_text", { attempt: 1, text: "I will read the caller now." }),
+      line("delegation_final"),
+    ].join("\n") + "\n";
+    await withStream(stream, async (dir) => {
+      const plain = capture();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--style", "plain"], plain.io)).toBe(0);
+      expect(plain.out.join("")).toContain("thinks: The caller holds no lock here.");
+      expect(plain.out.join("")).toContain("says: I will read the caller now.");
+
+      const panel = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--style", "panel", "--no-color"],
+        panel.io,
+      )).toBe(0);
+      expect(panel.out.join("")).toContain("thinks \u2502 The caller holds no lock here.");
+      expect(panel.out.join("")).toContain("I will read the caller now.");
+      expect(panel.out.join("")).not.toContain("thinks \u2502 I will read");
+    });
+  });
+
   it("separates one block from the next, but not a block from itself", async () => {
     // Seen in an operator's screenshot: two grey bands touching read as one block, so the seam
     // between them is invisible. A running tool that repaints is the opposite case - it is one

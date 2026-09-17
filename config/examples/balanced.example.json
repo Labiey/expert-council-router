@@ -67,6 +67,7 @@
       "streamToHost": true,
       "redactToolArgs": true,
       "autoOpenWindow": false,
+      "recordReasoning": false,
       "contentStream": "none",
       "contentByRole": {}
     },

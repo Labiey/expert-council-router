@@ -41,9 +41,19 @@ applies a dial per role and `EXPERT_COUNCIL_CONTENT` overrides both for one proc
 - **Only configuration and the environment can raise the dial.** No tool argument, expert
   output, model recommendation, or task text can turn recording on. This is a privacy switch,
   not a performance one.
-- **Chain of thought is never recorded, at any dial.** The extraction path keeps only
-  `type: "text"` content parts, so `thinking` and `reasoning` parts cannot enter a stream file;
-  a dedicated test fails if one ever does.
+- **Chain of thought is off by default, at every dial.** The extraction path keeps only
+  `type: "text"` content parts, so `thinking` and `reasoning` parts cannot enter a stream file, and
+  a dedicated test fails if one ever does. The single exception is an explicit operator switch:
+  `security.observability.recordReasoning`, or `EXPERT_COUNCIL_REASONING=1` for one process, which
+  additionally requires a dial that records assistant text. When it is on, every stored record
+  carries `reasoning: true` and renders as `thinks` rather than `says`, so a reader cannot mistake
+  what a model thought at itself for what it chose to say; the runtime also states the switch in
+  `getCapabilities().limitations`, so `expert_inspect` says out loud that reasoning is being stored.
+- **What that switch costs.** Reasoning is usually the largest content in a message, so it eats the
+  byte ceilings fast, and it is the material most likely to carry private context verbatim. Many
+  providers surface a *summary* rather than the actual trace, so what lands on disk can look like
+  chain of thought without being it. That is why the default is off, and why no request field, tool
+  argument, model output or task text can raise it - only a configuration file or the environment.
 - **`transcript+args` is the risky one.** Arguments are shell commands and file paths, which is
   exactly where a token or a key can appear on a command line. It exists because reproducing an
   expert's failure often requires seeing the command, and it is reachable only by an operator

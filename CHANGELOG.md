@@ -365,6 +365,16 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### Added
 
+- **Reasoning can be recorded, but only by asking.** `security.observability.recordReasoning`
+  (default `false`; `EXPERT_COUNCIL_REASONING=1` for a single process) stores the model's
+  `thinking` / `reasoning` parts on the same cursors and ceilings as narration, marked
+  `reasoning: true` and rendered as `thinks` rather than `says`, and names itself in
+  `getCapabilities().limitations` so `expert_inspect` reports the exception out loud. It also
+  requires a dial that records assistant text, and nothing on a delegation request can raise it.
+  Writing the tests found a defect in the new cursor: Pi's `message_end` repeats text content but
+  not the thinking part, so a flush driven by an empty closing string dropped whatever was still
+  held. A channel now remembers the last text it saw, not only what it wrote, and a test fails on
+  the previous behaviour.
 - **The observer window reads like a transcript now.** Narration is printed as prose with no
   per-line attribution and no mid-sentence clamp, and each tool call becomes a shaded block whose
   header names the tool and - when arguments are visible - what it was asked to run
@@ -633,6 +643,13 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### 新增
 
+- **推理可以被记录，但只能由操作员主动要求。** `security.observability.recordReasoning`（默认
+  `false`；单进程可用 `EXPERT_COUNCIL_REASONING=1`）把模型的 `thinking` / `reasoning` 部件按与叙述相同的
+  游标和上限存下来，每条都带 `reasoning: true`，呈现时是 `thinks` 而不是 `says`，并且会自我点名写进
+  `getCapabilities().limitations`，让 `expert_inspect` 把这个例外说出来。它同时还要求一个会记 assistant
+  文本的挡位，委派请求里的任何东西都抬不动它。写测试时查出新游标的一个缺陷：Pi 的 `message_end` 会重复
+  text 部件却不重复 thinking，于是由空串触发的冲刷会把还攥着的内容丢掉。现在每通道记住"最后见到的文本"，
+  而不只是"已写出的前缀"，并有一条测试专门钉住旧行为会失败。
 - **观察窗口现在按会话记录的样子读。** 叙述以散文呈现，每行不加署名、不在句中截断；每次工具调用
   变成一个**带底色的块**，标题写明是哪个工具、以及（在入参可见时）被要求跑什么（`$ npm test`、
   `write src/a.ts`）。`--style auto` 在终端里选这个版式、其他情况保持单行，所以重定向出去的字节与

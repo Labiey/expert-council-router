@@ -52,6 +52,8 @@ export interface ExpertEventFrame {
   argsSummary?: string;
   /** Content-dial fields: a dropped one here would hide a truncation from the operator. */
   argsText?: string;
+  /** Marks a reasoning record; dropped here it would make reasoning indistinguishable from speech. */
+  reasoning?: boolean;
   streaming?: boolean;
   omittedBytes?: number;
   line?: number;
@@ -361,6 +363,7 @@ function parseExpertEvent(line: string): ExpertEventFrame | undefined {
     ...(text("argsSummary") !== undefined ? { argsSummary: text("argsSummary") } : {}),
     ...(text("argsText") !== undefined ? { argsText: text("argsText") } : {}),
     ...(typeof frame.streaming === "boolean" ? { streaming: frame.streaming } : {}),
+    ...(typeof frame.reasoning === "boolean" ? { reasoning: frame.reasoning } : {}),
     ...(typeof frame.omittedBytes === "number" ? { omittedBytes: frame.omittedBytes } : {}),
     ...(typeof frame.line === "number" ? { line: frame.line } : {}),
     ...(text("status") !== undefined ? { status: text("status") } : {}),

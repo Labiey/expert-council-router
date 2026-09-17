@@ -420,9 +420,16 @@ dials, so you pick the risk rather than inheriting it from a checkbox:
   output, or task text can turn recording on, because this is a privacy switch, not a
   performance one. A role name in `contentByRole` is validated against the real role list, so a
   typo is an error naming the legal values rather than a dial that quietly never applies.
-- **Never recorded, at any dial**: `thinking` / `reasoning` parts. Only `type: "text"` content
-  can enter the stream, which is a project rule and not a default that can drift - a dedicated
-  test fails if a thinking part ever reaches the file.
+- **Off unless you ask for it**: `thinking` / `reasoning` parts. Set
+  `security.observability.recordReasoning: true` (or `EXPERT_COUNCIL_REASONING=1` for one process)
+  *and* a dial that records assistant text. Reasoning is then stored on the same cursors and
+  ceilings, always marked `reasoning: true` and shown as `thinks` rather than `says`, and the
+  runtime names the switch in its capability limitations. The default stays off because reasoning is
+  the largest and most private content in a message, and providers often surface a summary rather
+  than the real trace.
+- **By default the stream carries no reasoning at all.** Only `type: "text"` content parts can
+  enter it, which is a project rule rather than a default that can drift: a dedicated test fails if
+  a `thinking` part ever reaches the file while the switch above is off.
 - **What the window shows** is smaller than what is stored. A tool block streams at most 3 lines
   at a time, and its final record shows the last `contentWindowLines` lines (default 10) of the
   payload. Narration is coalesced before it is ever written, because a live model sends fragments

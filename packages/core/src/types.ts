@@ -183,6 +183,12 @@ export interface ExpertObservabilityEvent {
   ok?: boolean;
   /** Bounded expert-authored text, or an interaction/terminal detail. */
   text?: string;
+  /**
+   * Marks an `assistant_text` record as the model's reasoning rather than its narration. Only ever
+   * written when the operator turned on `security.observability.recordReasoning`; an operator must
+   * always be able to tell the two apart, which is what this flag is for.
+   */
+  reasoning?: boolean;
   /** Guardrail counters, carried so an operator's terminal shows what the host notice shows. */
   toolCalls?: number;
   toolErrors?: number;

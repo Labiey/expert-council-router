@@ -17,6 +17,13 @@ export interface ContentRecorderOptions {
   level: ContentStreamLevel;
   /** Cap for one stored payload; beyond it a head+tail seam is written instead. */
   eventBytes: number;
+  /**
+   * Record model reasoning as well as narration. Off unless the operator set
+   * `security.observability.recordReasoning` or `EXPERT_COUNCIL_REASONING`; it also requires a
+   * dial that records assistant text, because reasoning travels in the same message. Nothing on a
+   * delegation request can raise it - see the note in SECURITY.md about why.
+   */
+  reasoning?: boolean;
   /** Narration is held until it reaches this many bytes, then flushed at a boundary. */
   minFlushBytes?: number;
   /** Ceiling for held narration; an oversized cut backs off to the last whitespace. */
@@ -172,8 +179,14 @@ interface StreamState {
 }
 
 export class ContentRecorder {
-  /** What has already been written for the current narration stream. */
-  private assistantSent = "";
+  /**
+   * What has already been written per channel, and the last cumulative text seen for it.
+   * The second half is not redundant: a closing event may carry a message without the part that
+   * was streamed earlier (Pi's `message_end` does not repeat `thinking` content), and a flush
+   * driven by an empty string would then discard whatever was still held - losing the last
+   * sentence, which is the one thing this design promised not to do.
+   */
+  private readonly narration = new Map<"text" | "reasoning", { sent: string; last: string }>();
   /** Arguments seen at `tool_execution_start`, keyed for the closing record. */
   private readonly pendingArgs = new Map<string, { summary?: string; full?: string }>();
   private readonly toolStreams = new Map<string, StreamState>();
@@ -206,18 +219,43 @@ export class ContentRecorder {
    * because losing the last sentence is the worst possible place to lose text.
    */
   onAssistantText(fullText: string, final = false): void {
-    if (!recordsAssistant(this.options.level) || !fullText) return;
-    const sent = this.assistantSent;
-    const continuation = fullText.startsWith(sent);
-    const held = continuation ? fullText.slice(sent.length) : fullText;
+    this.narrate("text", fullText, final, true);
+  }
+
+  /**
+   * The same rule as narration, on its own cursor, and only when the operator asked for it.
+   * Recorded as an `assistant_text` event carrying `reasoning: true` rather than a new kind: the
+   * event whitelist, the retention rules and the ceilings all already apply, and the only thing
+   * that must differ is whether an operator can tell the two apart when reading - which is what
+   * the marker is for, in both renderers.
+   */
+  onReasoningText(fullText: string, final = false): void {
+    this.narrate("reasoning", fullText, final, this.options.reasoning === true);
+  }
+
+  private narrate(channel: "text" | "reasoning", fullText: string, final: boolean, enabled: boolean): void {
+    if (!enabled || !recordsAssistant(this.options.level)) return;
+    const state = this.narration.get(channel) ?? { sent: "", last: "" };
+    if (fullText) state.last = fullText;
+    // Stored before any decision to hold, or the text we chose not to write yet would be
+    // forgotten by the very call that decided to keep holding it.
+    this.narration.set(channel, state);
+    if (!state.last) return;
+    const continuation = state.last.startsWith(state.sent);
+    const held = continuation ? state.last.slice(state.sent.length) : state.last;
     if (!held) return;
     const cut = flushPoint(held, final, this.options.minFlushBytes, this.options.maxFlushBytes);
     if (cut <= 0) return;
     const emitText = held.slice(0, cut);
     if (!final && !emitText.trim()) return;
-    this.assistantSent = continuation ? sent + emitText : emitText;
+    state.sent = continuation ? state.sent + emitText : emitText;
+    this.narration.set(channel, state);
     this.bytesConsidered += Buffer.byteLength(emitText);
-    this.push("assistant_text", { text: headTailSeam(emitText, this.options.eventBytes).text });
+    this.bytesConsidered += Buffer.byteLength(emitText);
+    this.push("assistant_text", {
+      text: headTailSeam(emitText, this.options.eventBytes).text,
+      ...(channel === "reasoning" ? { reasoning: true } : {}),
+    });
   }
 
   /**

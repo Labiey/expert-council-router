@@ -183,7 +183,9 @@ function formatExpertEventLine(event: ExpertObservabilityEvent): string {
     case "tool_finished":
       return `${head} tool ${event.tool ?? "?"} ${event.ok === false ? "FAILED" : "ok"}`;
     case "assistant_text":
-      return `${head} says: ${event.text ?? ""}`;
+      // Reasoning is labelled as such on purpose: an operator skimming a window must never take
+      // what a model thought at itself for what the model told them.
+      return `${head} ${event.reasoning === true ? "thinks" : "says"}: ${event.text ?? ""}`;
     case "tool_output": {
       // The header stays one bounded line: what streamed, whether it worked, and where the
       // full record lives. The body is the operator's view of the content itself.
@@ -290,6 +292,7 @@ const ANSI_BACKGROUND = "\u001b[48;5;236m";
 const ANSI_HEADER_BACKGROUND = "\u001b[48;5;238m";
 const ANSI_BOLD = "\u001b[1m";
 const ANSI_DIM = "\u001b[2m";
+const ANSI_ITALIC = "\u001b[3m";
 const ANSI_RESET = "\u001b[0m";
 
 const WIDE_RANGES: Array<[number, number]> = [
@@ -336,7 +339,14 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
     const text = typeof event.text === "string" ? event.text : "";
     if (!text.trim()) return [];
     // Prose: no prefix, no clamp. The terminal wraps it, which is what keeps a sentence whole.
-    return text.replace(/\s+$/, "").split(/\r?\n/).map((line) => collapseLine(line));
+    const lines = text.replace(/\s+$/, "").split(/\r?\n/).map((line) => collapseLine(line));
+    if (event.reasoning !== true) return lines;
+    // Reasoning is marked wherever it appears, so a window cannot be read as the expert's speech
+    // by accident: a left rule in plain text, dim and italic once colour is on.
+    return lines.map((line, index) => {
+      const marked = index === 0 ? `thinks \u2502 ${line}` : `      ${line}`;
+      return options.color === true ? `${ANSI_DIM}${ANSI_ITALIC}${marked}${ANSI_RESET}` : marked;
+    });
   }
 
   if (kind === "tool_output") {

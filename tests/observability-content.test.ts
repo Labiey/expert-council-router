@@ -110,11 +110,12 @@ describe("recorded payloads keep their truncation visible", () => {
 });
 
 describe("a recorder pushes only what has not been pushed", () => {
-  function recorder(level: ContentStreamLevel, options: { eventBytes?: number } = {}) {
+  function recorder(level: ContentStreamLevel, options: { eventBytes?: number; reasoning?: boolean } = {}) {
     const sink = captureEmitter();
     const rec = new ContentRecorder({
       level,
       eventBytes: options.eventBytes ?? 65536,
+      ...(options.reasoning ? { reasoning: true } : {}),
       emit: sink.emit,
     });
     return { rec, records: sink.records };
@@ -291,6 +292,44 @@ describe("a recorder pushes only what has not been pushed", () => {
     expect(empty.records[0]?.ok).toBe(false);
   });
 
+  it("records reasoning only when the operator asked, and marks every record it writes", () => {
+    // The default is the project rule: chain of thought is not stored. The switch is an operator
+    // exception, and when it is on the result must still be tellable apart from narration at a
+    // glance, or a reader takes what a model thought at itself for what it chose to say.
+    const off = recorder("assistant");
+    off.rec.onReasoningText("I suspect the lock, but will not say so.\n", true);
+    expect(off.records).toHaveLength(0);
+
+    const on = recorder("assistant", { reasoning: true });
+    on.rec.onReasoningText("First I should read the caller.\n", true);
+    expect(on.records).toHaveLength(1);
+    expect(on.records[0]?.reasoning).toBe(true);
+    expect(String(on.records[0]?.text)).toContain("First I should read");
+    // Narration on the same recorder stays unmarked, and the two channels never cross.
+    on.rec.onAssistantText("Reading the caller now.\n", true);
+    expect(on.records).toHaveLength(2);
+    expect(on.records[1]?.reasoning).toBeUndefined();
+    expect(String(on.records[1]?.text)).toContain("Reading the caller");
+    // A dial that stores no text stores no reasoning either, however the switch is set.
+    const silent = recorder("none", { reasoning: true });
+    silent.rec.onReasoningText("still nothing\n", true);
+    expect(silent.records).toHaveLength(0);
+  });
+
+  it("flushes held reasoning when the closing event no longer carries the part", () => {
+    // Pi's `message_end` repeats text content but not the thinking part, so a cursor that only
+    // knew the current cumulative string would get an empty final call and drop the last sentence
+    // of whatever it was holding - the exact failure this recorder promises not to have.
+    const { rec, records } = recorder("assistant", { reasoning: true });
+    const thought = "The caller takes no lock so two arrivals can race and overwrite each other";
+    rec.onReasoningText(thought);                       // under the threshold: held
+    expect(records).toHaveLength(0);
+    rec.onReasoningText("", true);                      // the closing event forgot the part
+    expect(records).toHaveLength(1);
+    expect(String(records[0]?.text)).toBe(thought);
+    expect(records[0]?.reasoning).toBe(true);
+  });
+
   it("records nothing at all while the dial is none", () => {
     const { rec, records } = recorder("none");
     rec.onAssistantText("hello");
@@ -426,10 +465,12 @@ async function readStream(dir: string, executionId: string): Promise<ExpertObser
     .map((line) => JSON.parse(line) as ExpertObservabilityEvent);
 }
 
-async function runStream(options: { level?: ContentStreamLevel; byRole?: Record<string, ContentStreamLevel>; envValue?: string; events?: unknown[]; fileBytes?: number; executionId?: string }) {
+async function runStream(options: { level?: ContentStreamLevel; reasoning?: boolean; reasoningEnv?: string; byRole?: Record<string, ContentStreamLevel>; envValue?: string; events?: unknown[]; fileBytes?: number; executionId?: string }) {
   const dir = await mkdtemp(path.join(tmpdir(), "ec-content-"));
   const previousEnv = process.env.EXPERT_COUNCIL_CONTENT;
+  const previousReasoningEnv = process.env.EXPERT_COUNCIL_REASONING;
   if (options.envValue !== undefined) process.env.EXPERT_COUNCIL_CONTENT = options.envValue;
+  if (options.reasoningEnv !== undefined) process.env.EXPERT_COUNCIL_REASONING = options.reasoningEnv;
   try {
     const { sdk, events, modelRuntime } = streamHarness();
     events.push(...(options.events ?? ASSISTANT_EVENTS));
@@ -442,6 +483,7 @@ async function runStream(options: { level?: ContentStreamLevel; byRole?: Record<
             ...(options.level ? { contentStream: options.level } : {}),
             ...(options.byRole ? { contentByRole: options.byRole } : {}),
             ...(options.fileBytes ? { contentFileBytes: options.fileBytes } : {}),
+            ...(options.reasoning ? { recordReasoning: true } : {}),
           },
         },
       }),
@@ -466,6 +508,8 @@ async function runStream(options: { level?: ContentStreamLevel; byRole?: Record<
   } finally {
     if (previousEnv === undefined) delete process.env.EXPERT_COUNCIL_CONTENT;
     else process.env.EXPERT_COUNCIL_CONTENT = previousEnv;
+    if (previousReasoningEnv === undefined) delete process.env.EXPERT_COUNCIL_REASONING;
+    else process.env.EXPERT_COUNCIL_REASONING = previousReasoningEnv;
     // The caller reads the file before this cleanup runs, via the returned dir.
   }
 }
@@ -555,6 +599,35 @@ describe("the stream records what the dial promises", () => {
     expect(quietKinds).toContain("tool_started");
     expect(quietKinds).toContain("tool_finished");
     expect(quietKinds).not.toContain("tool_output");
+  });
+
+  it("keeps thinking off disk by default and writes it, marked, when the operator opts in", async () => {
+    // The scripted session carries a `thinking` part and a `text` part in the same message, which
+    // is the shape that would let reasoning slip in unnoticed. Default: only the text is stored.
+    const off = await runStream({ level: "assistant", executionId: "exec_reason_off" });
+    expect(off.events.some((event) => JSON.stringify(event).includes("SECRET-CHAIN-OF-THOUGHT"))).toBe(false);
+    expect(off.events.some((event) => event.reasoning === true)).toBe(false);
+
+    // Opted in through configuration: the same session now stores it, and marks it.
+    const on = await runStream({ level: "assistant", reasoning: true, executionId: "exec_reason_cfg" });
+    const marked = on.events.filter((event) => event.reasoning === true);
+    expect(marked.length).toBeGreaterThan(0);
+    expect(String(marked[0]?.text)).toContain("SECRET-CHAIN-OF-THOUGHT");
+    // Narration in the same run is still present and still unmarked.
+    expect(on.events.some((event) => event.kind === "assistant_text" && event.reasoning === undefined)).toBe(true);
+
+    // The environment can raise it for one process, and cannot be raised by anything else.
+    const env = await runStream({ level: "assistant", reasoningEnv: "1", executionId: "exec_reason_env" });
+    expect(env.events.some((event) => event.reasoning === true)).toBe(true);
+    const rejected = await runStream({ level: "assistant", reasoningEnv: "maybe", executionId: "exec_reason_bad" });
+    expect(rejected.events.some((event) => event.reasoning === true)).toBe(false);
+
+    // And the switch alone buys nothing: with the dial off there is no content recorder, so the
+    // only narration on disk is the bounded end-of-message summary that predates all of this, and
+    // no record may carry the reasoning marker or the thinking text.
+    const dialOff = await runStream({ level: "none", reasoning: true, executionId: "exec_reason_dialoff" });
+    expect(dialOff.events.filter((event) => event.reasoning === true)).toHaveLength(0);
+    expect(dialOff.events.some((event) => JSON.stringify(event).includes("SECRET-CHAIN-OF-THOUGHT"))).toBe(false);
   });
 
   it("honours a per-role dial", async () => {

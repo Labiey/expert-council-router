@@ -310217,6 +310217,12 @@ var councilConfigSchema = external_exports.object({
        * to show would look like a broken feature rather than a configuration mistake.
        */
       autoOpenWindow: external_exports.boolean().default(false),
+      // Records the model's reasoning parts as well, on the same cursor rules as narration and
+      // marked `reasoning: true` on the event. Default off, and it does nothing unless a
+      // content dial is already on. Deliberately reachable only from configuration and the
+      // environment: the project rule is not to store chain of thought, so the exception has
+      // to be something an operator typed, never something a task or tool argument produced.
+      recordReasoning: external_exports.boolean().default(false),
       /**
        * How much of the conversation the event stream records. Five ascending dials so
        * the operator chooses the risk rather than a boolean choosing it for them:
@@ -310262,6 +310268,7 @@ var councilConfigSchema = external_exports.object({
       streamToHost: true,
       redactToolArgs: true,
       autoOpenWindow: false,
+      recordReasoning: false,
       contentStream: "none",
       contentByRole: {},
       contentWindowLines: 10,
@@ -310335,6 +310342,7 @@ var councilConfigSchema = external_exports.object({
       streamToHost: true,
       redactToolArgs: true,
       autoOpenWindow: false,
+      recordReasoning: false,
       contentStream: "none",
       contentByRole: {},
       contentWindowLines: 10,
@@ -319486,8 +319494,14 @@ function tailOnly(text, maxBytes) {
 }
 var ContentRecorder = class {
   options;
-  /** What has already been written for the current narration stream. */
-  assistantSent = "";
+  /**
+   * What has already been written per channel, and the last cumulative text seen for it.
+   * The second half is not redundant: a closing event may carry a message without the part that
+   * was streamed earlier (Pi's `message_end` does not repeat `thinking` content), and a flush
+   * driven by an empty string would then discard whatever was still held - losing the last
+   * sentence, which is the one thing this design promised not to do.
+   */
+  narration = /* @__PURE__ */ new Map();
   /** Arguments seen at `tool_execution_start`, keyed for the closing record. */
   pendingArgs = /* @__PURE__ */ new Map();
   toolStreams = /* @__PURE__ */ new Map();
@@ -319518,11 +319532,29 @@ var ContentRecorder = class {
    * because losing the last sentence is the worst possible place to lose text.
    */
   onAssistantText(fullText, final = false) {
-    if (!recordsAssistant(this.options.level) || !fullText)
+    this.narrate("text", fullText, final, true);
+  }
+  /**
+   * The same rule as narration, on its own cursor, and only when the operator asked for it.
+   * Recorded as an `assistant_text` event carrying `reasoning: true` rather than a new kind: the
+   * event whitelist, the retention rules and the ceilings all already apply, and the only thing
+   * that must differ is whether an operator can tell the two apart when reading - which is what
+   * the marker is for, in both renderers.
+   */
+  onReasoningText(fullText, final = false) {
+    this.narrate("reasoning", fullText, final, this.options.reasoning === true);
+  }
+  narrate(channel, fullText, final, enabled) {
+    if (!enabled || !recordsAssistant(this.options.level))
       return;
-    const sent = this.assistantSent;
-    const continuation = fullText.startsWith(sent);
-    const held = continuation ? fullText.slice(sent.length) : fullText;
+    const state2 = this.narration.get(channel) ?? { sent: "", last: "" };
+    if (fullText)
+      state2.last = fullText;
+    this.narration.set(channel, state2);
+    if (!state2.last)
+      return;
+    const continuation = state2.last.startsWith(state2.sent);
+    const held = continuation ? state2.last.slice(state2.sent.length) : state2.last;
     if (!held)
       return;
     const cut = flushPoint(held, final, this.options.minFlushBytes, this.options.maxFlushBytes);
@@ -319531,9 +319563,14 @@ var ContentRecorder = class {
     const emitText = held.slice(0, cut);
     if (!final && !emitText.trim())
       return;
-    this.assistantSent = continuation ? sent + emitText : emitText;
+    state2.sent = continuation ? state2.sent + emitText : emitText;
+    this.narration.set(channel, state2);
     this.bytesConsidered += Buffer.byteLength(emitText);
-    this.push("assistant_text", { text: headTailSeam(emitText, this.options.eventBytes).text });
+    this.bytesConsidered += Buffer.byteLength(emitText);
+    this.push("assistant_text", {
+      text: headTailSeam(emitText, this.options.eventBytes).text,
+      ...channel === "reasoning" ? { reasoning: true } : {}
+    });
   }
   /**
    * A growing tool result. Recorded live only when it has actually grown a line (or 240
@@ -319683,6 +319720,21 @@ function textFromContent(content) {
   return content.map((item) => {
     const part = item;
     return part.type === "text" && typeof part.text === "string" ? part.text : "";
+  }).join("");
+}
+function reasoningFromContent(content) {
+  if (!Array.isArray(content))
+    return "";
+  return content.map((item) => {
+    const part = item;
+    if (part.type !== "thinking" && part.type !== "reasoning")
+      return "";
+    for (const key of ["text", "thinking", "reasoning"]) {
+      const value3 = part[key];
+      if (typeof value3 === "string" && value3)
+        return value3;
+    }
+    return "";
   }).join("");
 }
 function toolResultText(value3) {
@@ -319982,6 +320034,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
   contentWarnings = [];
   /** The content dial in effect per delegation, so status can say what is on disk. */
   contentDials = /* @__PURE__ */ new Map();
+  reasoningWarned = false;
   /** A content warning is operator-facing and fires once per distinct problem. */
   noteContentWarning(message) {
     const bounded = boundedText2(message, 200);
@@ -320080,11 +320133,18 @@ var PiExpertRuntime = class _PiExpertRuntime {
       });
       if (resolved.warning)
         this.noteContentWarning(resolved.warning);
+      const envReasoning = /^(1|true|yes)$/i.test(process.env.EXPERT_COUNCIL_REASONING ?? "");
+      const recordReasoning = observability.recordReasoning === true || envReasoning;
+      if (recordReasoning && !this.reasoningWarned) {
+        this.reasoningWarned = true;
+        this.noteContentWarning("recordReasoning is ON: model reasoning parts are being written to the observability stream, which the default project policy excludes. Turn it off by removing security.observability.recordReasoning" + (envReasoning ? " and/or EXPERT_COUNCIL_REASONING from the environment" : "") + ".");
+      }
       if (resolved.level !== "none") {
         state2.maxBytes = observability.contentFileBytes;
         state2.content = new ContentRecorder({
           level: resolved.level,
           eventBytes: observability.contentEventBytes,
+          ...recordReasoning ? { reasoning: true } : {},
           emit: (kind, fields) => this.emitObservability(request.executionId, request.role, request.model, kind, fields)
         });
         this.contentDials.set(request.executionId, resolved.level);
@@ -320685,6 +320745,7 @@ Apply this decision and continue the assigned task now. If the decision changed 
           } else if ((e2?.type === "message_update" || e2?.type === "message_end") && e2.message?.role === "assistant") {
             if (content) {
               content.onAssistantText(textFromContent(e2.message.content), e2?.type === "message_end");
+              content.onReasoningText(reasoningFromContent(e2.message.content), e2?.type === "message_end");
             } else if (e2?.type === "message_end") {
               const narration = boundedText2(textFromContent(e2.message.content));
               if (narration)

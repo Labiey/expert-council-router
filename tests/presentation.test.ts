@@ -320,6 +320,27 @@ describe("panel layout for an observer window", () => {
     expect(formatExpertPanel(frame("assistant_text", { text: `x${esc}[2Y` })).join("")).not.toContain(esc);
   });
 
+  it("labels reasoning distinctly in both renderers", () => {
+    // An operator skimming a window must never take what a model thought at itself for what the
+    // model chose to say. The marker survives the CLI whitelist too, which the follower test
+    // checks end to end.
+    const thought = frame("assistant_text", {
+      text: "The lock is taken too late.\nSo two arrivals race.\n",
+      reasoning: true,
+    });
+    expect(formatExpertEvent(thought)).toContain("thinks:");
+    expect(formatExpertEvent(thought)).not.toContain("says:");
+    expect(formatExpertPanel(thought)).toEqual([
+      "thinks \u2502 The lock is taken too late.",
+      "      So two arrivals race.",
+    ]);
+    const coloured = formatExpertPanel(thought, { color: true, columns: 40 });
+    expect(coloured[0]).toContain(String.fromCharCode(27) + "[2m");
+    const spoken = frame("assistant_text", { text: "I will read the caller.\n" });
+    expect(formatExpertEvent(spoken)).toContain("says:");
+    expect(formatExpertPanel(spoken)).toEqual(["I will read the caller."]);
+  });
+
   it("falls back to the single-line form for structure and terminal events", () => {
     const completed = formatExpertPanel(frame("completed", { status: "success", durationMs: 76_000 }));
     expect(completed).toEqual([formatExpertEvent(frame("completed", { status: "success", durationMs: 76_000 }))]);

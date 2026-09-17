@@ -172,6 +172,27 @@ function textFromContent(content: unknown): string {
 }
 
 /**
+ * The reasoning parts of a message, for the one case in which they are recorded: an operator who
+ * turned on `recordReasoning` or `EXPERT_COUNCIL_REASONING`. Kept apart from `textFromContent`
+ * rather than merged into it, because the two must never be confused on disk - a record built
+ * from here is always marked, and the default path still cannot produce one at all.
+ */
+function reasoningFromContent(content: unknown): string {
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((item) => {
+      const part = item as Record<string, unknown>;
+      if (part.type !== "thinking" && part.type !== "reasoning") return "";
+      for (const key of ["text", "thinking", "reasoning"]) {
+        const value = part[key];
+        if (typeof value === "string" && value) return value;
+      }
+      return "";
+    })
+    .join("");
+}
+
+/**
  * Tool results arrive in several shapes (Pi's content blocks, a plain string, or a host
  * object). Only `text` parts are ever extracted, so a `thinking`/`reasoning` part cannot
  * reach the stream by riding in a tool payload; anything unrecognised is serialised rather
@@ -586,6 +607,7 @@ export class PiExpertRuntime implements ExpertRuntime {
   private readonly contentWarnings: string[] = [];
   /** The content dial in effect per delegation, so status can say what is on disk. */
   private readonly contentDials = new Map<string, string>();
+  private reasoningWarned = false;
 
   /** A content warning is operator-facing and fires once per distinct problem. */
   private noteContentWarning(message: string): void {
@@ -699,6 +721,21 @@ export class PiExpertRuntime implements ExpertRuntime {
         ...(process.env.EXPERT_COUNCIL_CONTENT === undefined ? {} : { envValue: process.env.EXPERT_COUNCIL_CONTENT }),
       });
       if (resolved.warning) this.noteContentWarning(resolved.warning);
+      // Configuration or the environment, and nothing else: no request field, tool argument or
+      // expert output reaches this, because "store the model's reasoning" is a rule exception and
+      // an exception has to be attributable to the operator who typed it.
+      const envReasoning = /^(1|true|yes)$/i.test(process.env.EXPERT_COUNCIL_REASONING ?? "");
+      const recordReasoning = observability.recordReasoning === true || envReasoning;
+      if (recordReasoning && !this.reasoningWarned) {
+        this.reasoningWarned = true;
+        this.noteContentWarning(
+          "recordReasoning is ON: model reasoning parts are being written to the observability "
+          + "stream, which the default project policy excludes. Turn it off by removing "
+          + "security.observability.recordReasoning" + (envReasoning
+            ? " and/or EXPERT_COUNCIL_REASONING from the environment"
+            : "") + ".",
+        );
+      }
       if (resolved.level !== "none") {
         // The historical 256 KB ceiling exists to bound names-and-counters noise; content mode
         // is bounded by the operator's own dial, and a stream that stopped after two `read`
@@ -709,6 +746,7 @@ export class PiExpertRuntime implements ExpertRuntime {
         state.content = new ContentRecorder({
           level: resolved.level,
           eventBytes: observability.contentEventBytes,
+          ...(recordReasoning ? { reasoning: true } : {}),
           emit: (kind, fields) => this.emitObservability(request.executionId, request.role, request.model, kind, fields),
         });
         this.contentDials.set(request.executionId, resolved.level);
@@ -1494,6 +1532,10 @@ export class PiExpertRuntime implements ExpertRuntime {
               // record on its own - the last sentence must never be the one that is lost.
               content.onAssistantText(
                 textFromContent(e.message.content),
+                e?.type === "message_end",
+              );
+              content.onReasoningText(
+                reasoningFromContent(e.message.content),
                 e?.type === "message_end",
               );
             } else if (e?.type === "message_end") {

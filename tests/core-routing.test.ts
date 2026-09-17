@@ -427,9 +427,13 @@ describe("configuration", () => {
   it("defaults and validates security.observability", () => {
     expect(parseCouncilConfig({}).security.observability).toEqual({
       expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false,
+      recordReasoning: false,
       contentStream: "none", contentByRole: {}, contentWindowLines: 10, contentWindowChars: 120,
       contentEventBytes: 65536, contentFileBytes: 10485760, contentTotalBytes: 209715200,
     });
+    // Reasoning recording is a boolean the operator has to ask for; anything else is refused
+    // rather than coerced, because "off"/"no" as strings would silently mean on.
+    expect(() => parseCouncilConfig({ security: { observability: { recordReasoning: "yes" } } })).toThrow();
     // config.ts keeps two separate observability defaults: the field default (used when the
     // `observability` key is absent inside a `security` block) and the security-block default
     // (used when `security` is absent entirely). Hand-editing one and not the other is how a
