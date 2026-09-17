@@ -5,6 +5,27 @@ All notable changes to Expert Council are documented here. Versions follow seman
 ## 0.8.6 - 2026-09-16
 
 ### Fixed
+
+- **A cursor cannot key on object identity (defect #41).** The assistant-text cursor was
+  indexed by message object, but the runtime is not promised the same object on
+  `message_update` and `message_end`, so the whole narration was re-sent when a message
+  closed. It is now a single slot with a prefix test: a continuation appends only what is new,
+  anything else is written whole - over-sending is honest, pretending to be an append is not.
+  The test for the streaming line gate came back green on its first falsification attempt too,
+  because no assertion crossed that branch; it does now.
+- **Pi's `tool_execution_end` carries no `args` (defect #42).** Arguments are forwarded on
+  `tool_execution_start` only, so `transcript+args` as first wired would have recorded nothing
+  at all and looked like a working feature. The recorder now holds arguments from the start
+  event and writes them with the closing record.
+- **`z.record` with enum keys demands every role (defect #43).** `contentByRole` with a single
+  entry failed validation outright, and a misspelled role would have been a dial that quietly
+  never applied. String keys plus validation against the real role list, with the legal names
+  in the error.
+- **A ceiling must not swallow the outcome (defect #44).** Once the stream was over its cap it
+  dropped every later event, including `completed`/`failed`/`stopped` and `delegation_final` -
+  which under a content dial would have re-broken #17: a window waiting for a signal that
+  arrives no more. Terminal kinds are exempt now; they are four small records, so the exemption
+  cannot meaningfully widen a file an operator capped.
 - **Published packages no longer ship dead links (#38, found while sweeping the audit's
   findings).** The per-package READMEs are generated mirrors that go inside the tarballs, and
   three of their links pointed at repository-root files that were never packaged -
@@ -260,6 +281,25 @@ All notable changes to Expert Council are documented here. Versions follow seman
   the log line - not the green bar - was what revealed it.
 
 ### Added
+
+- **Recorded conversation content, in five dials.** `security.observability.contentStream`
+  goes from `none` (names, counters and outcome markers - the historical behaviour) through
+  `assistant`, `assistant+tool-tail` and `transcript` up to `transcript+args`, so an operator
+  chooses how much of a conversation reaches disk instead of inheriting it from a checkbox.
+  `contentByRole` sets a dial per role and `EXPERT_COUNCIL_CONTENT` overrides both for one
+  process; nothing a tool call, an expert, or a task text can pass raises the dial, because
+  this is a privacy switch. The stream now carries incremental `assistant_text` records and a
+  new `tool_output` kind, so an observer window follows an expert the way Pi follows its own
+  session: a tool block streams at most three lines at a time, its closing record shows the
+  configured tail (default 10 lines, each clamped to 120 characters), hidden lines and omitted
+  bytes are announced rather than dropped, and the header names the **line number** in the
+  stream file that holds the whole record, so the rest is one `sed` away. Three ceilings bound
+  content only - `contentEventBytes` per payload (larger results become head plus tail with the
+  gap counted in bytes), `contentFileBytes` per delegation (default 10 MB) and
+  `contentTotalBytes` per directory (default 200 MB, evicted oldest-first) - and `watch` gained
+  `--max-lines` / `--max-chars`. `thinking` and `reasoning` parts are never recorded at any
+  dial: extraction keeps only `type: "text"` content, and a dedicated test fails if a thinking
+  part ever reaches a file.
 - **Opt-in observer windows per delegation (acceptance found defects #39 and #40).**
   `security.observability.autoOpenWindow` (default `false`, requires `expertWindow:`
   `"interactive"` - validated at config load with the reason in the message) opens a terminal of
@@ -391,6 +431,20 @@ All notable changes to Expert Council are documented here. Versions follow seman
 ## 0.8.6（中文）
 
 ### 修复
+- **增量记录的游标不能靠对象身份（缺陷 #41）。** 助手文本的游标最初以"消息对象"为键，但运行时
+  并不保证 `message_update` 与 `message_end` 递来同一个对象，于是整段叙述在消息结束时被**完整重发**
+  一遍。现在改为单槽前缀判断：延续就只补增量，不是延续就整块写入（宁可多发，也不让读者以为在看续写）。
+  这也是本仓库第一次"反证比测试更早发现测试无效"之外的另一类：反证 F7 回来是绿的，因为没有任何断言
+  真正经过那一行闸门——补了同行内增长的用例之后它才咬得住。
+- **Pi 的 `tool_execution_end` 不带 `args`（缺陷 #42）。** 入参只在 `tool_execution_start` 上转发，
+  所以最高那一挡按原写法会静默地什么都不记。现在起始事件把入参存进记录器、结束事件再取出写入。
+- **`z.record` 的枚举键要求列出全部角色（缺陷 #43）。** 用 `z.record(z.enum(roles), …)` 时，
+  `contentByRole` 只写一个角色会直接验证失败，写了也拿不到"拼错角色名"的提示；改成字符串键 + 手工
+  按真实角色表校验，错误信息里列出合法值。
+- **上限不能吞掉结局标记（缺陷 #44）。** 触顶后原先丢弃*所有*后续事件，包括 `completed/failed/stopped`
+  与 `delegation_final`——那会让窗口等不到它唯一在等的信号，等于在有内容挡位时把 #17 的修复打回原形。
+  现在结局类事件豁免：它们一共四条、体积可忽略，撞上限的流仍会说明自己撞了。
+
 - **发布出去的包不再带死链接（#38，清扫审计结论时顺带查出）。** 各包的 README 是会被打进 tarball 的生成镜像，而其中三条链接指向从未被打包的仓库根文件——`SECURITY.md`、`shared/skills/expert-council/SKILL.md`、`config/examples/balanced.example.json`——每语言 10 条、五个包全是死链；另有一个语言切换器指向 `README.zh-CN.md`，而同步流程从来就没拷过它。现在镜像步骤会把中文 README 一并装入包内，并在生成时**只重写那些在包内无法解析的相对链接**为仓库 URL；其余字节与源文件保持一致，源 README 仍保留相对链接以便离线阅读。新增守卫测试遍历所有随包发布的 README，任何指向包外的相对链接即失败。该修复做了反证：把重写摘掉，恰好点名三条 offender；并且先确认"重新生成真的执行了"再采信结果（第一次反证因为我在 cmd 里用了 `>/dev/null`，构建根本没跑，于是得出"守卫无效"的假结论——错在我的探针，不在守卫）。
 - **文档准确性清扫（#34-#38 审计的后续，中英双份）。** 七条陈述描述的是代码没有的行为，还有一条示例跑不通：
   - README 写着"限流或认证错误等瞬态提供商失败绝不产生标记"。事实上从 0.8.5 起它们**就是刻意产生标记的**：瞬态 TPM/RPM 限流写 2 分钟的 `rate-limited` 并连带同提供商兄弟模型；传输不可达写 5 分钟的 `transport-unstable` 且只标记失败路由；配额耗尽 6 小时；套餐级 403 访问被拒属失效模型证据，写 24 小时的 `unavailable`——这些一律不计入模型自身可靠性记录。这句话同时与代码和本变更日志自己的 #25 条目矛盾。
@@ -433,6 +487,18 @@ All notable changes to Expert Council are documented here. Versions follow seman
   README（三处）与 SECURITY.md（三处）措辞随之改为与代码一致，中英双份。这份检出里并不构成实际暴露：本机只装了 `npm`、仓库锁文件是 `package-lock.json`，真实执行的命令本来就带着 flag——而这恰恰是这类声称能在评审里一路活下来的原因。防护是一条走查全部十三驱动、任何未声明等级即失败的测试，加上 env 透传与 limitation 两条。三处修复都做了反证：摘掉 bun 的 flag、去掉 scrub 后的 env 合并、把 uv 误标成安全——每次都恰好只弄红一条。本次改动里我自己犯的一个错也留档：用正则重写断言时丢了 `await`，三处 plan 比较变成**没人认领的浮动 promise**，vitest 照样报 55 passed 却在日志里打了一条无人认领的 rejection——揭穿它的不是绿色进度条，而是那行日志。
 
 ### 新增
+
+- **可记录的会话内容，共五挡。** `security.observability.contentStream` 从 `none`（只有名字、计数与
+  结局标记，即历史行为）依次升到 `assistant`、`assistant+tool-tail`、`transcript`，最高一档是
+  `transcript+args`——落盘多少由操作员挑，而不是被一个勾选框替你决定。`contentByRole` 按角色设挡，
+  `EXPERT_COUNCIL_CONTENT` 对单进程覆盖两者；工具参数、专家输出、任务文本都抬不动它，因为这是隐私
+  开关。事件流新增增量 `assistant_text` 与 `tool_output`，于是观察窗口能像 Pi 跟着自家会话那样跟着专家：
+  工具块流式阶段一次最多 3 行，结束记录显示配置好的尾部（默认 10 行、每行截 120 字符），藏了几行、
+  省了多少字节都会明确说出来而不是悄悄丢，标题还会给出这条记录在流文件里的**行号**，看全文只差一次
+  `sed`。三道上限只管内容——单载荷 `contentEventBytes`（更大的存成头加尾并写明中间多少字节）、
+  单委派 `contentFileBytes`（默认 10 MB）、整目录 `contentTotalBytes`（默认 200 MB，最旧优先淘汰）——
+  `watch` 也新增 `--max-lines` / `--max-chars`。任何挡位都**不**记录 `thinking`/`reasoning`：抽取只保留
+  `type: "text"` 部件，并且有一条专门测试守着，思维链一旦落盘它就变红。
 - **每次委派一个可选的观察窗口（验收现形缺陷 #39、#40）。** `security.observability.autoOpenWindow`
   （默认 `false`，且要求 `expertWindow` 为 `"interactive"`——配置加载期即校验并把理由写进报错）。开启后
   每次委派拥有自己的终端，跑的就是已带测试的 `expert-council watch --follow`，与你亲手在另一个终端敲的

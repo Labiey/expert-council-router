@@ -425,14 +425,23 @@ describe("configuration", () => {
   });
 
   it("defaults and validates security.observability", () => {
-    expect(parseCouncilConfig({}).security.observability).toEqual({ expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false });
+    expect(parseCouncilConfig({}).security.observability).toEqual({
+      expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false,
+      contentStream: "none", contentByRole: {}, contentWindowLines: 10, contentWindowChars: 120,
+      contentEventBytes: 65536, contentFileBytes: 10485760, contentTotalBytes: 209715200,
+    });
+    // config.ts keeps two separate observability defaults: the field default (used when the
+    // `observability` key is absent inside a `security` block) and the security-block default
+    // (used when `security` is absent entirely). Hand-editing one and not the other is how a
+    // documented default silently stops being the shipped default, so compare the paths.
+    expect(parseCouncilConfig({ security: {} }).security.observability).toEqual(parseCouncilConfig({}).security.observability);
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "events" } } }).security.observability).toMatchObject({ expertWindow: "events", streamToHost: true });
     expect(() => parseCouncilConfig({ security: { observability: { expertWindow: "magic" } } })).toThrow(ConfigValidationError);
     // redactToolArgs was removed in 0.8.3 as an inert placebo and returns in 0.8.4 with
     // real behavior: it governs whether the interactive event stream records a bounded
     // tool-argument summary. An operator turning it off must actually be honored.
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive", redactToolArgs: false } } }).security.observability)
-      .toEqual({ expertWindow: "interactive", streamToHost: true, redactToolArgs: false, autoOpenWindow: false });
+      .toMatchObject({ redactToolArgs: false }); // the full default shape is pinned above; this case is only about honouring the switch
     expect(parseCouncilConfig({ security: { observability: { expertWindow: "interactive" } } }).security.observability.redactToolArgs).toBe(true);
     // autoOpenWindow is opt-in and typed: it must not be reachable by a stray truthy string,
     // and the shipped example config has to keep validating against the schema.

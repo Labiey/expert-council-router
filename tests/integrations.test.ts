@@ -172,6 +172,34 @@ describe("CLI JSON integration", () => {
     expect(code).toBe(1);
     expect(JSON.parse(stderr).error).toContain("--max-experts must be an integer");
   });
+
+  it("tells an operator what to pass when --reasoning-level is simply absent", async () => {
+    // Defect #45: the flag is required on purpose, but `bounded("")` threw first, so the
+    // actionable sentence under it was unreachable and the CLI answered its own documented
+    // usage with a validator's complaint. Reachable guidance is part of the feature.
+    let stderr = "";
+    const code = await runCli(["delegate", "scout", "read one file", "--timeout-ms", "60000", "--json"], {
+      stdout: { write: () => {} },
+      stderr: { write: (output) => { stderr += output; } },
+    }, mockCouncil());
+    expect(code).toBe(1);
+    expect(JSON.parse(stderr).error).toContain("delegate requires --reasoning-level");
+    expect(JSON.parse(stderr).error.includes("NUL")).toBe(false);
+  });
+
+  it("refuses a reasoning level that is really the next flag", async () => {
+    let stderr = "";
+    const code = await runCli(
+      ["delegate", "scout", "read one file", "--timeout-ms", "60000", "--reasoning-level", "--json"],
+      {
+        stdout: { write: () => {} },
+        stderr: { write: (output) => { stderr += output; } },
+      },
+      mockCouncil(),
+    );
+    expect(code).toBe(1);
+    expect(JSON.parse(stderr).error).toContain("delegate requires --reasoning-level");
+  });
 });
 
 describe("CLI expert-window watch", () => {
@@ -371,6 +399,10 @@ ${line("delegation_final")}
       toolErrors: 3,
       budgetFractionUsed: 0.85,
       nudgedExpert: true,
+      streaming: true,
+      omittedBytes: 1234,
+      line: 42,
+      argsText: '{"command":"npm test"}',
     };
     const expectedKeys = ["t", "executionId", "role", "kind", ...Object.keys(full)];
     await withStream(line("attention", full) + String.fromCharCode(10), async (dir) => {
@@ -386,6 +418,48 @@ ${line("delegation_final")}
       expect(missing).toEqual([]);
       expect(received.toolErrors).toBe(3);
       expect(received.attempt).toBe(2);
+      expect(received.streaming).toBe(true);
+      expect(received.line).toBe(42);
+      expect(received.omittedBytes).toBe(1234);
+      expect(received.argsText).toContain("npm test");
+    });
+  });
+
+  it("shows only the configured tail of a recorded content block", async () => {
+    // The stream carries the whole payload; the window decides how much to print. This is
+    // that decision, asserted at the boundary the operator actually sees.
+    const text = [1, 2, 3, 4, 5, 6].map((index) => `output line ${index}`).join("\n");
+    await withStream(`${line("tool_output", { tool: "bash", ok: true, line: 7, text })}
+`, async (dir) => {
+      const { io, out } = capture();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--max-lines", "2", "--max-chars", "40"],
+        io,
+        undefined,
+        { formatEvent: (frame) => `HEADER ${frame.kind}` },
+      );
+      expect(code).toBe(0);
+      const shown = out.join("");
+      expect(shown).toContain("output line 6");
+      expect(shown).toContain("output line 5");
+      expect(shown).not.toContain("output line 4");
+      expect(shown).toContain("4 earlier lines not shown");
+      expect(shown).toContain("HEADER tool_output");
+    });
+  });
+
+  it("caps a single enormous recorded line instead of wrapping the console", async () => {
+    await withStream(`${line("assistant_text", { text: "y".repeat(5000) })}
+`, async (dir) => {
+      const { io, out } = capture();
+      await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--max-chars", "30"],
+        io,
+        undefined,
+        { formatEvent: (frame) => frame.kind },
+      );
+      const body = out.join("").split("\n").find((entry) => entry.trimStart().startsWith("y")) ?? "";
+      expect(body.trim().length).toBeLessThanOrEqual(30);
     });
   });
 

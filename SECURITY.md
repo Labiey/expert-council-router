@@ -30,6 +30,37 @@ a single authority for decisions. It inherits the host environment the same way 
 operator opened themselves would, which is why it is opt-in rather than ambient. Where the terminal
 host or the CLI cannot be located, or the platform is not Windows, nothing is launched and one
 limitation line explains the fallback; a failed launch can never fail a delegation.
+## Recorded conversation content
+
+`security.observability.contentStream` (default `none`) decides how much of a running
+expert's conversation the event stream writes to disk. At the default it is names, counters
+and outcome markers only. The dials widen that in ascending order: assistant text, the tail of
+each tool result, the whole tool result, and finally the full tool arguments. `contentByRole`
+applies a dial per role and `EXPERT_COUNCIL_CONTENT` overrides both for one process.
+
+- **Only configuration and the environment can raise the dial.** No tool argument, expert
+  output, model recommendation, or task text can turn recording on. This is a privacy switch,
+  not a performance one.
+- **Chain of thought is never recorded, at any dial.** The extraction path keeps only
+  `type: "text"` content parts, so `thinking` and `reasoning` parts cannot enter a stream file;
+  a dedicated test fails if one ever does.
+- **`transcript+args` is the risky one.** Arguments are shell commands and file paths, which is
+  exactly where a token or a key can appear on a command line. It exists because reproducing an
+  expert's failure often requires seeing the command, and it is reachable only by an operator
+  typing that word into a config file.
+- **Ceilings bound content, never the outcome.** One payload (`contentEventBytes`, default
+  64 KB - larger ones are stored as head plus tail with the gap counted), one stream
+  (`contentFileBytes`, default 10 MB), one directory (`contentTotalBytes`, default 200 MB,
+  evicted oldest-first), plus a 7-day TTL. Hitting any of them drops content and writes a
+  `stream_truncated` notice; terminal markers are exempt so an operator's window always learns
+  how the delegation ended, and recording can never fail the delegation itself.
+- **Where it lands.** The same `<dataRoot>/observability/` directory as before, plaintext, same
+  permissions as the rest of the data root, no remote transmission anywhere. Deleting the
+  directory removes the record; the redaction switch `redactToolArgs` continues to govern only
+  the bounded argument summary on ordinary events, independently of the dials.
+- **Telemetry is unchanged.** Outcome aggregates still record decisions and counters, never
+  prompts, reasoning, or tool payloads.
+
 ## Trusted startup inputs
 
 Process environment and CLI path flags are administrative inputs, not model-controlled configuration. `PI_CODING_AGENT_MODULE` points to executable Pi SDK code. `EXPERT_COUNCIL_CONFIG`, `EXPERT_COUNCIL_WORKSPACE`, `EXPERT_COUNCIL_TELEMETRY`, `EXPERT_COUNCIL_STATE`, `EXPERT_COUNCIL_WORKTREES`, and their CLI equivalents select local files or directories. Do not populate them from repository content, delegated task text, or expert output. `EXPERT_COUNCIL_WORKTREES` changes only the parent of the per-user private worktree base; the ownership, permission, and canonical-containment checks still apply, so pointing it at a world-writable directory is an operator misconfiguration rather than a bypass. The Codex distribution passes its bundled role directory directly to the runtime rather than accepting a role-prompt directory environment override. Expert Council intentionally performs no signature or integrity verification of operator-supplied module paths: verifying that a locally built or globally installed Pi SDK is trustworthy is part of operator workstation hygiene, and adding an allowlist would break the documented local-development resolution order.

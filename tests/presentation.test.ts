@@ -180,6 +180,7 @@ describe("every event kind the stream can carry renders meaningfully", () => {
     { kind: "tool_started", event: { tool: "read" }, expected: "tool read" },
     { kind: "tool_finished", event: { tool: "read", ok: true }, expected: "tool read ok" },
     { kind: "assistant_text", event: { text: "looking now" }, expected: "says: looking now" },
+    { kind: "tool_output", event: { tool: "bash", ok: true, line: 87 }, expected: "bash - returned - full record on line 87" },
     { kind: "attention", event: { text: "budget spent", toolErrors: 1, toolCalls: 2 }, expected: "WARNING: budget spent" },
     { kind: "interaction_opened", event: { text: "pick one" }, expected: "WAITING FOR HOST: pick one" },
     { kind: "interaction_answered", event: { text: "chose ls" }, expected: "host answered: chose ls" },

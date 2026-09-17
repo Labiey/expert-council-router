@@ -1,0 +1,598 @@
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import {
+  CONTENT_LEVELS,
+  EXPERT_EVENT_KINDS,
+  formatExpertEventBody,
+  isContentEvent,
+  parseCouncilConfig,
+  type ContentStreamLevel,
+  type ExpertObservabilityEvent,
+} from "../packages/core/src/index.js";
+import {
+  ContentRecorder,
+  headTailSeam,
+  recordsAssistant,
+  recordsToolArgs,
+  recordsToolOutput,
+  resolveContentLevel,
+  tailOnly,
+} from "../packages/pi-runtime/src/content-stream.js";
+import { PiExpertRuntime, type PiSdkLike } from "../packages/pi-runtime/src/index.js";
+
+const roleDirectory = path.resolve("packages/core/src/roles/prompts");
+
+/** Collect what the recorder would append, without a file or a process. */
+function captureEmitter() {
+  const records: Array<Record<string, unknown>> = [];
+  return {
+    records,
+    emit: (kind: string, fields: Record<string, unknown>) => {
+      records.push({ kind, ...fields });
+    },
+  };
+}
+
+describe("content dial resolution", () => {
+  it("follows built-in < global < byRole < environment", () => {
+    const base = { levels: CONTENT_LEVELS, global: "none" as ContentStreamLevel };
+    expect(resolveContentLevel({ ...base, role: "scout" }).level).toBe("none");
+    expect(resolveContentLevel({ ...base, global: "assistant", role: "scout" }).level).toBe("assistant");
+    expect(
+      resolveContentLevel({ ...base, global: "assistant", byRole: { scout: "none" }, role: "scout" }).level,
+    ).toBe("none");
+    expect(
+      resolveContentLevel({
+        ...base,
+        global: "assistant",
+        byRole: { scout: "none" },
+        role: "scout",
+        envValue: "transcript",
+      }).level,
+    ).toBe("transcript");
+    // A role with no entry inherits the global dial rather than falling to none.
+    expect(resolveContentLevel({ ...base, global: "assistant", byRole: { scout: "none" }, role: "reviewer" }).level)
+      .toBe("assistant");
+  });
+
+  it("refuses to guess when the environment names a dial that does not exist", () => {
+    // Silently ignoring the knob an operator reached for is how a security setting becomes
+    // folklore, so the fallback is reported alongside it.
+    const resolved = resolveContentLevel({
+      levels: CONTENT_LEVELS,
+      global: "assistant",
+      role: "scout",
+      envValue: "everything",
+    });
+    expect(resolved.level).toBe("assistant");
+    expect(resolved.warning ?? "").toContain("everything");
+    expect(resolved.warning ?? "").toContain("transcript+args");
+  });
+
+  it("gates every field on the dial, and only the top dial writes arguments", () => {
+    expect(CONTENT_LEVELS).toEqual(["none", "assistant", "assistant+tool-tail", "transcript", "transcript+args"]);
+    const assistant = new Set(["assistant", "assistant+tool-tail", "transcript", "transcript+args"]);
+    const tool = new Set(["assistant+tool-tail", "transcript", "transcript+args"]);
+    for (const level of CONTENT_LEVELS) {
+      expect(recordsAssistant(level)).toBe(assistant.has(level));
+      expect(recordsToolOutput(level)).toBe(tool.has(level));
+      expect(recordsToolArgs(level)).toBe(level === "transcript+args");
+    }
+  });
+});
+
+describe("recorded payloads keep their truncation visible", () => {
+  it("stores a head and a tail and names what went between them", () => {
+    const text = `HEAD${"x".repeat(4000)}TAIL`;
+    const seam = headTailSeam(text, 1000);
+    expect(seam.omittedBytes).toBeGreaterThan(2000);
+    expect(seam.text.startsWith("HEAD")).toBe(true);
+    expect(seam.text.endsWith("TAIL")).toBe(true);
+    expect(seam.text).toContain("bytes between head and tail omitted");
+    expect(Buffer.byteLength(seam.text)).toBeLessThanOrEqual(1200);
+    // Under the cap nothing is rewritten: an operator must be able to trust that a short
+    // block arrived exactly as the tool produced it.
+    expect(headTailSeam("short", 1000)).toEqual({ text: "short", omittedBytes: 0 });
+  });
+
+  it("keeps the tail for the tool-tail dial without splitting a multi-byte character", () => {
+    const text = "中文日志输出".repeat(2000); // three bytes per character
+    const kept = tailOnly(text, 1001);
+    expect(kept.omittedBytes).toBeGreaterThan(0);
+    expect(Buffer.byteLength(kept.text)).toBeLessThanOrEqual(1001);
+    expect(kept.text.endsWith("中文日志输出")).toBe(true);
+    expect(kept.text.includes("\uFFFD")).toBe(false);
+  });
+});
+
+describe("a recorder pushes only what has not been pushed", () => {
+  function recorder(level: ContentStreamLevel, options: { eventBytes?: number } = {}) {
+    const sink = captureEmitter();
+    const rec = new ContentRecorder({
+      level,
+      eventBytes: options.eventBytes ?? 65536,
+      emit: sink.emit,
+    });
+    return { rec, records: sink.records };
+  }
+
+  it("appends assistant text as it grows, and never repeats a character", () => {
+    const { rec, records } = recorder("assistant");
+    const newline = String.fromCharCode(10);
+    rec.onAssistantText("the race is in ");                     // too small to be a record yet
+    expect(records).toHaveLength(0);
+    rec.onAssistantText("the race is in applyHotplug()" + newline);
+    expect(records).toHaveLength(1);
+    expect(String(records[0]?.text)).toBe("the race is in applyHotplug()" + newline);
+    rec.onAssistantText("the race is in applyHotplug()" + newline);
+    expect(records).toHaveLength(1);                            // no growth, no record
+    const joined = records.map((record) => String(record.text)).join("");
+    expect(joined).toBe("the race is in applyHotplug()" + newline);
+  });
+
+  it("holds a stream of tiny fragments and flushes them once", () => {
+    // Measured on a real run: 129 assistant records for 2.2 KB of text, which would exhaust
+    // the event ceiling in the middle of a long answer. Coalescing is the fix, and the flush
+    // is what makes it safe rather than lossy.
+    const { rec, records } = recorder("assistant");
+    let text = "";
+    for (let index = 0; index < 100; index += 1) {
+      text += "ab";                     // 200 bytes in total: under the hold threshold
+      rec.onAssistantText(text);
+    }
+    expect(records).toHaveLength(0);
+    rec.onAssistantText(text, true);
+    expect(records).toHaveLength(1);
+    expect(String(records[0]?.text)).toBe(text);
+    // And the threshold really is a threshold rather than an unconditional buffer: a fragment
+    // large enough to be worth showing is written immediately, no flush required.
+    const eager = recorder("assistant");
+    eager.rec.onAssistantText("x".repeat(300));
+    expect(eager.records).toHaveLength(1);
+  });
+
+  it("writes a block that is not a continuation whole, without inventing a gap", () => {
+    // A revision and a new message both arrive as text that does not extend what was sent.
+    // Both are written in full: over-sending is honest, while a reader who believes they are
+    // watching an append is being lied to.
+    const { rec, records } = recorder("assistant");
+    rec.onAssistantText("planning to edit the wrong file", true);
+    rec.onAssistantText("planning to stop", true);
+    expect(records).toHaveLength(2);
+    expect(String(records[1]?.text)).toBe("planning to stop");
+  });
+
+  it("streams a tool block only when it actually advanced", () => {
+    const { rec, records } = recorder("transcript");
+    rec.onToolPartial("tc1", "bash", "one line");        // the block opened: worth one record
+    rec.onToolPartial("tc1", "bash", "one line");        // no growth at all
+    rec.onToolPartial("tc1", "bash", "one line");        // still nothing new
+    expect(records).toHaveLength(1);
+    rec.onToolPartial("tc1", "bash", "one line\ntwo lines");
+    expect(records).toHaveLength(2);
+    expect(records[0]?.streaming).toBe(true);
+    expect(String(records[1]?.text)).toContain("two lines");
+    // Growth that adds no line is held back until it is worth a record. This branch is the one
+    // a duplicate-only assertion cannot reach: the first falsification of the line gate came
+    // back green precisely because nothing here exercised it.
+    const newline = String.fromCharCode(10);
+    rec.onToolPartial("tc1", "bash", "one line" + newline + "two lines" + "x".repeat(200));
+    expect(records).toHaveLength(2);
+    rec.onToolPartial("tc1", "bash", "one line" + newline + "two lines" + "x".repeat(400));
+    expect(records).toHaveLength(3);
+    expect(String(records[2]?.text).trim().length).toBeGreaterThan(150);
+  });
+
+  it("stores the tail only for the tool-tail dial and the whole block above it", () => {
+    const long = `${"head ".repeat(600)}final failing line`;
+    const tail = recorder("assistant+tool-tail", { eventBytes: 200 });
+    tail.rec.onToolResult("tc1", "read", true, long);
+    const tailRecord = tail.records[0] ?? {};
+    expect(String(tailRecord.text).endsWith("final failing line")).toBe(true);
+    expect(String(tailRecord.text).startsWith("head head")).toBe(false);
+    expect(typeof tailRecord.omittedBytes).toBe("number");
+
+    const full = recorder("transcript", { eventBytes: 2000 });
+    full.rec.onToolResult("tc2", "read", true, long);
+    const fullRecord = full.records[0] ?? {};
+    expect(String(fullRecord.text).startsWith("head ")).toBe(true);
+    expect(String(fullRecord.text).endsWith("final failing line")).toBe(true);
+    expect(String(fullRecord.text)).toContain("omitted");
+  });
+
+  it("writes arguments at the top dial only, and records a missing result explicitly", () => {
+    // Pi sends arguments on the start event and the result on the end event, so the recorder
+    // has to hold one until the other arrives; a dial that quietly loses them is worse than
+    // one that was never turned on.
+    const quiet = recorder("transcript");
+    quiet.rec.noteArgs("tc1", "bash", '{"command":"rm -rf /tmp/x"}');
+    quiet.rec.onToolResult("tc1", "bash", true, "ok");
+    expect(quiet.records[0]?.argsText).toBeUndefined();
+
+    const loud = recorder("transcript+args");
+    loud.rec.noteArgs("tc2", "bash", '{"command":"npm test"}');
+    loud.rec.onToolResult("tc2", "bash", true, "ok");
+    expect(String(loud.records[0]?.argsText)).toContain("npm test");
+
+    const empty = recorder("transcript");
+    empty.rec.onToolResult("tc3", "bash", false, null);
+    expect(String(empty.records[0]?.text)).toBe("[no result returned]");
+    expect(empty.records[0]?.ok).toBe(false);
+  });
+
+  it("records nothing at all while the dial is none", () => {
+    const { rec, records } = recorder("none");
+    rec.onAssistantText("hello");
+    rec.noteArgs("tc1", "bash", '{"command":"ls"}');
+    rec.onToolPartial("tc1", "bash", "line\nline2");
+    rec.onToolResult("tc1", "bash", true, "output");
+    expect(records).toEqual([]);
+  });
+});
+
+describe("the observer view of a content block", () => {
+  const fifteen = Array.from({ length: 15 }, (_, index) => `line ${index + 1}`).join(String.fromCharCode(10));
+
+  it("shows the newest lines and announces how many were hidden", () => {
+    const body = formatExpertEventBody({ text: fifteen }, { maxLines: 10, maxChars: 120 });
+    expect(body).toHaveLength(11); // the notice plus ten shown lines
+    expect(body[0]).toContain("5 earlier lines not shown");
+    expect(body[body.length - 1]).toBe("line 15");
+    expect(body[1]).toBe("line 6");
+  });
+
+  it("clamps one enormous line rather than wrapping the console", () => {
+    const body = formatExpertEventBody({ text: "y".repeat(5000) }, { maxLines: 10, maxChars: 40 });
+    expect(body).toHaveLength(1);
+    expect((body[0] ?? "").length).toBe(40);
+    expect((body[0] ?? "").endsWith(String.fromCharCode(0x2026))).toBe(true);
+  });
+
+  it("strips control characters and ignores blank payloads", () => {
+    const esc = String.fromCharCode(27);
+    const body = formatExpertEventBody({ text: `plain${esc}[31mred${String.fromCharCode(0)}` }, { maxLines: 5, maxChars: 120 });
+    expect(body.join("")).not.toContain(esc);
+    expect(formatExpertEventBody({ text: "   " }, { maxLines: 5, maxChars: 120 })).toEqual([]);
+    expect(formatExpertEventBody({}, { maxLines: 5, maxChars: 120 })).toEqual([]);
+  });
+
+  it("treats exactly the two content kinds as content", () => {
+    const content = EXPERT_EVENT_KINDS.filter((kind) => isContentEvent({ kind }));
+    expect(content).toEqual(["assistant_text", "tool_output"]);
+  });
+});
+
+/**
+ * End to end through the runtime: Pi session events are replayed by the fake prompt, the
+ * recorder runs on real event shapes, and the assertions read the stream file the delegation
+ * actually wrote. No model is contacted.
+ */
+function streamHarness() {
+  const events: unknown[] = [];
+  let fire: ((event: unknown) => void) | undefined;
+  const nativeModel = { provider: "p", id: "m" };
+  const modelRuntime = {
+    getAvailable: async () => [
+      {
+        provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000,
+        input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+      },
+    ],
+    getModel: () => nativeModel,
+  };
+  class Loader {
+    constructor(_options: Record<string, unknown>) {}
+    async reload() {}
+    getSkills() { return { skills: [], diagnostics: [] }; }
+    getExtensions() { return { extensions: [], diagnostics: [] }; }
+  }
+  const sdk = {
+    SettingsManager: { create: () => ({}) },
+    DefaultResourceLoader: Loader,
+    getAgentDir: () => path.resolve(".pi-test-agent"),
+    ModelRuntime: { create: async () => modelRuntime },
+    SessionManager: { inMemory: () => ({}) },
+    createAgentSession: async () => ({
+      session: {
+        // Pi's own callback ordering: the run narrates, calls tools, and finishes.
+        prompt: async () => {
+          for (const event of events) fire?.(event);
+        },
+        waitForIdle: async () => {},
+        dispose: () => {},
+        subscribe: (callback: (event: unknown) => void) => {
+          fire = callback;
+          return () => undefined;
+        },
+        setActiveToolsByName: () => {},
+        state: {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "done" }) }],
+          }],
+        },
+      },
+    }),
+  } as unknown as PiSdkLike;
+  return { sdk, events, modelRuntime };
+}
+
+const ASSISTANT_EVENTS = [
+  { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "the race is in " }] } },
+  { type: "message_update", message: { role: "assistant", content: [{ type: "text", text: "the race is in applyHotplug()" }] } },
+  {
+    type: "message_update",
+    message: {
+      role: "assistant",
+      content: [
+        { type: "thinking", text: "SECRET-CHAIN-OF-THOUGHT" },
+        { type: "text", text: "the race is in applyHotplug() and the lock is held" },
+      ],
+    },
+  },
+  { type: "message_end", message: { role: "assistant", content: [{ type: "text", text: "the race is in applyHotplug() and the lock is held" }] } },
+  { type: "tool_execution_start", toolCallId: "tc1", toolName: "bash", args: { command: "npm test --silent" } },
+  {
+    type: "tool_execution_update",
+    toolCallId: "tc1",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "running tests\nfirst block" }] },
+  },
+  {
+    type: "tool_execution_end",
+    toolCallId: "tc1",
+    toolName: "bash",
+    isError: false,
+    result: { content: [{ type: "text", text: "running tests\nfirst block\nTests  369 passed (369)" }] },
+  },
+];
+
+async function readStream(dir: string, executionId: string): Promise<ExpertObservabilityEvent[]> {
+  const raw = await readFile(path.join(dir, `${executionId}.jsonl`), "utf8");
+  return raw
+    .split(String.fromCharCode(10))
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line) as ExpertObservabilityEvent);
+}
+
+async function runStream(options: { level?: ContentStreamLevel; byRole?: Record<string, ContentStreamLevel>; envValue?: string; events?: unknown[]; fileBytes?: number; executionId?: string }) {
+  const dir = await mkdtemp(path.join(tmpdir(), "ec-content-"));
+  const previousEnv = process.env.EXPERT_COUNCIL_CONTENT;
+  if (options.envValue !== undefined) process.env.EXPERT_COUNCIL_CONTENT = options.envValue;
+  try {
+    const { sdk, events, modelRuntime } = streamHarness();
+    events.push(...(options.events ?? ASSISTANT_EVENTS));
+    const runtime = await PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({
+        security: {
+          observability: {
+            expertWindow: "interactive",
+            ...(options.level ? { contentStream: options.level } : {}),
+            ...(options.byRole ? { contentByRole: options.byRole } : {}),
+            ...(options.fileBytes ? { contentFileBytes: options.fileBytes } : {}),
+          },
+        },
+      }),
+      sdk,
+      modelRuntime: modelRuntime as never,
+      roleDirectory,
+      observabilityDir: dir,
+    });
+    const result = await runtime.executeExpert({
+      executionId: options.executionId ?? "exec_content",
+      role: "scout",
+      task: "trace the hotplug race",
+      model: "p/m",
+      tools: ["read", "grep"],
+      skills: [],
+      readOnly: true,
+      workspace: process.cwd(),
+      timeoutMs: 20_000,
+      attempt: 1,
+    });
+    return { dir, result, runtime, events: await readStream(dir, options.executionId ?? "exec_content") };
+  } finally {
+    if (previousEnv === undefined) delete process.env.EXPERT_COUNCIL_CONTENT;
+    else process.env.EXPERT_COUNCIL_CONTENT = previousEnv;
+    // The caller reads the file before this cleanup runs, via the returned dir.
+  }
+}
+
+describe("the stream records what the dial promises", () => {
+  it("streams assistant text once, and never leaks a thinking part", async () => {
+    const { dir, events, result } = await runStream({ level: "transcript" });
+    try {
+      expect(result.status).toBe("success");
+      const narration = events.filter((event) => event.kind === "assistant_text");
+      const joined = narration.map((event) => event.text ?? "").join("");
+      expect(joined).toBe("the race is in applyHotplug() and the lock is held");
+      expect(joined.includes("the race is in applyHotplug()the race")).toBe(false);
+      // The red line: a `thinking` part inside the same message must not reach disk.
+      const raw = await readFile(path.join(dir, "exec_content.jsonl"), "utf8");
+      expect(raw.includes("SECRET-CHAIN-OF-THOUGHT")).toBe(false);
+      expect(raw.includes("thinking")).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records a streamed tool block and its complete final record, with a line pointer", async () => {
+    const { dir, events } = await runStream({ level: "transcript" });
+    try {
+      const tool = events.filter((event) => event.kind === "tool_output");
+      expect(tool.length).toBeGreaterThanOrEqual(2);
+      expect(tool.some((event) => event.streaming === true)).toBe(true);
+      const final = tool[tool.length - 1];
+      expect(final?.streaming).toBeUndefined();
+      expect(final?.ok).toBe(true);
+      expect(final?.text ?? "").toContain("Tests  369 passed (369)");
+      expect(typeof final?.line).toBe("number");
+      // The pointer must actually point at the record it describes.
+      const raw = (await readFile(path.join(dir, "exec_content.jsonl"), "utf8")).split(String.fromCharCode(10));
+      const at = Number(final?.line);
+      expect(JSON.parse(String(raw[at - 1])).kind).toBe("tool_output");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("writes arguments at the top dial only", async () => {
+    const quiet = await runStream({ level: "transcript", executionId: "exec_quiet_args" });
+    try {
+      const raw = await readFile(path.join(quiet.dir, "exec_quiet_args.jsonl"), "utf8");
+      expect(raw.includes("npm test --silent")).toBe(false);
+    } finally {
+      await rm(quiet.dir, { recursive: true, force: true });
+    }
+    const loud = await runStream({ level: "transcript+args", executionId: "exec_with_args" });
+    try {
+      const raw = await readFile(path.join(loud.dir, "exec_with_args.jsonl"), "utf8");
+      expect(raw.includes("npm test --silent")).toBe(true);
+    } finally {
+      await rm(loud.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the historical single-line behaviour while the dial is none", async () => {
+    const { dir, events } = await runStream({});
+    try {
+      expect(events.some((event) => event.kind === "tool_output")).toBe(false);
+      const narration = events.filter((event) => event.kind === "assistant_text");
+      expect(narration).toHaveLength(1);
+      expect(narration[0]?.text).toBe("the race is in applyHotplug() and the lock is held");
+      const raw = await readFile(path.join(dir, "exec_content.jsonl"), "utf8");
+      expect(raw.includes("SECRET-CHAIN-OF-THOUGHT")).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("honours a per-role dial", async () => {
+    const { dir, events } = await runStream({ level: "transcript", byRole: { scout: "assistant" } });
+    try {
+      expect(events.some((event) => event.kind === "assistant_text")).toBe(true);
+      expect(events.some((event) => event.kind === "tool_output")).toBe(false);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("lets the environment dial win for one run and reports a rejected value", async () => {
+    const raised = await runStream({ level: "none", envValue: "transcript", executionId: "exec_env_dial" });
+    try {
+      expect(raised.events.some((event) => event.kind === "tool_output")).toBe(true);
+    } finally {
+      await rm(raised.dir, { recursive: true, force: true });
+    }
+    const rejected = await runStream({ level: "none", envValue: "yes-please", executionId: "exec_env_bad" });
+    try {
+      expect(rejected.events.some((event) => event.kind === "tool_output")).toBe(false);
+      const capabilities = await rejected.runtime.getCapabilities();
+      expect(capabilities.limitations.join(" ")).toContain("EXPERT_COUNCIL_CONTENT");
+    } finally {
+      await rm(rejected.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("drops content but keeps observing when the file ceiling is reached", async () => {
+    const big = (marker: string) => ({
+      type: "tool_execution_end",
+      toolCallId: `tc-${marker}`,
+      toolName: "read",
+      isError: false,
+      result: { content: [{ type: "text", text: `${marker}${"z".repeat(60_000)}` }] },
+    });
+    const { dir, events, result } = await runStream({
+      level: "transcript",
+      fileBytes: 65_536,
+      executionId: "exec_overflow",
+      events: [
+        big("A"),
+        big("B"),
+        big("C"),
+        big("D"),
+        ...ASSISTANT_EVENTS,
+      ],
+    });
+    try {
+      // The delegation still succeeds, the ceiling is announced rather than going quiet, and
+      // the terminator the follower waits on is never the thing that got dropped.
+      expect(result.status).toBe("success");
+      expect(events.some((event) => event.kind === "stream_truncated")).toBe(true);
+      const written = events.filter((event) => event.kind === "tool_output");
+      expect(written.length).toBeGreaterThan(0);
+      expect(written.length).toBeLessThan(4);
+      // Content stopped, the ceiling was announced, and the outcome still arrived. Only this
+      // runtime-level call can end the file here: the delegation-level `delegation_final`
+      // marker is written by the service on top of it, and the same exempt list covers both.
+      expect(events[events.length - 1]?.kind).toBe("completed");
+      expect(events.some((event) => event.kind === "tool_output")).toBe(true);
+      expect(events.some((event) => event.kind === "assistant_text")).toBe(false); // dropped after the cap
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the stream directory has a budget", () => {
+  async function seed(dir: string, names: string[], bytes: number, agesMinutes: number[]) {
+    for (const [index, name] of names.entries()) {
+      const file = path.join(dir, name);
+      await writeFile(file, "s".repeat(bytes), "utf8");
+      const when = new Date(Date.now() - (agesMinutes[index] ?? 0) * 60_000);
+      await utimes(file, when, when);
+    }
+  }
+
+  async function runtimeWithBudget(dir: string, totalBytes: number) {
+    const { sdk, modelRuntime } = streamHarness();
+    return PiExpertRuntime.create({
+      cwd: process.cwd(),
+      config: parseCouncilConfig({
+        security: {
+          observability: {
+            expertWindow: "interactive",
+            contentStream: "transcript",
+            contentTotalBytes: totalBytes,
+          },
+        },
+      }),
+      sdk,
+      modelRuntime: modelRuntime as never,
+      roleDirectory,
+      observabilityDir: dir,
+    });
+  }
+
+  it("evicts oldest-first down to the ceiling, and never the newest stream", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-budget-"));
+    try {
+      // 900 KB of streams against a 500 KB ceiling: the two older ones go, the newest stays.
+      // "Newest stays" matters beyond tidiness: a live stream always has the newest
+      // modification time, so a budget sweep cannot delete what a window is following.
+      await seed(dir, ["exec_old.jsonl", "exec_mid.jsonl", "exec_new.jsonl"], 300_000, [30, 20, 1]);
+      await runtimeWithBudget(dir, 500_000);
+      expect(existsSync(path.join(dir, "exec_old.jsonl"))).toBe(false);
+      expect(existsSync(path.join(dir, "exec_mid.jsonl"))).toBe(false);
+      expect(existsSync(path.join(dir, "exec_new.jsonl"))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the directory alone while it is under the ceiling", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), "ec-budget-ok-"));
+    try {
+      await seed(dir, ["exec_a.jsonl", "exec_b.jsonl"], 100_000, [30, 1]);
+      await runtimeWithBudget(dir, 5_000_000);
+      expect(existsSync(path.join(dir, "exec_a.jsonl"))).toBe(true);
+      expect(existsSync(path.join(dir, "exec_b.jsonl"))).toBe(true);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});

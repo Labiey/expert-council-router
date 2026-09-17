@@ -143,6 +143,7 @@ const EVENT_KIND_COVERAGE: Record<ExpertEventKind, true> = {
   tool_started: true,
   tool_finished: true,
   assistant_text: true,
+  tool_output: true,
   attention: true,
   interaction_opened: true,
   interaction_answered: true,
@@ -183,6 +184,15 @@ function formatExpertEventLine(event: ExpertObservabilityEvent): string {
       return `${head} tool ${event.tool ?? "?"} ${event.ok === false ? "FAILED" : "ok"}`;
     case "assistant_text":
       return `${head} says: ${event.text ?? ""}`;
+    case "tool_output": {
+      // The header stays one bounded line: what streamed, whether it worked, and where the
+      // full record lives. The body is the operator's view of the content itself.
+      const bits = [event.tool ?? "tool", event.streaming === true ? "streaming" : "returned"];
+      if (event.ok === false) bits.push("error");
+      if (typeof event.omittedBytes === "number" && event.omittedBytes > 0) bits.push(`${event.omittedBytes} B omitted`);
+      if (typeof event.line === "number") bits.push(`full record on line ${event.line}`);
+      return `${head} ${bits.join(" - ")}`;
+    }
     case "attention": {
       // A struggle warning is the one event an operator acts on, so it must arrive with
       // its detail and its numbers rather than as a bare kind name.
@@ -211,4 +221,44 @@ function formatExpertEventLine(event: ExpertObservabilityEvent): string {
     default:
       return `${head} ${event.kind}`;
   }
+}
+
+/**
+ * Kinds that carry recorded conversation content rather than a name and a counter. The
+ * follower shows these as a header plus a bounded body; every other kind stays exactly one
+ * line, which is what keeps an interleaved terminal from desynchronising (#18).
+ */
+export const CONTENT_EVENT_KINDS: readonly ExpertEventKind[] = ["assistant_text", "tool_output"];
+
+export function isContentEvent(event: Pick<ExpertObservabilityEvent, "kind">): boolean {
+  return (CONTENT_EVENT_KINDS as readonly string[]).includes(event.kind);
+}
+
+/**
+ * Body lines for an observer window: the *tail* (the newest part is what one watches for),
+ * at most `maxLines` lines, each clamped to `maxChars` so a single minified line cannot wrap
+ * the console. Control characters are stripped per line - a stream is data, not a terminal
+ * protocol - and hidden lines are announced rather than silently dropped (#21's rule that a
+ * truncation must be visible where it happened).
+ */
+const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f]", "g");
+const ELLIPSIS = "…";
+
+export function formatExpertEventBody(
+  event: Pick<ExpertObservabilityEvent, "text">,
+  options: { maxLines: number; maxChars: number },
+): string[] {
+  const raw = typeof event.text === "string" ? event.text : "";
+  if (!raw.trim()) return [];
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.replace(CONTROL_CHARS, "").replace(/\s+$/g, ""))
+    .filter((line) => line.length > 0);
+  const width = Math.max(20, options.maxChars);
+  const clamped = lines.map((line) => (line.length > width ? line.slice(0, width - 1) + ELLIPSIS : line));
+  const wanted = Math.max(1, options.maxLines);
+  const shown = clamped.slice(Math.max(0, clamped.length - wanted));
+  const hidden = clamped.length - shown.length;
+  if (hidden > 0) shown.unshift(`[\u2191 ${hidden} earlier line${hidden === 1 ? "" : "s"} not shown]`);
+  return shown;
 }

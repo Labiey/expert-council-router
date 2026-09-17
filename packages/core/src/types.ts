@@ -134,6 +134,12 @@ export type ExpertEventKind =
   | "tool_started"
   | "tool_finished"
   | "assistant_text"
+  /**
+   * A tool result, recorded only from the `assistant+tool-tail` content dial up.
+   * `streaming: true` marks a partial block that is still growing; the closing event for
+   * the same call carries the complete payload with `streaming` absent.
+   */
+  | "tool_output"
   | "attention"
   | "interaction_opened"
   | "interaction_answered"
@@ -149,10 +155,20 @@ export type ExpertEventKind =
   | "delegation_final";
 
 /**
+ * Kinds that report how an attempt or a delegation ended. A stream ceiling may drop content
+ * and activity, never these: an observer that goes quiet mid-run is a mystery, while one that
+ * reports the outcome after dropping everything else has done its job. `watch` in the CLI
+ * keeps its own tolerant copy because a reader must survive kinds this list has never heard of.
+ */
+export const TERMINAL_EVENT_KINDS: readonly ExpertEventKind[] = ["stopped", "completed", "failed", "delegation_final"];
+
+/**
  * A single line of the cross-process observability stream written when
  * `security.observability.expertWindow` is `"interactive"`. Bounded by construction:
- * no chain of thought, no tool output, and no tool arguments unless the operator
- * explicitly turned `redactToolArgs` off.
+ * never a chain of thought (`textFromContent` keeps only `type: "text"` parts, so
+ * `thinking`/`reasoning` cannot enter). By default there is no tool output and no tool
+ * argument text; the `security.observability.contentStream` dials widen that deliberately,
+ * in ascending order of what reaches disk - see `CONTENT_LEVELS`.
  */
 export interface ExpertObservabilityEvent {
   /** Wall-clock ISO timestamp of when the runtime observed the event. */
@@ -174,6 +190,17 @@ export interface ExpertObservabilityEvent {
   nudgedExpert?: boolean;
   /** Bounded argument summary; present only when redactToolArgs is false. */
   argsSummary?: string;
+  /**
+   * Full arguments, recorded only at the top dial (`transcript+args`) - the one dial that
+   * can put a secret on disk, since arguments are shell commands and paths.
+   */
+  argsText?: string;
+  /** True while a tool block is still streaming; absent on its complete final record. */
+  streaming?: boolean;
+  /** Bytes dropped between the stored head and tail, so truncation stays visible. */
+  omittedBytes?: number;
+  /** 1-based line of this record in the stream file: where to read the rest. */
+  line?: number;
   status?: string;
   failureType?: string;
   durationMs?: number;

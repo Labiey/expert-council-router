@@ -2,22 +2,24 @@ import { appendFile, mkdir, readFile, readdir, stat, unlink } from "node:fs/prom
 import { Type } from "typebox";
 import path from "node:path";
 import {
+  CONTENT_LEVELS,
+  TERMINAL_EVENT_KINDS,
+  getRole,
   inferFailureType,
   inferFailureTypeFromSummary,
   normalizePiModels,
-  getRole,
   type AbortExecutionRequest,
   type AbortExecutionResult,
   type AvailableModel,
   type CouncilConfig,
-  type ExpertExecutionRequest,
+  type ExecutionProgress,
   type ExpertAttention,
-  type ExpertRole,
   type ExpertEventKind,
+  type ExpertExecutionRequest,
   type ExpertObservabilityEvent,
   type ExpertResult,
+  type ExpertRole,
   type ExpertRuntime,
-  type ExecutionProgress,
   type FailureType,
   type InteractionRequest,
   type InteractionResponse,
@@ -28,7 +30,7 @@ import {
   type SkillInfo,
   type VerifyCommandRequest,
   type VerifyCommandResult,
-  type WorkspaceProvisioningConfig,
+  type WorkspaceProvisioningConfig
 } from "@expert-council/core";
 import {
   loadPiSdk,
@@ -41,6 +43,7 @@ import {
 } from "./pi-sdk.js";
 import { WorkspaceBoundary, runBoundedCommand, scrubProvisioningEnv, tailCommandOutput, type BoundedCommandRunner, type PreparedWorkspace, type WorkspaceProvisioningStatus } from "./workspace.js";
 import { ObserverWindowLauncher, type ObserverWindowLauncherOptions } from "./window-launcher.js";
+import { ContentRecorder, recordsToolArgs, resolveContentLevel } from "./content-stream.js";
 
 export interface PiExpertRuntimeOptions {
   /**
@@ -92,6 +95,10 @@ interface ObservabilityStreamState {
   events: number;
   bytes: number;
   truncated?: boolean;
+  /** Per-file byte ceiling: raised from the historical default only when a content dial is on. */
+  maxBytes: number;
+  /** Recorder for the active content dial; absent at `none`. */
+  content?: ContentRecorder;
   /** Serializes appends so events cannot interleave or be lost. */
   chain: Promise<void>;
   /** Attempt number carried onto every event, so a retry is visible in the window. */
@@ -162,6 +169,30 @@ function textFromContent(content: unknown): string {
       return part.type === "text" && typeof part.text === "string" ? part.text : "";
     })
     .join("");
+}
+
+/**
+ * Tool results arrive in several shapes (Pi's content blocks, a plain string, or a host
+ * object). Only `text` parts are ever extracted, so a `thinking`/`reasoning` part cannot
+ * reach the stream by riding in a tool payload; anything unrecognised is serialised rather
+ * than dropped, because a missing record is a worse observer failure than an ugly one.
+ */
+function toolResultText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "string") return value;
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record.content)) return textFromContent(record.content) || textFromContent(value);
+  return textFromContent(value) || safeJson(value) || null;
+}
+
+/** JSON that never throws: a cyclic or exotic payload must not break an observer. */
+function safeJson(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function finalAssistantText(session: PiSessionLike): string {
@@ -552,6 +583,15 @@ export class PiExpertRuntime implements ExpertRuntime {
    */
   private readonly observerWindows: ObserverWindowLauncher | undefined;
   private readonly observerWindowWarnings: string[] = [];
+  private readonly contentWarnings: string[] = [];
+  /** The content dial in effect per delegation, so status can say what is on disk. */
+  private readonly contentDials = new Map<string, string>();
+
+  /** A content warning is operator-facing and fires once per distinct problem. */
+  private noteContentWarning(message: string): void {
+    const bounded = boundedText(message, 200);
+    if (!this.contentWarnings.includes(bounded) && this.contentWarnings.length < 8) this.contentWarnings.push(bounded);
+  }
 
   private constructor(
     private readonly sdk: PiSdkLike,
@@ -637,6 +677,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       file: path.join(this.options.observabilityDir, streamFileName(executionId)),
       events: 0,
       bytes: 0,
+      maxBytes: OBSERVABILITY_MAX_BYTES,
       chain: Promise.resolve(),
     };
     this.observabilityStreams.set(executionId, created);
@@ -648,6 +689,31 @@ export class PiExpertRuntime implements ExpertRuntime {
     if (!state || request.executionId === undefined) return;
     // Each attempt re-opens the same file, so the counter travels with the events it writes.
     state.attempt = request.attempt;
+    if (!state.content) {
+      const observability = this.options.config.security.observability;
+      const resolved = resolveContentLevel({
+        levels: CONTENT_LEVELS,
+        global: observability.contentStream,
+        byRole: observability.contentByRole,
+        role: String(request.role),
+        ...(process.env.EXPERT_COUNCIL_CONTENT === undefined ? {} : { envValue: process.env.EXPERT_COUNCIL_CONTENT }),
+      });
+      if (resolved.warning) this.noteContentWarning(resolved.warning);
+      if (resolved.level !== "none") {
+        // The historical 256 KB ceiling exists to bound names-and-counters noise; content mode
+        // is bounded by the operator's own dial, and a stream that stopped after two `read`
+        // results would be the more surprising failure.
+        // Whatever the operator set, exactly: a smaller number is a deliberate limit on
+        // exposure, and quietly widening it would make the dial a suggestion.
+        state.maxBytes = observability.contentFileBytes;
+        state.content = new ContentRecorder({
+          level: resolved.level,
+          eventBytes: observability.contentEventBytes,
+          emit: (kind, fields) => this.emitObservability(request.executionId, request.role, request.model, kind, fields),
+        });
+        this.contentDials.set(request.executionId, resolved.level);
+      }
+    }
     this.appendObservability(state, {
       t: new Date().toISOString(),
       executionId: request.executionId,
@@ -663,6 +729,9 @@ export class PiExpertRuntime implements ExpertRuntime {
       executionId: request.executionId,
       role: String(request.role),
       ...(typeof request.timeoutMs === "number" ? { timeoutMs: request.timeoutMs } : {}),
+      // The window shows what the operator configured, not the follower's own defaults.
+      windowLines: this.options.config.security.observability.contentWindowLines,
+      windowChars: this.options.config.security.observability.contentWindowChars,
     });
   }
 
@@ -675,7 +744,14 @@ export class PiExpertRuntime implements ExpertRuntime {
   ): void {
     const state = this.observabilityState(executionId);
     if (!state || executionId === undefined) return;
-    if (state.events >= OBSERVABILITY_MAX_EVENTS || state.bytes >= OBSERVABILITY_MAX_BYTES) {
+    // A ceiling may drop observation, never how the work ended: swallowing the terminator
+    // would leave a follower open until its own timeout and contradict the guarantee that the
+    // stream always says how a delegation finished (#17). Terminals are four tiny records, so
+    // exempting them cannot meaningfully widen a file an operator capped.
+    if (
+      !(TERMINAL_EVENT_KINDS as readonly string[]).includes(kind) &&
+      (state.events >= OBSERVABILITY_MAX_EVENTS || state.bytes >= state.maxBytes)
+    ) {
       if (!state.truncated) {
         state.truncated = true;
         this.appendObservability(state, {
@@ -684,7 +760,7 @@ export class PiExpertRuntime implements ExpertRuntime {
           role,
           ...(state.attempt === undefined ? {} : { attempt: state.attempt }),
           kind: "stream_truncated",
-          text: `${OBSERVABILITY_MAX_EVENTS} events / ${OBSERVABILITY_MAX_BYTES} bytes reached; further events dropped.`,
+          text: `${OBSERVABILITY_MAX_EVENTS} events / ${state.maxBytes} bytes reached; further events dropped except the outcome markers.`,
         });
       }
       return;
@@ -696,6 +772,11 @@ export class PiExpertRuntime implements ExpertRuntime {
       ...(model ? { model } : {}),
       ...(state.attempt === undefined ? {} : { attempt: state.attempt }),
       kind,
+      // A content record points back at itself: an operator told a block was shortened
+      // needs the line to read the rest, not an apology.
+      ...(state.content && (kind === "assistant_text" || kind === "tool_output")
+        ? { line: state.events + 1 }
+        : {}),
       ...fields,
     });
   }
@@ -909,6 +990,30 @@ export class PiExpertRuntime implements ExpertRuntime {
         // A raced deletion or an unreadable entry is not worth failing startup over.
       }
     }
+    // A content dial can write megabytes per delegation, so TTL alone is not a bound. Oldest
+    // first is also safe by construction: a live stream has the newest modification time, so
+    // eviction cannot pull the file an operator's window is currently following.
+    const budget = this.options.config.security.observability.contentTotalBytes;
+    const listed: Array<{ file: string; size: number; at: number }> = [];
+    for (const name of names.filter((item) => item.endsWith(".jsonl"))) {
+      const file = path.join(dir, name);
+      try {
+        const info = await stat(file);
+        listed.push({ file, size: info.size, at: info.mtimeMs });
+      } catch {
+        // Gone already; nothing to do.
+      }
+    }
+    let total = listed.reduce((sum, item) => sum + item.size, 0);
+    for (const item of listed.sort((left, right) => left.at - right.at)) {
+      if (total <= budget) break;
+      try {
+        await unlink(item.file);
+        total -= item.size;
+      } catch {
+        // Same as above: a raced deletion is not a startup failure.
+      }
+    }
   }
 
   async listAvailableModels(): Promise<AvailableModel[]> {
@@ -1027,6 +1132,10 @@ export class PiExpertRuntime implements ExpertRuntime {
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...(this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : []),
         ...this.observerWindowWarnings,
+        ...this.contentWarnings,
+        ...[...new Set(this.contentDials.values())].map(
+          (level) => `observability content dial "${level}" is recording: project content reaches disk as plaintext until pruned`,
+        ),
         ...workspace.limitations,
         provisioningMode === "none"
           ? "Mutation worktrees are not provisioned (security.workspaceProvisioning.mode=none); experts must not install dependencies."
@@ -1304,6 +1413,10 @@ export class PiExpertRuntime implements ExpertRuntime {
           toolName?: string;
           args?: unknown;
           isError?: boolean;
+          toolCallId?: string;
+          /** Pi's streaming tool output and its final result, kept only for the content dials. */
+          partialResult?: unknown;
+          result?: unknown;
           message?: { role?: string; content?: unknown };
         };
         if (e?.type === "tool_execution_end" && e.toolName) {
@@ -1330,21 +1443,56 @@ export class PiExpertRuntime implements ExpertRuntime {
         // The interactive expert window: mirror activity into a bounded event file a
         // second terminal can follow. Read-only with respect to the run - it cannot
         // change tool behavior, and every write failure is swallowed by the chain.
-        if (this.observabilityActive(request.executionId)) {
+        const obsState = this.observabilityState(request.executionId);
+        if (obsState) {
+          // The dial decides what is read out of the event, not whether the event is seen:
+          // counters and guardrails above stay on their own path, so turning content
+          // recording on cannot change how a run is judged.
+          const content = obsState.content;
+          const argsText =
+            content && recordsToolArgs(content.level) ? safeJson(e.args) : undefined;
           if (e?.type === "tool_execution_start" && e.toolName) {
             const summary = this.toolArgumentSummary(e.args);
             this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
               tool: e.toolName,
               ...(summary ? { argsSummary: summary } : {}),
             });
+            // Pi forwards arguments on the start event only, so the top dial catches them here
+            // and writes them with the closing record the operator actually reads.
+            content?.noteArgs(e.toolCallId ?? e.toolName, e.toolName, argsText ?? "");
           } else if (e?.type === "tool_execution_end" && e.toolName) {
             this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
               tool: e.toolName,
               ok: e.isError !== true,
             });
-          } else if (e?.type === "message_end" && e.message?.role === "assistant") {
-            const narration = boundedText(textFromContent(e.message.content));
-            if (narration) this.emitObservability(request.executionId, request.role, request.model, "assistant_text", { text: narration });
+            content?.onToolResult(
+              e.toolCallId ?? e.toolName,
+              e.toolName,
+              e.isError !== true,
+              toolResultText(e.result),
+            );
+          } else if (e?.type === "tool_execution_update" && e.toolName) {
+            content?.onToolPartial(
+              e.toolCallId ?? e.toolName,
+              e.toolName,
+              toolResultText(e.partialResult) ?? "",
+            );
+          } else if ((e?.type === "message_update" || e?.type === "message_end") && e.message?.role === "assistant") {
+            if (content) {
+              // A content dial streams the narration as it grows, so the end-of-message
+              // duplicate is skipped on purpose: reprinting the whole paragraph after its
+              // deltas would be the re-send the recorder's cursor exists to prevent. `final`
+              // only tells the recorder to flush a fragment too small to have been worth a
+              // record on its own - the last sentence must never be the one that is lost.
+              content.onAssistantText(
+                textFromContent(e.message.content),
+                e?.type === "message_end",
+              );
+            } else if (e?.type === "message_end") {
+              const narration = boundedText(textFromContent(e.message.content));
+              if (narration)
+                this.emitObservability(request.executionId, request.role, request.model, "assistant_text", { text: narration });
+            }
           }
         }
       }) ?? undefined;

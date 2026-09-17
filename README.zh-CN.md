@@ -405,6 +405,59 @@ limitation。要把观察者指向特定的 CLI 构建，设 `EXPERT_COUNCIL_CLI
 
 手动路径对所有人继续有效：在另一个终端跑 `expert-council watch --exec <execution-id> --follow`；这也是
 回看一次已完成委派的方式——流文件在 7 天清理前一直在盘上。
+### 观察者记录什么（内容挡位）
+
+默认情况下，事件流只记录**名字与计数**：跑了哪个工具、成功没有、用了几次；它不记录工具返回了
+什么。这是一次刻意的暴露面选择，而 `security.observability.contentStream` 是你主动放宽它的地方
+——五个递增挡位，让你自己挑风险，而不是被一个复选框替你决定：
+
+| 挡位 | 落盘内容 | 为什么选它 |
+| --- | --- | --- |
+| `none`（默认） | 名字、计数、结局标记 | 除了进程内信息，什么都不出去 |
+| `assistant` | assistant 文本，随生成随记 | 想看叙述思路，但不想把文件内容也存下来 |
+| `assistant+tool-tail` | 上面这些，外加每个工具结果的**尾部** | 只看得到失败那一行，不必存整份文件 |
+| `transcript` | 上面这些，外加**完整**工具结果（带可见接缝） | 事后复现专家当时看到的东西 |
+| `transcript+args` | 上面这些，外加完整工具**入参** | 连 shell 命令与路径都有——调试价值最高，也是唯一可能记下密钥的一挡 |
+
+```json
+{
+  "security": {
+    "observability": {
+      "expertWindow": "interactive",
+      "autoOpenWindow": true,
+      "contentStream": "transcript",
+      "contentByRole": { "debugger": "transcript", "reviewer": "assistant" },
+      "contentWindowLines": 10,
+      "contentWindowChars": 120,
+      "contentEventBytes": 65536,
+      "contentFileBytes": 10485760,
+      "contentTotalBytes": 209715200
+    }
+  }
+}
+```
+
+- **挡位解析顺序**：内置 `none` < `contentStream` < `contentByRole[角色]` < `EXPERT_COUNCIL_CONTENT`。
+  只有配置与环境变量能开启：任何工具参数、专家输出、任务文本都开不了它——这是隐私开关，不是性能开关。
+  `contentByRole` 里的角色名会拿真实角色表校验，所以拼错会报出一条**列出合法值**的错误，而不是得到一个
+  永远不生效的哑挡。
+- **任何挡位都不记录**：`thinking` / `reasoning` 部件。只有 `type: "text"` 的内容才可能进入事件流——
+  这是项目红线，不是一个会漂移的默认值；有一条专门的测试，思维链一旦落盘它就变红。
+- **窗口显示的内容比存下来的少。** 工具块流式阶段一次最多 3 行；结束记录显示最后
+  `contentWindowLines` 行（默认 10），每行再按 `contentWindowChars`（默认 120）截断。叙述也照样合并：真实模型会吐出不值得单独记一条的碎片，所以凑满一行或 240 字节才记一条，
+  消息结束时把还攥着的余量冲刷出去——真机实测把 2.2 KB 文本的 129 条记录压成寥寥数条，且一个字符都不丢。被藏起的行数与
+  被省略的字节数都会**明确说出来**而不是悄悄丢掉，而且标题会给出这条记录在事件流文件里的**行号**，
+  所以看全文只差一次跳转：
+
+```bash
+sed -n '137p' ~/AppData/Local/ExpertCouncil/observability/exec_abc123.jsonl | jq -r .text
+```
+
+- **三道上限，且只管内容**：`contentEventBytes` 限单个载荷（更大的存成"头 + 尾"，中间缺口以字节数写明）、
+  `contentFileBytes` 限单次委派的流（默认 10 MB）、`contentTotalBytes` 限整个目录（默认 200 MB，
+  按最旧优先淘汰）。撞上上限时丢的是*内容*，并写一条 `stream_truncated` 通知；它**不会**丢掉委派如何结束，
+  也**永远不会**让委派失败。正在写入的流永远拥有最新的修改时间，所以目录淘汰不可能删掉你窗口正跟着的文件。
+- 文件仍然 7 天后清理；开启记录也不会给主 Agent 增加任何东西：专家返回的仍是那份紧凑的结构化结果。
 ### 挣扎检测（护栏）
 
 `security.guardrails` 决定 Council 是否会察觉「专家卡住」而不是「只是忙」。检测在设计上**不阻塞、不中止**：误报只浪费一次查看，自动中止会毁掉好成果。
@@ -598,6 +651,7 @@ expert-council watch --exec <execution-id> [--follow]
 - `--state`：自定义持久化计划、执行和结果状态路径。
 - `--timeout-ms`：专家执行超时。
 - `watch` 额外接受 `--dir`（事件流目录）、`--interval-ms`（轮询间隔，默认 1000）与 `--timeout-ms`（最长跟随时间，默认 300000）、`--quiet-ms`（没有终止标记的流需静默多久才放弃跟随，默认 15000）；它需要 `security.observability.expertWindow: "interactive"` 正在产生事件流。
+- `watch` 还接受 `--max-lines N`（每条正文块显示几行，1-50，默认 10）与 `--max-chars N`（每行截断宽度，20-400，默认 120）；自动打开的窗口会从配置继承 `contentWindowLines` 与 `contentWindowChars`，所以你把数字调大不会被跟随器自己的默认值悄悄覆盖。
 
 ## MCP Server
 

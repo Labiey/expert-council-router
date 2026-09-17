@@ -43,6 +43,11 @@ export interface ExpertEventFrame {
   ok?: boolean;
   text?: string;
   argsSummary?: string;
+  /** Content-dial fields: a dropped one here would hide a truncation from the operator. */
+  argsText?: string;
+  streaming?: boolean;
+  omittedBytes?: number;
+  line?: number;
   status?: string;
   failureType?: string;
   durationMs?: number;
@@ -102,7 +107,7 @@ function positional(args: string[]): string[] {
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
   expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]
-  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N] [--quiet-ms N]
+  expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N] [--quiet-ms N] [--max-lines N] [--max-chars N]
 
 watch (run it from a second terminal) tails the live expert event stream that the
 runtime writes to <dataDir>/observability/<execution-id>.jsonl while
@@ -115,7 +120,10 @@ security.observability.expertWindow is "interactive":
                     stream_truncated), at --timeout-ms, or if the stream file disappears
   --interval-ms N   poll interval, 50-60000 (default 1000)
   --timeout-ms N    maximum total follow time, 1000-3600000 (default 300000)
-  --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000).
+  --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000)
+  --max-lines N     body lines shown per recorded content block, 1-50 (default 10; 3 while
+                    a tool block is still streaming)
+  --max-chars N     clamp per shown body line, 20-400 (default 120).
                     Applies only once a terminal event has been seen and the final marker is
                     missing or still being flushed; a stream that never reached a terminal
                     event is bounded by --timeout-ms, because a fresh expert can be silent
@@ -175,6 +183,36 @@ export async function resolveExpertEventFormatter(): Promise<(event: ExpertEvent
     );
   }
   return shared as (event: ExpertEventFrame) => string;
+}
+
+/**
+ * The bounded multi-line view for content records, resolved from core exactly like the
+ * single-line formatter: the CLI must not own a second copy of the rules that decide how
+ * much of a tool block an operator sees.
+ */
+export async function resolveExpertEventBody(): Promise<{
+  isContent: (event: ExpertEventFrame) => boolean;
+  body: (event: ExpertEventFrame, options: { maxLines: number; maxChars: number }) => string[];
+}> {
+  const core: unknown = await import("@expert-council/core");
+  const shaped = core as {
+    isContentEvent?: unknown;
+    formatExpertEventBody?: unknown;
+  };
+  if (typeof shaped.isContentEvent !== "function" || typeof shaped.formatExpertEventBody !== "function") {
+    throw new Error(
+      "watch cannot render recorded content: @expert-council/core in this build does not export "
+        + "isContentEvent/formatExpertEventBody. Rebuild the workspace so the installed core provides "
+        + "them, or run watch with --json to read the raw stream.",
+    );
+  }
+  return {
+    isContent: shaped.isContentEvent as (event: ExpertEventFrame) => boolean,
+    body: shaped.formatExpertEventBody as (
+      event: ExpertEventFrame,
+      options: { maxLines: number; maxChars: number },
+    ) => string[],
+  };
 }
 
 /**
@@ -286,6 +324,10 @@ function parseExpertEvent(line: string): ExpertEventFrame | undefined {
     ...(typeof frame.ok === "boolean" ? { ok: frame.ok } : {}),
     ...(text("text") !== undefined ? { text: text("text") } : {}),
     ...(text("argsSummary") !== undefined ? { argsSummary: text("argsSummary") } : {}),
+    ...(text("argsText") !== undefined ? { argsText: text("argsText") } : {}),
+    ...(typeof frame.streaming === "boolean" ? { streaming: frame.streaming } : {}),
+    ...(typeof frame.omittedBytes === "number" ? { omittedBytes: frame.omittedBytes } : {}),
+    ...(typeof frame.line === "number" ? { line: frame.line } : {}),
     ...(text("status") !== undefined ? { status: text("status") } : {}),
     ...(text("failureType") !== undefined ? { failureType: text("failureType") } : {}),
     ...(typeof frame.durationMs === "number" ? { durationMs: frame.durationMs } : {}),
@@ -311,12 +353,18 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   const intervalMs = integerOption(args, "--interval-ms", 50, 60_000) ?? 1_000;
   const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000) ?? 300_000;
   const quietMs = integerOption(args, "--quiet-ms", 250, 600_000) ?? WATCH_QUIET_DEFAULT_MS;
+  // How much of a recorded content block a window shows. The stream holds the whole
+  // payload within its own caps; these bound only the display, and the header names the
+  // line to read for the rest.
+  const maxLines = integerOption(args, "--max-lines", 1, 50) ?? 10;
+  const maxChars = integerOption(args, "--max-chars", 20, 400) ?? 120;
   const file = path.join(dir, `${executionId}${WATCH_STREAM_SUFFIX}`);
   if (!(await streamExists(file))) {
     const listed = describeStreams(dir, await listStreamExecutions(dir));
     throw new Error(`watch found no event stream for ${executionId} at ${file}. ${WATCH_PREREQUISITE_HINT} ${listed}`);
   }
   const format = json ? undefined : (injectedFormat ?? await resolveExpertEventFormatter());
+  const content = json || format === undefined ? undefined : await resolveExpertEventBody();
 
   let offset = 0;
   // Node's Buffer is generic over its ArrayBuffer type since @types/node 22, and
@@ -367,6 +415,16 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
           printed += 1;
         } else if (event !== undefined) {
           io.stdout.write(`${format!(event)}\n`);
+          if (content?.isContent(event)) {
+            // Three live lines while a tool block streams, the configured tail once it is
+            // final: a growing `npm test` should move without scrolling the operator out of
+            // their own view. The stream still holds the whole payload for reading afterwards.
+            const bodyLines = content.body(event, {
+              maxLines: event.streaming === true ? Math.min(3, maxLines) : maxLines,
+              maxChars,
+            });
+            for (const bodyLine of bodyLines) io.stdout.write(`      ${bodyLine}\n`);
+          }
           printed += 1;
         } else {
           malformed += 1;
@@ -482,10 +540,17 @@ export async function runCli(
         if (timeoutMs === undefined) {
           throw new Error("delegate requires --timeout-ms <ms> (1000–3600000): set an explicit budget from task difficulty");
         }
-        const reasoningLevel = bounded(option(args, "--reasoning-level") ?? "", "reasoning level", 40);
-        if (!reasoningLevel) {
+        // The flag is required by design - the council must not guess an effort a model may
+        // not honour - but presence has to be checked before `bounded`, or an operator who
+        // omitted it reads a validator's complaint instead of the sentence that says what to
+        // pass. A value that is really the next flag is refused for the same reason: silently
+        // sending "--json" as a reasoning level would be a wrong answer to a question nobody
+        // asked.
+        const reasoningFlag = option(args, "--reasoning-level");
+        if (reasoningFlag === undefined || reasoningFlag === "" || reasoningFlag.startsWith("--")) {
           throw new Error("delegate requires --reasoning-level <level> (e.g. low/medium/high): choose it from the task and model");
         }
+        const reasoningLevel = bounded(reasoningFlag, "reasoning level", 40);
         const modelText = option(args, "--model");
         if (modelText && !/^[^/]+\/[^/]+$/.test(modelText)) {
           throw new Error("--model must be a provider/id model key");

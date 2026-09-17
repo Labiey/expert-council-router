@@ -382,6 +382,71 @@ the observer at a specific CLI build, set `EXPERT_COUNCIL_CLI`; to force a termi
 The manual route stays available for everyone: run `expert-council watch --exec <execution-id>
 --follow` from any second terminal, which is also how you re-read a finished delegation, since the
 stream file remains on disk until it is pruned after 7 days.
+### What the observer records (content dials)
+
+By default the stream records **names and counters**: which tool ran, whether it worked, how
+many calls it took. It never records what the tool returned. That is a deliberate exposure
+choice, and `security.observability.contentStream` is how you widen it - in five ascending
+dials, so you pick the risk rather than inheriting it from a checkbox:
+
+| Dial | What reaches disk | Why you would choose it |
+| --- | --- | --- |
+| `none` (default) | names, counters, outcome markers | nothing extra leaves the process |
+| `assistant` | assistant text, as it is produced | follow the reasoning-as prose without shipping file contents |
+| `assistant+tool-tail` | the above plus the **tail** of each tool result | see the failing line without storing whole files |
+| `transcript` | the above plus the **whole** tool result (behind a visible seam) | reproduce what the expert saw, after the fact |
+| `transcript+args` | the above plus full tool **arguments** | shell commands and paths too - the highest value for debugging, and the only dial that can record a secret |
+
+```json
+{
+  "security": {
+    "observability": {
+      "expertWindow": "interactive",
+      "autoOpenWindow": true,
+      "contentStream": "transcript",
+      "contentByRole": { "debugger": "transcript", "reviewer": "assistant" },
+      "contentWindowLines": 10,
+      "contentWindowChars": 120,
+      "contentEventBytes": 65536,
+      "contentFileBytes": 10485760,
+      "contentTotalBytes": 209715200
+    }
+  }
+}
+```
+
+- **The dial is resolved as**: built-in `none` < `contentStream` < `contentByRole[role]` <
+  `EXPERT_COUNCIL_CONTENT`. Configuration and environment only - no tool argument, expert
+  output, or task text can turn recording on, because this is a privacy switch, not a
+  performance one. A role name in `contentByRole` is validated against the real role list, so a
+  typo is an error naming the legal values rather than a dial that quietly never applies.
+- **Never recorded, at any dial**: `thinking` / `reasoning` parts. Only `type: "text"` content
+  can enter the stream, which is a project rule and not a default that can drift - a dedicated
+  test fails if a thinking part ever reaches the file.
+- **What the window shows** is smaller than what is stored. A tool block streams at most 3
+  lines at a time, and its final record shows the last `contentWindowLines` lines (default 10),
+  each clamped to `contentWindowChars` (default 120). Narration is coalesced the same way: a
+  live model emits fragments too small to be worth a record, so one is written when a fragment
+  completes a line or reaches 240 bytes, and anything still held is flushed when the message
+  closes - measured on a real run, that turns 129 records for 2.2 KB of text into a handful
+  without losing a character. Hidden lines and omitted bytes are
+  announced rather than silently dropped, and the header names the **line number** in the stream
+  file that holds the record, so the whole thing is one jump away:
+
+```bash
+sed -n '137p' ~/AppData/Local/ExpertCouncil/observability/exec_abc123.jsonl | jq -r .text
+```
+
+- **Three ceilings, all of them content-only**: `contentEventBytes` bounds one payload (a larger
+  one is stored as head + tail with the gap counted in bytes), `contentFileBytes` bounds one
+  delegation's stream (default 10 MB), and `contentTotalBytes` bounds the whole directory
+  (default 200 MB, evicted oldest-first). Hitting one drops *content* and writes a
+  `stream_truncated` notice; it never drops how the delegation ended, and it can never fail the
+  delegation. An in-flight stream always has the newest modification time, so directory eviction
+  cannot pull the file your window is following.
+- Files are still pruned after 7 days, and recording adds nothing to what the Main Agent
+  receives: expert results stay the same compact structured summary.
+
 ### Struggle detection (guardrails)
 
 `security.guardrails` decides whether the council notices an expert that is stuck
@@ -626,6 +691,7 @@ Common flags:
 - `--state`: custom path for persisted plans, executions, and results.
 - `--timeout-ms`: expert execution timeout.
 - `watch` also takes `--dir` (event stream directory), `--interval-ms` (poll interval, default 1000), and `--timeout-ms` (maximum follow time, default 300000), and `--quiet-ms` (how long a stream with no final marker must stay silent before the follower gives up, default 15000). It needs `security.observability.expertWindow: "interactive"` to be producing a stream.
+- `watch` also takes `--max-lines N` (body lines per recorded content block, 1-50, default 10) and `--max-chars N` (clamp per shown body line, 20-400, default 120); an auto-opened window inherits `contentWindowLines` and `contentWindowChars` from configuration, so raising the configured number is not silently overridden by the follower's default.
 
 ## MCP Server
 
@@ -728,6 +794,7 @@ Supported environment variables:
 - `EXPERT_COUNCIL_STATE`: persisted plans, executions, and results state path.
 - `EXPERT_COUNCIL_WORKTREES`: parent directory for private expert mutation worktrees (the per-user private subdirectory is always kept); useful for short-path volumes or a faster disk.
 - `EXPERT_COUNCIL_DATA_DIR`: root for all per-user council data - assessments, route policy, usage ledger, recovery state, and observability streams; the platform default is `%LOCALAPPDATA%/ExpertCouncil` on Windows.
+- `EXPERT_COUNCIL_CONTENT`: content dial for this process only, overriding `contentStream` and `contentByRole`; an unrecognised value is reported as a limitation rather than guessed at.
 - `EXPERT_COUNCIL_MODEL_ASSESSMENT`: persisted shared model assessment path.
 - `EXPERT_COUNCIL_ROUTE_POLICY`: persisted per-session routing allow/deny policy path.
 - `EXPERT_COUNCIL_USAGE_LEDGER`: persisted token usage ledger behind provider caps.

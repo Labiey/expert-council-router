@@ -8,6 +8,15 @@ import {
   type ResolvedModelProfile,
 } from "./types.js";
 
+import { DEFAULT_ROLES } from "./roles.js";
+/** The five content dials, in ascending order of what reaches disk. */
+export const CONTENT_LEVELS = ["none", "assistant", "assistant+tool-tail", "transcript", "transcript+args"] as const;
+export type ContentStreamLevel = (typeof CONTENT_LEVELS)[number];
+
+/** Role names from their single definition, so a misspelled key cannot become a silent no-op. */
+const ROLE_NAMES = Object.keys(DEFAULT_ROLES) as [string, ...string[]];
+
+
 const score = z.number().min(0).max(10);
 const capabilityFields = {
   reasoning: score.nullable().optional(),
@@ -247,12 +256,73 @@ export const councilConfigSchema = z.object({
            * to show would look like a broken feature rather than a configuration mistake.
            */
           autoOpenWindow: z.boolean().default(false),
+          /**
+           * How much of the conversation the event stream records. Five ascending dials so
+           * the operator chooses the risk rather than a boolean choosing it for them:
+           *   none                names and counters only (the historical behaviour)
+           *   assistant           assistant text as it is produced
+           *   assistant+tool-tail  the above plus the tail of each tool result
+           *   transcript          the above plus the whole tool result (head+tail seam)
+           *   transcript+args     the above plus full tool arguments - the only dial that
+           *                       writes arguments, and the one most likely to record a
+           *                       secret, since arguments are shell commands and paths
+           * All of it is plaintext in the local data directory until pruned.
+           */
+          contentStream: z.enum(CONTENT_LEVELS).default("none"),
+          /**
+           * Per-role dials, e.g. transcript for a debugger and none for a reviewer.
+           * Resolution: built-in `none` < contentStream < contentByRole[role] <
+           * EXPERT_COUNCIL_CONTENT. Config and environment only: content on disk is a
+           * privacy decision, so no tool argument or expert output may reach for it.
+           */
+          contentByRole: z
+            .record(z.string(), z.enum(CONTENT_LEVELS))
+            // An enum-keyed record would demand every role be listed, and a plain string-keyed
+            // one would swallow a typo forever. Validate the names and say what is legal.
+            .superRefine((roles, ctx) => {
+              for (const name of Object.keys(roles)) {
+                if ((ROLE_NAMES as readonly string[]).includes(name)) continue;
+                ctx.addIssue({
+                  code: z.ZodIssueCode.custom,
+                  message: `contentByRole names an unknown role "${name}"; valid names: ${ROLE_NAMES.join(", ")}`,
+                });
+              }
+            })
+            .default({}),
+          contentWindowLines: z.number().int().min(1).max(50).default(10),
+          contentWindowChars: z.number().int().min(20).max(400).default(120),
+          contentEventBytes: z.number().int().min(1024).max(1048576).default(65536),
+          contentFileBytes: z.number().int().min(65536).max(100000000).default(10485760),
+          contentTotalBytes: z.number().int().min(65536).max(2000000000).default(209715200),
         })
+        .strict()
         .refine((value) => !value.autoOpenWindow || value.expertWindow === "interactive", {
           message: 'security.observability.autoOpenWindow requires expertWindow "interactive": without the on-disk event stream there is nothing for an observer window to follow',
           path: ["autoOpenWindow"],
         })
-        .default({ expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false }),
+        .refine(
+          (value) =>
+            value.expertWindow === "interactive" ||
+            (value.contentStream === "none" && Object.values(value.contentByRole).every((level) => level === "none")),
+          {
+            message:
+              'security.observability.contentStream/contentByRole require expertWindow "interactive": recorded content would have nowhere to go',
+            path: ["contentStream"],
+          },
+        )
+        .default({
+          expertWindow: "off",
+          streamToHost: true,
+          redactToolArgs: true,
+          autoOpenWindow: false,
+          contentStream: "none",
+          contentByRole: {},
+          contentWindowLines: 10,
+          contentWindowChars: 120,
+          contentEventBytes: 65536,
+          contentFileBytes: 10485760,
+          contentTotalBytes: 209715200,
+        }),
       /**
        * Struggle detection. Non-blocking by construction: warnings reach the host, an
        * optional bounded nudge reaches the expert, and nothing here ever aborts a run.
@@ -318,7 +388,11 @@ export const councilConfigSchema = z.object({
       worktreeRetentionMs: 24 * 60 * 60_000,
       toolGrants: {},
       expertLifetime: "host-bound",
-      observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false },
+      observability: {
+        expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false,
+        contentStream: "none", contentByRole: {}, contentWindowLines: 10, contentWindowChars: 120,
+        contentEventBytes: 65536, contentFileBytes: 10485760, contentTotalBytes: 209715200,
+      },
       guardrails: {
         warnHost: true,
         nudgeExpert: true,

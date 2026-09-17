@@ -66,7 +66,9 @@
       "expertWindow": "interactive",
       "streamToHost": true,
       "redactToolArgs": true,
-      "autoOpenWindow": false
+      "autoOpenWindow": false,
+      "contentStream": "none",
+      "contentByRole": {}
     },
     "guardrails": {
       "warnHost": true,

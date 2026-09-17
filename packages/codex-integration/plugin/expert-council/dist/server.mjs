@@ -75732,10 +75732,10 @@ function convertMessages3(model, context, compat, options) {
         const textResult = toolMsg.content.filter(isTextContentBlock).map((block) => block.text).join("\n");
         const hasImages = toolMsg.content.some((c2) => c2.type === "image");
         const hasText = textResult.length > 0;
-        const toolResultText = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
+        const toolResultText2 = hasText ? textResult : hasImages ? "(see attached image)" : "(no tool output)";
         const toolResultMsg = {
           role: "tool",
-          content: sanitizeSurrogates(toolResultText),
+          content: sanitizeSurrogates(toolResultText2),
           tool_call_id: toolMsg.toolCallId
         };
         if (compat.requiresToolResultName && toolMsg.toolName) {
@@ -309939,8 +309939,91 @@ var CAPABILITY_DIMENSIONS = [
   "autonomousExecution",
   "speed"
 ];
+var TERMINAL_EVENT_KINDS = ["stopped", "completed", "failed", "delegation_final"];
+
+// packages/core/dist/roles.js
+var readOnlyTools = ["read", "grep", "find", "ls"];
+var DEFAULT_ROLES = {
+  planner: {
+    role: "planner",
+    description: "Decompose tasks, dependencies, risks, and acceptance criteria.",
+    readOnly: true,
+    tools: readOnlyTools,
+    skills: ["planning"],
+    weights: { planning: 0.3, reasoning: 0.2, architecture: 0.15, longContext: 0.15, review: 0.1, costEfficiency: 0.1 }
+  },
+  scout: {
+    role: "scout",
+    description: "Explore repositories and compress relevant context without mutation.",
+    readOnly: true,
+    tools: readOnlyTools,
+    skills: [],
+    weights: { toolReliability: 0.25, longContext: 0.15, speed: 0.2, reasoning: 0.1, autonomousExecution: 0.1, costEfficiency: 0.2 }
+  },
+  "architecture-oracle": {
+    role: "architecture-oracle",
+    description: "Provide difficult cross-file architectural reasoning and a second opinion.",
+    readOnly: true,
+    tools: readOnlyTools,
+    skills: ["architecture-analysis"],
+    weights: { architecture: 0.3, planning: 0.2, longContext: 0.2, review: 0.15, reasoning: 0.1, costEfficiency: 0.05 }
+  },
+  "implementation-worker": {
+    role: "implementation-worker",
+    description: "Perform bounded code changes and focused validation.",
+    readOnly: false,
+    requiresMutation: true,
+    tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"],
+    skills: ["coding", "testing", "safe-shell"],
+    minimumToolReliability: 4,
+    weights: {
+      toolReliability: 0.3,
+      coding: 0.25,
+      autonomousExecution: 0.15,
+      bashReliability: 0.1,
+      debugging: 0.05,
+      costEfficiency: 0.1,
+      speed: 0.05
+    }
+  },
+  debugger: {
+    role: "debugger",
+    description: "Reproduce failures, isolate root causes, fix them, and verify results.",
+    readOnly: false,
+    requiresMutation: true,
+    tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"],
+    skills: ["debugging", "testing", "safe-shell"],
+    minimumToolReliability: 4,
+    weights: { debugging: 0.3, toolReliability: 0.25, coding: 0.15, bashReliability: 0.1, reasoning: 0.1, costEfficiency: 0.05, speed: 0.05 }
+  },
+  reviewer: {
+    role: "reviewer",
+    description: "Review another expert's changes for correctness, regressions, and design quality.",
+    readOnly: true,
+    tools: readOnlyTools,
+    skills: ["code-review"],
+    weights: { review: 0.3, reasoning: 0.2, architecture: 0.15, coding: 0.15, longContext: 0.1, costEfficiency: 0.1 }
+  },
+  verifier: {
+    role: "verifier",
+    description: "Inspect reported tests, diffs, and acceptance criteria without mutation-capable tools.",
+    readOnly: true,
+    tools: readOnlyTools,
+    skills: ["testing"],
+    minimumToolReliability: 4,
+    weights: { toolReliability: 0.3, review: 0.2, longContext: 0.15, autonomousExecution: 0.1, debugging: 0.1, speed: 0.1, costEfficiency: 0.05 }
+  }
+};
+function getRole(role2) {
+  return DEFAULT_ROLES[role2];
+}
+function listRoles() {
+  return Object.values(DEFAULT_ROLES).map((role2) => ({ ...role2, tools: [...role2.tools], skills: [...role2.skills] }));
+}
 
 // packages/core/dist/config.js
+var CONTENT_LEVELS = ["none", "assistant", "assistant+tool-tail", "transcript", "transcript+args"];
+var ROLE_NAMES = Object.keys(DEFAULT_ROLES);
 var score = external_exports.number().min(0).max(10);
 var capabilityFields = {
   reasoning: score.nullable().optional(),
@@ -310133,11 +310216,60 @@ var councilConfigSchema = external_exports.object({
        * or a host tool call can pass opens a window, and turning it on without a stream
        * to show would look like a broken feature rather than a configuration mistake.
        */
-      autoOpenWindow: external_exports.boolean().default(false)
-    }).refine((value3) => !value3.autoOpenWindow || value3.expertWindow === "interactive", {
+      autoOpenWindow: external_exports.boolean().default(false),
+      /**
+       * How much of the conversation the event stream records. Five ascending dials so
+       * the operator chooses the risk rather than a boolean choosing it for them:
+       *   none                names and counters only (the historical behaviour)
+       *   assistant           assistant text as it is produced
+       *   assistant+tool-tail  the above plus the tail of each tool result
+       *   transcript          the above plus the whole tool result (head+tail seam)
+       *   transcript+args     the above plus full tool arguments - the only dial that
+       *                       writes arguments, and the one most likely to record a
+       *                       secret, since arguments are shell commands and paths
+       * All of it is plaintext in the local data directory until pruned.
+       */
+      contentStream: external_exports.enum(CONTENT_LEVELS).default("none"),
+      /**
+       * Per-role dials, e.g. transcript for a debugger and none for a reviewer.
+       * Resolution: built-in `none` < contentStream < contentByRole[role] <
+       * EXPERT_COUNCIL_CONTENT. Config and environment only: content on disk is a
+       * privacy decision, so no tool argument or expert output may reach for it.
+       */
+      contentByRole: external_exports.record(external_exports.string(), external_exports.enum(CONTENT_LEVELS)).superRefine((roles, ctx) => {
+        for (const name of Object.keys(roles)) {
+          if (ROLE_NAMES.includes(name))
+            continue;
+          ctx.addIssue({
+            code: external_exports.ZodIssueCode.custom,
+            message: `contentByRole names an unknown role "${name}"; valid names: ${ROLE_NAMES.join(", ")}`
+          });
+        }
+      }).default({}),
+      contentWindowLines: external_exports.number().int().min(1).max(50).default(10),
+      contentWindowChars: external_exports.number().int().min(20).max(400).default(120),
+      contentEventBytes: external_exports.number().int().min(1024).max(1048576).default(65536),
+      contentFileBytes: external_exports.number().int().min(65536).max(1e8).default(10485760),
+      contentTotalBytes: external_exports.number().int().min(65536).max(2e9).default(209715200)
+    }).strict().refine((value3) => !value3.autoOpenWindow || value3.expertWindow === "interactive", {
       message: 'security.observability.autoOpenWindow requires expertWindow "interactive": without the on-disk event stream there is nothing for an observer window to follow',
       path: ["autoOpenWindow"]
-    }).default({ expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false }),
+    }).refine((value3) => value3.expertWindow === "interactive" || value3.contentStream === "none" && Object.values(value3.contentByRole).every((level) => level === "none"), {
+      message: 'security.observability.contentStream/contentByRole require expertWindow "interactive": recorded content would have nowhere to go',
+      path: ["contentStream"]
+    }).default({
+      expertWindow: "off",
+      streamToHost: true,
+      redactToolArgs: true,
+      autoOpenWindow: false,
+      contentStream: "none",
+      contentByRole: {},
+      contentWindowLines: 10,
+      contentWindowChars: 120,
+      contentEventBytes: 65536,
+      contentFileBytes: 10485760,
+      contentTotalBytes: 209715200
+    }),
     /**
      * Struggle detection. Non-blocking by construction: warnings reach the host, an
      * optional bounded nudge reaches the expert, and nothing here ever aborts a run.
@@ -310198,7 +310330,19 @@ var councilConfigSchema = external_exports.object({
     worktreeRetentionMs: 24 * 60 * 6e4,
     toolGrants: {},
     expertLifetime: "host-bound",
-    observability: { expertWindow: "off", streamToHost: true, redactToolArgs: true, autoOpenWindow: false },
+    observability: {
+      expertWindow: "off",
+      streamToHost: true,
+      redactToolArgs: true,
+      autoOpenWindow: false,
+      contentStream: "none",
+      contentByRole: {},
+      contentWindowLines: 10,
+      contentWindowChars: 120,
+      contentEventBytes: 65536,
+      contentFileBytes: 10485760,
+      contentTotalBytes: 209715200
+    },
     guardrails: {
       warnHost: true,
       nudgeExpert: true,
@@ -310520,86 +310664,6 @@ function compositionMenu(document2, limit3 = COMPOSITION_MENU_LIMIT) {
     ...saved,
     { name: "auto", description: "create a session composition via costPolicy (economy/balanced/speed)" }
   ];
-}
-
-// packages/core/dist/roles.js
-var readOnlyTools = ["read", "grep", "find", "ls"];
-var DEFAULT_ROLES = {
-  planner: {
-    role: "planner",
-    description: "Decompose tasks, dependencies, risks, and acceptance criteria.",
-    readOnly: true,
-    tools: readOnlyTools,
-    skills: ["planning"],
-    weights: { planning: 0.3, reasoning: 0.2, architecture: 0.15, longContext: 0.15, review: 0.1, costEfficiency: 0.1 }
-  },
-  scout: {
-    role: "scout",
-    description: "Explore repositories and compress relevant context without mutation.",
-    readOnly: true,
-    tools: readOnlyTools,
-    skills: [],
-    weights: { toolReliability: 0.25, longContext: 0.15, speed: 0.2, reasoning: 0.1, autonomousExecution: 0.1, costEfficiency: 0.2 }
-  },
-  "architecture-oracle": {
-    role: "architecture-oracle",
-    description: "Provide difficult cross-file architectural reasoning and a second opinion.",
-    readOnly: true,
-    tools: readOnlyTools,
-    skills: ["architecture-analysis"],
-    weights: { architecture: 0.3, planning: 0.2, longContext: 0.2, review: 0.15, reasoning: 0.1, costEfficiency: 0.05 }
-  },
-  "implementation-worker": {
-    role: "implementation-worker",
-    description: "Perform bounded code changes and focused validation.",
-    readOnly: false,
-    requiresMutation: true,
-    tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"],
-    skills: ["coding", "testing", "safe-shell"],
-    minimumToolReliability: 4,
-    weights: {
-      toolReliability: 0.3,
-      coding: 0.25,
-      autonomousExecution: 0.15,
-      bashReliability: 0.1,
-      debugging: 0.05,
-      costEfficiency: 0.1,
-      speed: 0.05
-    }
-  },
-  debugger: {
-    role: "debugger",
-    description: "Reproduce failures, isolate root causes, fix them, and verify results.",
-    readOnly: false,
-    requiresMutation: true,
-    tools: ["read", "grep", "find", "ls", "edit", "write", "bash", "powershell"],
-    skills: ["debugging", "testing", "safe-shell"],
-    minimumToolReliability: 4,
-    weights: { debugging: 0.3, toolReliability: 0.25, coding: 0.15, bashReliability: 0.1, reasoning: 0.1, costEfficiency: 0.05, speed: 0.05 }
-  },
-  reviewer: {
-    role: "reviewer",
-    description: "Review another expert's changes for correctness, regressions, and design quality.",
-    readOnly: true,
-    tools: readOnlyTools,
-    skills: ["code-review"],
-    weights: { review: 0.3, reasoning: 0.2, architecture: 0.15, coding: 0.15, longContext: 0.1, costEfficiency: 0.1 }
-  },
-  verifier: {
-    role: "verifier",
-    description: "Inspect reported tests, diffs, and acceptance criteria without mutation-capable tools.",
-    readOnly: true,
-    tools: readOnlyTools,
-    skills: ["testing"],
-    minimumToolReliability: 4,
-    weights: { toolReliability: 0.3, review: 0.2, longContext: 0.15, autonomousExecution: 0.1, debugging: 0.1, speed: 0.1, costEfficiency: 0.05 }
-  }
-};
-function getRole(role2) {
-  return DEFAULT_ROLES[role2];
-}
-function listRoles() {
-  return Object.values(DEFAULT_ROLES).map((role2) => ({ ...role2, tools: [...role2.tools], skills: [...role2.skills] }));
 }
 
 // packages/core/dist/telemetry.js
@@ -311595,6 +311659,7 @@ var EVENT_KIND_COVERAGE = {
   tool_started: true,
   tool_finished: true,
   assistant_text: true,
+  tool_output: true,
   attention: true,
   interaction_opened: true,
   interaction_answered: true,
@@ -311605,6 +311670,7 @@ var EVENT_KIND_COVERAGE = {
   delegation_final: true
 };
 var EXPERT_EVENT_KINDS = Object.keys(EVENT_KIND_COVERAGE);
+var CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f]", "g");
 
 // packages/core/dist/result-clamp.js
 var MAX_SUMMARY = 4e3;
@@ -319122,27 +319188,36 @@ function observerWindowTimeoutMs(expertTimeoutMs) {
 function quoteCmdToken(value3) {
   return /[\s"]/.test(value3) ? `"${value3.replace(/"/g, "")}"` : value3;
 }
-function buildWatchInvocation(cli, executionId2, windowTimeoutMs) {
+function buildWatchInvocation(cli, executionId2, windowTimeoutMs, limits) {
   const head = cli.kind === "node" ? `node ${quoteCmdToken(cli.script)}` : quoteCmdToken(cli.command);
   return [
     head,
     "watch",
     "--exec",
-    executionId2,
+    // Execution ids are generated by the council and never by task text, but this string is
+    // handed to cmd, so an identifier that ever grew a quote or an && would become a command.
+    // Defence in depth costs one call here and cannot break a real id (see safeIdToken).
+    safeIdToken(executionId2),
     "--follow",
     "--interval-ms",
     "250",
     "--timeout-ms",
-    String(windowTimeoutMs)
+    String(Math.trunc(windowTimeoutMs)),
+    // The configured display limits travel with the window: an operator who raised
+    // contentWindowLines must not still get the follower's own default.
+    ...limits ? ["--max-lines", String(Math.trunc(limits.maxLines)), "--max-chars", String(Math.trunc(limits.maxChars))] : []
   ].join(" ");
 }
 var PAUSE_TAIL = " & echo. & echo [expert-window] stream closed above - press any key to close this window & pause >nul";
+function safeIdToken(value3) {
+  return value3.replace(/[^A-Za-z0-9_-]/g, "_");
+}
 function safeTitlePart(value3) {
   return value3.replace(/[^a-zA-Z0-9._-]/g, "-").slice(0, 60);
 }
 function buildWindowPlan(input2) {
   const title = `EXPERT ${safeTitlePart(input2.role)} ${safeTitlePart(input2.executionId)}`;
-  const command = buildWatchInvocation(input2.cli, input2.executionId, input2.windowTimeoutMs) + PAUSE_TAIL;
+  const command = buildWatchInvocation(input2.cli, input2.executionId, input2.windowTimeoutMs, input2.limits) + PAUSE_TAIL;
   if (input2.host === "windows-terminal") {
     return {
       file: input2.terminalExecutable,
@@ -319255,7 +319330,8 @@ var ObserverWindowLauncher = class {
       cli,
       executionId: input2.executionId,
       role: input2.role,
-      windowTimeoutMs: observerWindowTimeoutMs(input2.timeoutMs)
+      windowTimeoutMs: observerWindowTimeoutMs(input2.timeoutMs),
+      ...typeof input2.windowLines === "number" && typeof input2.windowChars === "number" ? { limits: { maxLines: input2.windowLines, maxChars: input2.windowChars } } : {}
     });
     try {
       this.options.spawn(plan.file, plan.argv, this.childEnv());
@@ -319290,6 +319366,188 @@ var ObserverWindowLauncher = class {
     this.options.onWarning?.(message);
   }
 };
+
+// packages/pi-runtime/dist/content-stream.js
+var RECORDS_ASSISTANT = /* @__PURE__ */ new Set([
+  "assistant",
+  "assistant+tool-tail",
+  "transcript",
+  "transcript+args"
+]);
+var RECORDS_TOOL = /* @__PURE__ */ new Set([
+  "assistant+tool-tail",
+  "transcript",
+  "transcript+args"
+]);
+var FULL_TOOL = /* @__PURE__ */ new Set(["transcript", "transcript+args"]);
+var FULL_ARGS = /* @__PURE__ */ new Set(["transcript+args"]);
+function recordsAssistant(level) {
+  return RECORDS_ASSISTANT.has(level);
+}
+function recordsToolOutput(level) {
+  return RECORDS_TOOL.has(level);
+}
+function recordsToolArgs(level) {
+  return FULL_ARGS.has(level);
+}
+function resolveContentLevel(input2) {
+  const fromRole = input2.byRole?.[input2.role] ?? input2.global;
+  if (input2.envValue === void 0 || input2.envValue === "")
+    return { level: fromRole };
+  const wanted = input2.envValue.trim();
+  const match2 = input2.levels.find((level) => level === wanted);
+  if (!match2) {
+    return {
+      level: fromRole,
+      warning: `EXPERT_COUNCIL_CONTENT="${input2.envValue}" is not one of ${input2.levels.join(" | ")}; using ${fromRole}`
+    };
+  }
+  return { level: match2 };
+}
+function headTailSeam(text, maxBytes) {
+  const bytes = Buffer.byteLength(text);
+  if (bytes <= maxBytes)
+    return { text, omittedBytes: 0 };
+  const chars = Math.max(0, Math.floor(maxBytes / 2) - 40);
+  if (chars < 1)
+    return { text: "", omittedBytes: bytes };
+  const head = text.slice(0, chars);
+  const tail = text.slice(text.length - chars);
+  const seam = `
+[+${bytes - headTailBytes(head, tail)} bytes between head and tail omitted]
+`;
+  return { text: head + seam + tail, omittedBytes: bytes - Buffer.byteLength(head) - Buffer.byteLength(tail) };
+}
+function headTailBytes(head, tail) {
+  return Buffer.byteLength(head) + Buffer.byteLength(tail);
+}
+function tailOnly(text, maxBytes) {
+  const bytes = Buffer.byteLength(text);
+  if (bytes <= maxBytes)
+    return { text, omittedBytes: 0 };
+  let start = text.length;
+  let used = 0;
+  while (start > 0) {
+    const code = text.codePointAt(start - 1) ?? 0;
+    const size = code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
+    if (used + size > maxBytes)
+      break;
+    used += size;
+    start -= code > 65535 ? 2 : 1;
+  }
+  return { text: text.slice(start), omittedBytes: bytes - used };
+}
+var ContentRecorder = class {
+  options;
+  /** What has already been written for the current narration stream. */
+  assistantSent = "";
+  /** Arguments seen at `tool_execution_start`, keyed for the closing record. */
+  pendingArgs = /* @__PURE__ */ new Map();
+  toolStreams = /* @__PURE__ */ new Map();
+  bytesConsidered = 0;
+  recordsWritten = 0;
+  constructor(options) {
+    this.options = options;
+  }
+  get level() {
+    return this.options.level;
+  }
+  /** What this execution contributed to the stream file (reported through runtime limitations). */
+  get stats() {
+    return { bytes: this.bytesConsidered, records: this.recordsWritten };
+  }
+  /**
+   * A cumulative assistant message. One slot is enough: if the new text starts with what was
+   * already sent, the remainder is appended; anything else is a new block and is written whole.
+   * Keying on message-object identity was tried first and re-sent the entire paragraph at
+   * `message_end`, because the runtime is not promised the same object twice.
+   *
+   * A live model narrates in fragments too small to be worth a record - measured on a real
+   * run at 129 records for 2.2 KB, which would exhaust the event ceiling inside a long answer
+   * - so a fragment is held until it completes a line or reaches 240 bytes, exactly like a
+   * streamed tool block. `final` flushes whatever is held, because dropping the last sentence
+   * of a message would be the worst possible place to lose text.
+   */
+  onAssistantText(fullText, final = false) {
+    if (!recordsAssistant(this.options.level) || !fullText)
+      return;
+    const sent = this.assistantSent;
+    const fresh = fullText.startsWith(sent) ? fullText.slice(sent.length) : fullText;
+    if (!fresh)
+      return;
+    if (!final && !fresh.includes("\n") && Buffer.byteLength(fresh) < 240)
+      return;
+    this.assistantSent = fullText;
+    this.bytesConsidered += Buffer.byteLength(fresh);
+    this.push("assistant_text", { text: headTailSeam(fresh, this.options.eventBytes).text });
+  }
+  /**
+   * A growing tool result. Recorded live only when it has actually grown a line (or 240
+   * characters), so a chatty command cannot write one event per token; the complete record at
+   * the end supersedes the partial view for anyone reading the file.
+   */
+  onToolPartial(callId, tool, partialText) {
+    if (!recordsToolOutput(this.options.level) || !partialText)
+      return;
+    const seen = this.toolStreams.get(callId) ?? { chars: 0, lines: 0 };
+    const lines = countLines(partialText);
+    if (partialText.length <= seen.chars)
+      return;
+    if (lines <= seen.lines && partialText.length - seen.chars < 240)
+      return;
+    const fresh = partialText.slice(seen.chars);
+    this.toolStreams.set(callId, { chars: partialText.length, lines });
+    this.bytesConsidered += Buffer.byteLength(fresh);
+    this.push("tool_output", { tool, streaming: true, text: headTailSeam(fresh, this.options.eventBytes).text });
+  }
+  /**
+   * Pi forwards arguments on `tool_execution_start` only - the closing event carries just
+   * `result`/`isError` - so the top dial has to remember them until the record is written.
+   */
+  noteArgs(callId, tool, argsText) {
+    if (!recordsToolArgs(this.options.level))
+      return;
+    this.pendingArgs.set(callId, argsText);
+  }
+  /**
+   * A finished tool call. `transcript` and above store the whole payload behind a head+tail
+   * seam; `assistant+tool-tail` stores only the tail, which is what the dial's name promises.
+   */
+  onToolResult(callId, tool, ok2, resultText) {
+    if (!recordsToolOutput(this.options.level))
+      return;
+    const full = resultText ?? "";
+    const seam = FULL_TOOL.has(this.options.level) ? headTailSeam(full, this.options.eventBytes) : tailOnly(full, this.options.eventBytes);
+    const fields = { tool, ok: ok2 };
+    if (seam.omittedBytes > 0)
+      fields.omittedBytes = seam.omittedBytes;
+    fields.text = resultText === null ? "[no result returned]" : seam.text;
+    const argsText = this.pendingArgs.get(callId);
+    if (argsText !== void 0) {
+      this.pendingArgs.delete(callId);
+      fields.argsText = headTailSeam(argsText, this.options.eventBytes).text;
+    }
+    this.bytesConsidered += Buffer.byteLength(seam.text);
+    this.toolStreams.set(callId, { chars: Number.MAX_SAFE_INTEGER, lines: Number.MAX_SAFE_INTEGER });
+    this.push("tool_output", fields);
+  }
+  push(kind, fields) {
+    this.recordsWritten += 1;
+    try {
+      this.options.emit(kind, fields);
+    } catch {
+    }
+  }
+};
+function countLines(text) {
+  if (!text)
+    return 0;
+  let lines = 1;
+  for (let i2 = 0; i2 < text.length; i2 += 1)
+    if (text.charCodeAt(i2) === 10)
+      lines += 1;
+  return lines;
+}
 
 // packages/pi-runtime/dist/pi-runtime.js
 function isPlaceholderText(value3) {
@@ -319362,6 +319620,25 @@ function textFromContent(content) {
     const part = item;
     return part.type === "text" && typeof part.text === "string" ? part.text : "";
   }).join("");
+}
+function toolResultText(value3) {
+  if (value3 === null || value3 === void 0)
+    return null;
+  if (typeof value3 === "string")
+    return value3;
+  const record4 = value3;
+  if (Array.isArray(record4.content))
+    return textFromContent(record4.content) || textFromContent(value3);
+  return textFromContent(value3) || safeJson(value3) || null;
+}
+function safeJson(value3) {
+  if (value3 === void 0)
+    return void 0;
+  try {
+    return JSON.stringify(value3);
+  } catch {
+    return void 0;
+  }
 }
 function finalAssistantText(session) {
   const messages = session.messages ?? session.state?.messages ?? [];
@@ -319638,6 +319915,15 @@ var PiExpertRuntime = class _PiExpertRuntime {
    */
   observerWindows;
   observerWindowWarnings = [];
+  contentWarnings = [];
+  /** The content dial in effect per delegation, so status can say what is on disk. */
+  contentDials = /* @__PURE__ */ new Map();
+  /** A content warning is operator-facing and fires once per distinct problem. */
+  noteContentWarning(message) {
+    const bounded = boundedText2(message, 200);
+    if (!this.contentWarnings.includes(bounded) && this.contentWarnings.length < 8)
+      this.contentWarnings.push(bounded);
+  }
   constructor(sdk, models, options, packageName) {
     this.sdk = sdk;
     this.models = models;
@@ -319708,6 +319994,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
       file: path27.join(this.options.observabilityDir, streamFileName(executionId2)),
       events: 0,
       bytes: 0,
+      maxBytes: OBSERVABILITY_MAX_BYTES,
       chain: Promise.resolve()
     };
     this.observabilityStreams.set(executionId2, created);
@@ -319718,6 +320005,27 @@ var PiExpertRuntime = class _PiExpertRuntime {
     if (!state2 || request.executionId === void 0)
       return;
     state2.attempt = request.attempt;
+    if (!state2.content) {
+      const observability = this.options.config.security.observability;
+      const resolved = resolveContentLevel({
+        levels: CONTENT_LEVELS,
+        global: observability.contentStream,
+        byRole: observability.contentByRole,
+        role: String(request.role),
+        ...process.env.EXPERT_COUNCIL_CONTENT === void 0 ? {} : { envValue: process.env.EXPERT_COUNCIL_CONTENT }
+      });
+      if (resolved.warning)
+        this.noteContentWarning(resolved.warning);
+      if (resolved.level !== "none") {
+        state2.maxBytes = observability.contentFileBytes;
+        state2.content = new ContentRecorder({
+          level: resolved.level,
+          eventBytes: observability.contentEventBytes,
+          emit: (kind, fields) => this.emitObservability(request.executionId, request.role, request.model, kind, fields)
+        });
+        this.contentDials.set(request.executionId, resolved.level);
+      }
+    }
     this.appendObservability(state2, {
       t: (/* @__PURE__ */ new Date()).toISOString(),
       executionId: request.executionId,
@@ -319729,14 +320037,17 @@ var PiExpertRuntime = class _PiExpertRuntime {
     this.observerWindows?.ensureOpen({
       executionId: request.executionId,
       role: String(request.role),
-      ...typeof request.timeoutMs === "number" ? { timeoutMs: request.timeoutMs } : {}
+      ...typeof request.timeoutMs === "number" ? { timeoutMs: request.timeoutMs } : {},
+      // The window shows what the operator configured, not the follower's own defaults.
+      windowLines: this.options.config.security.observability.contentWindowLines,
+      windowChars: this.options.config.security.observability.contentWindowChars
     });
   }
   emitObservability(executionId2, role2, model, kind, fields = {}) {
     const state2 = this.observabilityState(executionId2);
     if (!state2 || executionId2 === void 0)
       return;
-    if (state2.events >= OBSERVABILITY_MAX_EVENTS || state2.bytes >= OBSERVABILITY_MAX_BYTES) {
+    if (!TERMINAL_EVENT_KINDS.includes(kind) && (state2.events >= OBSERVABILITY_MAX_EVENTS || state2.bytes >= state2.maxBytes)) {
       if (!state2.truncated) {
         state2.truncated = true;
         this.appendObservability(state2, {
@@ -319745,7 +320056,7 @@ var PiExpertRuntime = class _PiExpertRuntime {
           role: role2,
           ...state2.attempt === void 0 ? {} : { attempt: state2.attempt },
           kind: "stream_truncated",
-          text: `${OBSERVABILITY_MAX_EVENTS} events / ${OBSERVABILITY_MAX_BYTES} bytes reached; further events dropped.`
+          text: `${OBSERVABILITY_MAX_EVENTS} events / ${state2.maxBytes} bytes reached; further events dropped except the outcome markers.`
         });
       }
       return;
@@ -319757,6 +320068,9 @@ var PiExpertRuntime = class _PiExpertRuntime {
       ...model ? { model } : {},
       ...state2.attempt === void 0 ? {} : { attempt: state2.attempt },
       kind,
+      // A content record points back at itself: an operator told a block was shortened
+      // needs the line to read the rest, not an apology.
+      ...state2.content && (kind === "assistant_text" || kind === "tool_output") ? { line: state2.events + 1 } : {},
       ...fields
     });
   }
@@ -319935,6 +320249,26 @@ var PiExpertRuntime = class _PiExpertRuntime {
       } catch {
       }
     }
+    const budget = this.options.config.security.observability.contentTotalBytes;
+    const listed = [];
+    for (const name of names2.filter((item) => item.endsWith(".jsonl"))) {
+      const file2 = path27.join(dir, name);
+      try {
+        const info = await stat11(file2);
+        listed.push({ file: file2, size: info.size, at: info.mtimeMs });
+      } catch {
+      }
+    }
+    let total = listed.reduce((sum, item) => sum + item.size, 0);
+    for (const item of listed.sort((left, right) => left.at - right.at)) {
+      if (total <= budget)
+        break;
+      try {
+        await unlink2(item.file);
+        total -= item.size;
+      } catch {
+      }
+    }
   }
   async listAvailableModels() {
     const raw = await this.models.getAvailable();
@@ -320033,6 +320367,8 @@ var PiExpertRuntime = class _PiExpertRuntime {
         "Reasoning levels are clamped to values exposed by the selected Pi session.",
         ...this.skillDiscoveryWarning ? [this.skillDiscoveryWarning] : [],
         ...this.observerWindowWarnings,
+        ...this.contentWarnings,
+        ...[...new Set(this.contentDials.values())].map((level) => `observability content dial "${level}" is recording: project content reaches disk as plaintext until pruned`),
         ...workspace.limitations,
         provisioningMode === "none" ? "Mutation worktrees are not provisioned (security.workspaceProvisioning.mode=none); experts must not install dependencies." : `Mutation worktrees are provisioned from the repository lockfile (security.workspaceProvisioning.mode=${provisioningMode}); read-only workspaces are never provisioned.`,
         ...workspace.workspaceIsolation === "git-worktree" ? [`Mutation worktrees are retained for review until expert_cleanup is called or the ${this.options.config.security.worktreeRetentionMs}ms retention window expires.`] : []
@@ -320258,22 +320594,33 @@ Apply this decision and continue the assigned task now. If the decision changed 
             this.deactivateTool(entry, e2.toolName);
           }
         }
-        if (this.observabilityActive(request.executionId)) {
+        const obsState = this.observabilityState(request.executionId);
+        if (obsState) {
+          const content = obsState.content;
+          const argsText = content && recordsToolArgs(content.level) ? safeJson(e2.args) : void 0;
           if (e2?.type === "tool_execution_start" && e2.toolName) {
             const summary = this.toolArgumentSummary(e2.args);
             this.emitObservability(request.executionId, request.role, request.model, "tool_started", {
               tool: e2.toolName,
               ...summary ? { argsSummary: summary } : {}
             });
+            content?.noteArgs(e2.toolCallId ?? e2.toolName, e2.toolName, argsText ?? "");
           } else if (e2?.type === "tool_execution_end" && e2.toolName) {
             this.emitObservability(request.executionId, request.role, request.model, "tool_finished", {
               tool: e2.toolName,
               ok: e2.isError !== true
             });
-          } else if (e2?.type === "message_end" && e2.message?.role === "assistant") {
-            const narration = boundedText2(textFromContent(e2.message.content));
-            if (narration)
-              this.emitObservability(request.executionId, request.role, request.model, "assistant_text", { text: narration });
+            content?.onToolResult(e2.toolCallId ?? e2.toolName, e2.toolName, e2.isError !== true, toolResultText(e2.result));
+          } else if (e2?.type === "tool_execution_update" && e2.toolName) {
+            content?.onToolPartial(e2.toolCallId ?? e2.toolName, e2.toolName, toolResultText(e2.partialResult) ?? "");
+          } else if ((e2?.type === "message_update" || e2?.type === "message_end") && e2.message?.role === "assistant") {
+            if (content) {
+              content.onAssistantText(textFromContent(e2.message.content), e2?.type === "message_end");
+            } else if (e2?.type === "message_end") {
+              const narration = boundedText2(textFromContent(e2.message.content));
+              if (narration)
+                this.emitObservability(request.executionId, request.role, request.model, "assistant_text", { text: narration });
+            }
           }
         }
       }) ?? void 0;
