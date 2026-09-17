@@ -270,6 +270,9 @@ export class ContentRecorder {
     state.sent = continuation ? state.sent + emitText : emitText;
     this.narration.set(channel, state);
     this.bytesConsidered += Buffer.byteLength(emitText);
+    // A final flush of a whitespace-only run has nothing left to show once the leading blanks are
+    // dropped. Advancing the cursor is right; writing an empty record is noise an operator reads.
+    if (!shown.trim()) return;
     this.push("assistant_text", {
       text: headTailSeam(shown, this.options.eventBytes).text,
       ...(channel === "reasoning" ? { reasoning: true } : {}),

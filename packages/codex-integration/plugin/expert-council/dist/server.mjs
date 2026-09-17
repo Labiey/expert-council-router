@@ -311678,7 +311678,6 @@ var EVENT_KIND_COVERAGE = {
   delegation_final: true
 };
 var EXPERT_EVENT_KINDS = Object.keys(EVENT_KIND_COVERAGE);
-var CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f]", "g");
 
 // packages/core/dist/result-clamp.js
 var MAX_SUMMARY = 4e3;
@@ -319774,7 +319773,7 @@ function toolResultText(value3) {
   const record4 = value3;
   if (Array.isArray(record4.content))
     return textFromContent(record4.content) || textFromContent(value3);
-  return textFromContent(value3) || safeJson(value3) || null;
+  return textFromContent(value3) || safeJson(value3, true) || null;
 }
 var REASONING_KEYS = /* @__PURE__ */ new Set(["thinking", "reasoning", "reasoning_content"]);
 function withoutReasoningKeys(value3, depth = 0, seen = /* @__PURE__ */ new Set()) {

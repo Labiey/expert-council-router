@@ -18,6 +18,7 @@
   ],
   "scripts": {
     "build": "tsc -b && node scripts/sync-shared-assets.mjs && node scripts/build-codex-plugin.mjs",
+    "artifacts:check": "node scripts/check-tracked-artifacts.mjs",
     "clean": "tsc -b --clean",
     "typecheck": "tsc -b --pretty false && tsc -p tsconfig.tests.json --pretty false",
     "test": "vitest run",
@@ -27,7 +28,7 @@
     "smoke:codex": "node scripts/smoke-mcp.mjs packages/codex-integration/plugin/expert-council/dist/server.mjs",
     "smoke:installed-codex": "node scripts/smoke-installed-codex.mjs",
     "smoke:live:pi": "npm run build && node scripts/smoke-live-pi.mjs",
-    "validate": "npm run build && npm run test && npm run typecheck && npm run smoke:installed-codex && npm pack --workspaces --dry-run"
+    "validate": "npm run build && npm run artifacts:check && npm run test && npm run typecheck && npm run smoke:installed-codex && npm pack --workspaces --dry-run"
   },
   "engines": {
     "node": ">=22.19.0"

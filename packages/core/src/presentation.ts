@@ -166,10 +166,7 @@ export const EXPERT_EVENT_KINDS: readonly ExpertEventKind[] = Object.keys(EVENT_
  * sources without corrupting output.
  */
 export function formatExpertEvent(event: ExpertObservabilityEvent): string {
-  return formatExpertEventLine(event)
-    .replace(/[\u0000-\u001f\u007f]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return stripControlChars(formatExpertEventLine(event)).replace(/\s+/g, " ").trim();
 }
 
 function formatExpertEventLine(event: ExpertObservabilityEvent): string {
@@ -179,7 +176,7 @@ function formatExpertEventLine(event: ExpertObservabilityEvent): string {
     case "started":
       return `${head} started`;
     case "tool_started":
-      return `${head} tool ${event.tool ?? "?"}${event.argsSummary ? ` (${event.argsSummary})` : ""}`;
+      return `${head} tool ${event.tool ?? "?"}${event.argsSummary ? ` (${stripControlChars(event.argsSummary)})` : ""}`;
     case "tool_finished":
       return `${head} tool ${event.tool ?? "?"} ${event.ok === false ? "FAILED" : "ok"}`;
     case "assistant_text":
@@ -244,8 +241,20 @@ export function isContentEvent(event: Pick<ExpertObservabilityEvent, "kind">): b
  * per line - a stream is data, not a terminal protocol - and hidden lines are announced rather
  * than silently dropped (#21's rule that a truncation must be visible where it happened).
  */
-const CONTROL_CHARS = new RegExp("[\\u0000-\\u0008\\u000b-\\u001f\\u007f]", "g");
 const ELLIPSIS = "…";
+
+/**
+ * One control-character policy for every field any renderer can put on screen. The range is the
+ * point: excluding U+001b alone was never enough, because Windows Terminal also interprets the
+ * 8-bit C1 controls, so a recorded line carrying U+009b could drive the observer terminal through
+ * a field nobody thought of as free text - a tool's own `command` argument, summarised verbatim.
+ * Tab and newline survive (they are layout, not escape); everything else becomes a visible open
+ * box, so nothing is silently eaten (#21's rule that a removal has to be visible).
+ */
+const CONTROL_RUNS = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00a0]+/g;
+function stripControlChars(text: string): string {
+  return text.replace(CONTROL_RUNS, "\u2423");
+}
 
 export function formatExpertEventBody(
   event: Pick<ExpertObservabilityEvent, "text">,
@@ -255,7 +264,7 @@ export function formatExpertEventBody(
   if (!raw.trim()) return [];
   const lines = raw
     .split(/\r?\n/)
-    .map((line) => line.replace(CONTROL_CHARS, "").replace(/\s+$/g, ""))
+    .map((line) => stripControlChars(line).replace(/\s+$/g, ""))
     .filter((line) => line.length > 0);
   const width = Math.max(20, options.maxChars);
   const clamped = lines.map((line) => (line.length > width ? line.slice(0, width - 1) + ELLIPSIS : line));
@@ -320,7 +329,7 @@ function collapseLine(text: string): string {
   // The range matters: excluding U+001b alone was not enough, because the C1 controls (U+0080-U+009f)
   // are the 8-bit equivalents that Windows Terminal also interprets, so a recorded tool line
   // carrying U+009b could still drive the observer terminal - CSI and OSC injection by another door.
-  return text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u00a0]/g, "\u2423").replace(/\r?\n/g, " ");
+  return stripControlChars(text).replace(/\r?\n/g, " ");
 }
 
 /** A shaded block line: background for the whole terminal width, or plain text when uncoloured. */
@@ -363,7 +372,7 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
       typeof event.argsText === "string" && event.argsText.trim()
         ? collapseLine(event.argsText)
         : typeof event.argsSummary === "string" && event.argsSummary.trim()
-          ? event.argsSummary
+          ? stripControlChars(event.argsSummary)
           : "";
     const subject = args
       ? tool === "bash" || tool === "shell"
@@ -395,7 +404,7 @@ export function formatExpertPanel(event: ExpertObservabilityEvent, options: Expe
 
   if (kind === "tool_started" || kind === "tool_finished") {
     const tool = typeof event.tool === "string" && event.tool ? event.tool : "tool";
-    const summary = typeof event.argsSummary === "string" && event.argsSummary ? ` ${event.argsSummary}` : "";
+    const summary = typeof event.argsSummary === "string" && event.argsSummary ? ` ${stripControlChars(event.argsSummary)}` : "";
     const outcome = kind === "tool_finished" ? (event.ok === false ? " failed" : " ok") : "";
     const text = `${tool}${summary}${outcome}${attempt}`;
     return [options.color === true ? `${ANSI_DIM}${text}${ANSI_RESET}` : text];

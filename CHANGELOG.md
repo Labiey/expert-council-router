@@ -6,6 +6,26 @@ All notable changes to Expert Council are documented here. Versions follow seman
 
 ### Fixed
 
+- **A re-audit caught my own incomplete fix, and the repository now has a gate for the class.**
+  The first repair of the control-character defect changed only the panel body. Measured after
+  the fact: the plain renderer (`formatExpertEvent`) stripped C0 but not C1, and the panel header
+  interpolated `argsSummary` verbatim - a field built from the model's own `command` string, so
+  the input was never ours to trust. Every rendered field now goes through one shared control
+  policy: C0 apart from tab, the whole of C1, DEL and NBSP become a visible open box, and the
+  renderer's own colour codes are untouched. A whitespace-only closing message no longer stores
+  an empty record.
+
+- **A tracked build artifact had been committed behind its source.** The committed Codex plugin
+  bundle still carried the pre-fix `safeJson` call. Cause: the build had been run with its output
+  discarded and its exit code never checked, which is how a stale 14 MB generated file reaches a
+  commit. `npm run validate` now runs `scripts/check-tracked-artifacts.mjs` after the build, which
+  fails when tracked generated files do not match a fresh build, ignoring pure line-ending churn.
+
+  Each of these was confirmed by reverting the fix and watching the test fail: the plain
+  renderer, the panel dim line, the body renderer, and the empty-record guard all go RED. The
+  `tool_started` case inside the single-line renderer stayed GREEN when reverted, because the
+  outer wrapper already sanitises its output - redundant coverage rather than a gap.
+
 - **A pre-release audit found five real defects in the observability subsystem, and one false
   alarm.** The audit was delegated read-only with a shell, and reported `VERDICT: NOT-READY`;
   each claim was then verified independently before being adopted or rejected.

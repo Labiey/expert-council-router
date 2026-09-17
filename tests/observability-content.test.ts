@@ -427,6 +427,19 @@ describe("a recorder pushes only what has not been pushed", () => {
     }
   });
 
+  it("does not write an empty record when a final flush has nothing left to show", () => {
+    // Leading blanks are dropped from a chunk, so a whitespace-only closing message would
+    // otherwise store a record whose text is empty: noise an operator reads as a missing line.
+    const { rec, records } = recorder("assistant", { reasoning: true });
+    rec.onAssistantText("   " + String.fromCharCode(9) + "  ", true);
+    rec.onReasoningText(" ", true);
+    expect(records).toHaveLength(0);
+    // The cursor still moved, so a later message is not treated as a continuation of nothing.
+    rec.onAssistantText("Real narration after the blank message.", true);
+    expect(records).toHaveLength(1);
+    expect(String(records[0]?.text)).toContain("Real narration");
+  });
+
   it("records nothing at all while the dial is none", () => {
     const { rec, records } = recorder("none");
     rec.onAssistantText("hello");

@@ -3,6 +3,7 @@ import {
   EXPERT_EVENT_KINDS,
   displayWidth,
   formatExpertEvent,
+  formatExpertEventBody,
   formatExpertPanel,
   presentCouncilPlan,
   presentResourceInventory,
@@ -221,6 +222,57 @@ describe("panel layout for an observer window", () => {
     ...extra,
   });
   const escape = String.fromCharCode(27);
+  it("keeps every rendered field free of raw control characters", () => {
+    // The first repair only sanitised the panel body. The plain renderer and the panel header's
+    // `argsSummary` - built from a model-chosen `command` string, so the input is not ours -
+    // still passed C0 and C1 through. One policy now covers every field a renderer can print.
+    const esc = String.fromCharCode(27);
+    const bel = String.fromCharCode(7);
+    const newline = String.fromCharCode(10);
+    const hostile = "ls" + esc + "[31m" + bel + String.fromCharCode(0x85)
+      + String.fromCharCode(0x9b) + String.fromCharCode(0x9d) + "done";
+    const controlsIn = (text: string) => Array.from(text).filter((ch) => {
+      const code = ch.charCodeAt(0);
+      return (code >= 0x01 && code <= 0x08) || code === 0x0b || code === 0x0c
+        || (code >= 0x0e && code <= 0x1f) || code === 0x7f || (code >= 0x80 && code <= 0x9f);
+    });
+    // Remove the SGR sequences the renderer adds on purpose, so the check is about recorded
+    // content and not about our own colour. Written as a scanner rather than a regex literal
+    // because this file is assembled by a script.
+    const stripSgr = (text: string) => {
+      let out = "";
+      for (let i = 0; i < text.length; i += 1) {
+        const ch = text[i] ?? "";
+        if (ch !== esc) { out += ch; continue; }
+        while (i < text.length && !/[a-zA-Z]/.test(text[i] ?? "")) i += 1;
+      }
+      return out;
+    };
+    const framesToCheck = [
+      frame("tool_started", { tool: "bash", argsSummary: hostile }),
+      frame("tool_finished", { tool: "bash", ok: true, argsSummary: hostile }),
+      frame("tool_output", { tool: "bash", ok: true, text: hostile, argsSummary: hostile }),
+      frame("assistant_text", { text: hostile }),
+    ];
+    for (const event of framesToCheck) {
+      const surfaces = [
+        formatExpertEvent(event),
+        formatExpertEventBody(event, { maxLines: 4, maxChars: 200 }).join(newline),
+        formatExpertPanel(event).join(newline),
+        stripSgr(formatExpertPanel(event, { color: true, columns: 80 }).join(newline)),
+      ];
+      for (const surface of surfaces) {
+        expect(controlsIn(surface)).toEqual([]);
+      }
+    }
+    // Nothing is silently eaten: the visible payload survives, and the controls are shown.
+    const block = framesToCheck[2];
+    if (block === undefined) throw new Error("the sample frames must exist");
+    const shown = formatExpertPanel(block).join(newline);
+    expect(shown).toContain("done");
+    expect(shown).toContain(String.fromCharCode(0x2423));
+  });
+
   it("strips the C1 range too, not just the 7-bit escape", () => {
     // Excluding U+001b was not enough on its own: Windows Terminal also interprets the 8-bit C1
     // controls, so a recorded line carrying U+009b (CSI) could still drive the observer terminal.
