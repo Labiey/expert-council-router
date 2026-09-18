@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -191,9 +191,26 @@ export const CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
 
 type CouncilProvider = (requestContext?: unknown) => Promise<ExpertCouncil>;
 
+/**
+ * The version a host sees in the MCP initialize handshake must be the version that shipped. This
+ * was a literal, so every release silently reported the previous one to Codex - the same trap
+ * `expert-council --version` avoids, and now covered by a test that compares every shipped manifest
+ * and every release reference in the documentation.
+ */
+const SERVER_VERSION = (() => {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
+    ) as { version?: unknown };
+    return typeof manifest.version === "string" && manifest.version ? manifest.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
+
 function createMcpServerWithProvider(councilProvider: CouncilProvider): McpServer {
   const server = new McpServer(
-    { name: "expert-council", version: "0.8.6" },
+    { name: "expert-council", version: SERVER_VERSION },
     { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } },
   );
   // A stdio server process serves exactly one host conversation, so this

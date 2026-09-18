@@ -16,6 +16,14 @@ const PATHS = [
   "packages/codex-integration/plugin/expert-council/dist",
   "packages/codex-integration/plugin/expert-council/skills",
   "packages/pi-package/skills",
+  // The per-package READMEs are mirrors that scripts/sync-shared-assets.mjs rewrites (relative links
+  // become repository URLs), so a stale mirror is the same failure as a stale bundle. They are
+  // listed explicitly rather than derived: packages/codex-integration/README.md is hand-written and
+  // must not be swept into a rule that would report it as lagging forever.
+  ...["core", "pi-runtime", "cli", "mcp-server", "pi-package"].flatMap((name) => [
+    `packages/${name}/README.md`,
+    `packages/${name}/README.zh-CN.md`,
+  ]),
 ];
 
 let output = "";

@@ -17,8 +17,15 @@ In practice, the theoretically strongest model is not automatically the best exe
 
 ## Current status
 
-The current version (0.8.6) includes:
+The current version (0.8.7) includes:
 
+- **Expert conversation recording, opt-in**: `security.observability.contentStream` offers five dials (`none`, `assistant`, `assistant+tool-tail`, `transcript`, `transcript+args`) plus per-role overrides, with byte ceilings per event, per file and per directory. Default `none`, and only operator configuration or environment may widen it - no model, delegation argument, or expert output can.
+- **`security.observability.recordReasoning`**: the explicit, default-off exception to the no-chain-of-thought rule. Reasoning is marked on every record and rendered as `thinks` rather than `says`, and `expert_inspect` declares the switch while it is on.
+- **Panel transcript rendering** in `expert-council watch` and the observer window: prose narration without per-line attribution, shaded tool blocks with a `$ command` header where policy allows, width-aware CJK padding, and one shared control-character policy so no rendered field can drive the terminal.
+- **Opt-in observer windows** (`security.observability.autoOpenWindow`): one window per delegation, reading the same stream file through `watch`, closing only when you press a key.
+- **The complete standard form of `council-config.json` and `route-policy.json`**, in English and Chinese, verified by tests that parse each example with the shipped validators and compare the all-defaults document against the code's real defaults.
+- `expert-council --version`, answered from the shipped manifest before any council, runtime, or configuration is touched.
+- Availability markers report their own kind and lifetime, so a two-minute rate limit is no longer described as an outage.
 - **Interactive experts**: a running expert can pause on a major, hard-to-reverse, or ambiguous decision and present 2-4 recommended options (+ optional free text) to the Main Agent through `request_decision`; the host answers with `expert_respond` and the expert continues in the **same session**. Non-terminal — distinct from `report_and_stop`.
 - **Dynamic tool permissions**: preset role tools are a **seed, not a ceiling**. An expert requests a missing tool via `request_tool`; the host grants `once` (auto-revoked after one use), `persistent` (this session), or `reject`. `security.toolGrants` gives operator-defined persistent per-role grants. A read-only execution can never be escalated to a mutating/shell tool (isolation guarantee).
 - **Interaction discovery on a correctness channel**: an open interaction surfaces as `pendingInteraction` in `expert_status(view:"running")` and `expert_result(includeProgress)`, and the native Pi package additionally wakes the host with an `expert-council-interaction` notice the moment one opens; headless hosts (Codex/MCP, no server-push) keep polling. Bounded per execution (default 3 rounds + wait timeout).
@@ -120,7 +127,7 @@ pi update npm:@expert-council/pi-package
 To run Codex as the Main Agent, install the pinned prebuilt plugin directly from its Git marketplace; no repository clone or local build is required:
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.7 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -1070,7 +1077,7 @@ packages/codex-integration/plugin/expert-council/
 The current release ships both the prebuilt MCP server and its tested Pi SDK runtime, so Codex can install the plugin directly from the repository as a pinned Git marketplace. Node.js 22.19 or newer and an already configured Pi account/model catalog are required; cloning this repository, running `npm install`, or resolving a global `@earendil-works/pi-coding-agent` module is not required.
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.7 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -1096,7 +1103,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "Codex Desktop CLI was not found." }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.7 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -1107,7 +1114,7 @@ Fully quit Codex Desktop, wait for its backend process to exit, reopen it, and s
 
 For local plugin development, clone the repository, run `npm ci && npm run build`, and pass its absolute root to `codex plugin marketplace add` instead of the GitHub repository name. The pinned remote release is recommended for normal use.
 
-A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.6` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
+A correct load exposes the `expert-council` Skill and all thirteen `expert_*` MCP tools. `expert_inspect` must return a real inventory rather than a "No compatible Pi SDK is installed" diagnostic. If the Skill is present but the tools are absent, or inspection reports that diagnostic, verify that the marketplace is pinned to `v0.8.7` or newer, then restart or reinstall the plugin instead of launching `dist/server.mjs` manually or sending hand-written JSON-RPC.
 
 To verify the installed workflow, use a new Codex task and ask:
 

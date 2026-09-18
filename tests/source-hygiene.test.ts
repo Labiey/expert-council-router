@@ -127,4 +127,41 @@ describe("source hygiene", () => {
     const names = (text: string) => new Set(text.match(/EXPERT_COUNCIL_[A-Z_]+/g) ?? []);
     expect([...names(zhReadme)].sort()).toEqual([...names(readme)].sort());
   });
+
+  it("keeps every shipped manifest and every release reference on one version", () => {
+    // Releasing 0.8.7 left three places still claiming 0.8.6: the mirrored per-package READMEs, the
+    // Codex plugin manifest, and the version the MCP server reports in its initialize handshake - so
+    // a host saw the previous release while npm served the new one. Rather than remembering to edit
+    // them, one assertion now covers every place a release version is stated.
+    const root = (JSON.parse(
+      readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
+    ) as { version: string }).version;
+    expect(root).toMatch(/^\d+\.\d+\.\d+/);
+    const packagesDir = fileURLToPath(new URL("../packages", import.meta.url));
+    for (const entry of readdirSync(packagesDir)) {
+      const manifest = path.join(packagesDir, entry, "package.json");
+      if (!existsSync(manifest)) continue;
+      const version = (JSON.parse(readFileSync(manifest, "utf8")) as { version: string }).version;
+      expect([entry, version]).toEqual([entry, root]);
+    }
+    const pluginManifest = path.join(
+      packagesDir, "codex-integration", "plugin", "expert-council", ".codex-plugin", "plugin.json",
+    );
+    expect((JSON.parse(readFileSync(pluginManifest, "utf8")) as { version: string }).version).toBe(root);
+    // No source file may state a release version as a literal any more.
+    const server = readFileSync(path.join(packagesDir, "mcp-server", "src", "index.ts"), "utf8");
+    expect(/version:\s*"\d+\.\d+/.test(server)).toBe(false);
+    expect(server).toContain("version: SERVER_VERSION");
+    // And neither may the documentation's claims about which release is current.
+    for (const [label, file] of [["README.md", "../README.md"], ["README.zh-CN.md", "../README.zh-CN.md"]] as const) {
+      const text = readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8");
+      const head = (label === "README.md"
+        ? /The current version \(([\d.]+)\) includes:/.exec(text)
+        : /当前版本（([\d.]+)）已包含：/.exec(text))?.[1];
+      expect([label, head]).toEqual([label, root]);
+      const refs = [...text.matchAll(/--ref v([\d.]+)/g)].map((match) => match[1]);
+      expect(refs.length).toBeGreaterThan(0);
+      expect([...new Set(refs)]).toEqual([root]);
+    }
+  });
 });

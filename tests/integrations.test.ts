@@ -24,7 +24,13 @@ import {
   workspaceRootFromCodexSandbox,
   withMcpTimeout,
 } from "../packages/mcp-server/src/index.js";
-import piExtension from "../packages/pi-package/src/extension.js";
+import piExtension from "../packages/pi-package/src/extension.js"
+
+// The release references in the documentation are checked against the version this repository
+// actually publishes, so the assertion follows a release instead of freezing at one.
+const releaseVersion = (JSON.parse(
+  readFileSync(new URL("../package.json", import.meta.url), "utf8"),
+) as { version: string }).version;;
 
 function codexSandboxMeta(workspace: string) {
   return {
@@ -854,7 +860,9 @@ describe("Codex plugin packaging", () => {
       readFileSync("README.md", "utf8"),
       readFileSync("README.zh-CN.md", "utf8"),
     ]) {
-      expect(document).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json");
+      // Derived, never restated: a literal here would pin the documentation to whichever release
+      // was current when the test was written.
+      expect(document).toContain(`codex plugin marketplace add Labiey/expert-council-router --ref v${releaseVersion} --json`);
       expect(document).toContain("codex plugin marketplace list --json");
       expect(document).toContain("codex plugin list --marketplace expert-council-router --available --json");
       expect(document).toContain("codex plugin add expert-council@expert-council-router --json");
@@ -871,7 +879,7 @@ describe("Codex plugin packaging", () => {
       .match(/### 安装 Codex 插件（可选）([\s\S]*?)### 从源码构建/)?.[1];
 
     for (const section of [english, chinese]) {
-      expect(section).toContain("codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json");
+      expect(section).toContain(`codex plugin marketplace add Labiey/expert-council-router --ref v${releaseVersion} --json`);
       expect(section).toContain("codex plugin add expert-council@expert-council-router --json");
     }
   });

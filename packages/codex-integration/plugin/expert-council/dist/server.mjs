@@ -18115,8 +18115,8 @@ function getBunSandboxEnvValue(name) {
   if (procEnvCache === null) {
     procEnvCache = /* @__PURE__ */ new Map();
     try {
-      const { readFileSync: readFileSync22 } = __require("node:fs");
-      const data = readFileSync22("/proc/self/environ", "utf-8");
+      const { readFileSync: readFileSync23 } = __require("node:fs");
+      const data = readFileSync23("/proc/self/environ", "utf-8");
       for (const entry of data.split("\0")) {
         const idx = entry.indexOf("=");
         if (idx > 0) {
@@ -309920,7 +309920,7 @@ var EMPTY_COMPLETION_RESULT = {
 };
 
 // packages/mcp-server/dist/index.js
-import { existsSync as existsSync28, realpathSync as realpathSync3, statSync as statSync12 } from "node:fs";
+import { existsSync as existsSync28, readFileSync as readFileSync22, realpathSync as realpathSync3, statSync as statSync12 } from "node:fs";
 import path29 from "node:path";
 import { fileURLToPath as fileURLToPath7 } from "node:url";
 import { isDeepStrictEqual } from "node:util";
@@ -321551,8 +321551,16 @@ async function withMcpTimeout(operation, timeoutMs = MCP_TOOL_TIMEOUT_MS) {
   return Promise.race([operation, timeout]);
 }
 var CODEX_SANDBOX_STATE_META_CAPABILITY = "codex/sandbox-state-meta";
+var SERVER_VERSION = (() => {
+  try {
+    const manifest = JSON.parse(readFileSync22(path29.join(path29.dirname(fileURLToPath7(import.meta.url)), "..", "package.json"), "utf8"));
+    return typeof manifest.version === "string" && manifest.version ? manifest.version : "unknown";
+  } catch {
+    return "unknown";
+  }
+})();
 function createMcpServerWithProvider(councilProvider) {
-  const server2 = new McpServer({ name: "expert-council", version: "0.8.6" }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
+  const server2 = new McpServer({ name: "expert-council", version: SERVER_VERSION }, { capabilities: { experimental: { [CODEX_SANDBOX_STATE_META_CAPABILITY]: {} } } });
   const session = { costPolicyEstablished: false };
   const COST_POLICY_REMINDER = "No cost policy has been established in this conversation. Ask the user once whether to optimize for economy, balanced, or speed, then pass it as constraints.costPolicy to expert_build and reuse the answer for later councils and delegations.";
   server2.registerTool("expert_inspect", {

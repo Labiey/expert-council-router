@@ -18,8 +18,15 @@ Expert Council在首次运行时会调用网络聚合搜索模型能力评价刻
 
 ## 当前状态
 
-当前版本（0.8.6）已包含：
+当前版本（0.8.7）已包含：
 
+- **专家对话记录（显式开启）**：`security.observability.contentStream` 提供五档（`none`、`assistant`、`assistant+tool-tail`、`transcript`、`transcript+args`）并可按角色覆盖，另有每事件/每文件/每目录的字节上限。默认 `none`；只有运营者配置或环境变量能放宽——模型、委派参数、专家输出都无权开启。
+- **`security.observability.recordReasoning`**：对“绝不记录思维链”规则的显式例外，默认关闭。推理在每条记录上都有标记，渲染为 `thinks` 而非 `says`，且开启时 `expert_inspect` 会主动声明。
+- **panel 转录版式**：`expert-council watch` 与观察窗口按 Pi 风格渲染——叙述正文不加逐行前缀、工具输出为带底色的块并在策略允许时显示 `$ command` 头、中日韩宽度对齐；一套统一的控制字符策略使任何渲染字段都无法操纵终端。
+- **可选自动开窗口**（`security.observability.autoOpenWindow`）：每次委派一个窗口，复用同一个流文件与 `watch`，只有你按键才关闭。
+- **两份 README 给出 `council-config.json` 与 `route-policy.json` 的完整标准写法**，并由测试用真实 validator 解析、把“全默认”文档与代码实际默认值逐项比对。
+- `expert-council --version`：在任何 council、运行时或配置被触碰之前就能回答，取自发布出去的 manifest。
+- 可用性标记会报告它自己的类别与存活时长，两分钟限流不再被描述成一次宕机。
 - **交互式专家**：运行中专家可在重大、难回退或方向含糊处暂停，通过 `request_decision` 向主代理给出 2-4 个推荐选项（含可选自由文本）；宿主用 `expert_respond` 回答，专家在**同一会话**继续。非终止——与 `report_and_stop` 区分。
 - **动态工具权限**：预设角色工具是**种子而非上限**。专家用 `request_tool` 申请缺失工具；宿主授予 `once`（用一次后自动撤销）/`persistent`（本会话）/`reject`。`security.toolGrants` 提供运维侧持久按角色授予。只读执行永不升级为变更/shell 工具（隔离保证）。
 - **交互经正确性通道发现**：未决交互以 `pendingInteraction` 出现在 `expert_status(view:"running")` 与 `expert_result(includeProgress)`；原生 Pi 包还会在交互一打开时用 `expert-council-interaction` 通知唤醒宿主；无法接收推送的无头宿主（Codex/MCP）继续轮询。每执行有界（默认 3 轮 + 等待超时）。
@@ -121,7 +128,7 @@ pi update npm:@expert-council/pi-package
 若要由 Codex 担任主代理，可直接从 Git Marketplace 安装固定版本的预构建插件，无需克隆仓库或在本地构建：
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.7 --json
 codex plugin add expert-council@expert-council-router --json
 ```
 
@@ -998,7 +1005,7 @@ packages/codex-integration/plugin/expert-council/
 当前版本已包含预构建 MCP Server 及经过验证的 Pi SDK 运行时，Codex 可以直接把本仓库作为固定版本的 Git Marketplace 安装。运行时需要 Node.js 22.19 或更高版本，以及已经配置好的 Pi 账户/模型目录；无需克隆仓库、执行 `npm install`，也不再依赖从全局 npm 目录解析 `@earendil-works/pi-coding-agent`。
 
 ```bash
-codex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
+codex plugin marketplace add Labiey/expert-council-router --ref v0.8.7 --json
 codex plugin marketplace list --json
 codex plugin list --marketplace expert-council-router --available --json
 codex plugin add expert-council@expert-council-router --json
@@ -1024,7 +1031,7 @@ if (-not $ecCodex) {
 }
 if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
-& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.6 --json
+& $ecCodex plugin marketplace add Labiey/expert-council-router --ref v0.8.7 --json
 & $ecCodex plugin marketplace list --json
 & $ecCodex plugin list --marketplace expert-council-router --available --json
 & $ecCodex plugin add "expert-council@expert-council-router" --json
@@ -1035,7 +1042,7 @@ if (-not $ecCodex) { throw "未找到 Codex Desktop CLI。" }
 
 若要开发插件，可克隆仓库、执行 `npm ci && npm run build`，再把仓库根目录的绝对路径传给 `codex plugin marketplace add`。普通使用建议安装固定版本的远程 Release。
 
-加载成功时会同时出现 `expert-council` Skill 和全部 13 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.8.6` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
+加载成功时会同时出现 `expert-council` Skill 和全部 13 个 `expert_*` MCP 工具；`expert_inspect` 必须返回真实资源清单，而不是 “No compatible Pi SDK is installed” 诊断。如果只有 Skill 而没有工具，或检查仍出现该诊断，请先确认 Marketplace 固定到 `v0.8.7` 或更高版本，再重启或重装插件；不要手动启动 `dist/server.mjs` 或手写 JSON-RPC。
 
 在新的 Codex 任务中输入以下提示以验证安装：
 
