@@ -122,9 +122,15 @@ export function buildWindowPlan(input: {
   const command =
     buildWatchInvocation(input.cli, input.executionId, input.windowTimeoutMs, input.limits) + PAUSE_TAIL;
   if (input.host === "windows-terminal") {
+    // `-w new` is the documented reserved window id meaning "always run this command in a new
+    // window" (Microsoft's own example is `wt -w -1 nt`). A bare `wt new-tab` inherits Windows
+    // Terminal's default windowing behaviour and lands as a tab in the window the agent is already
+    // running in - which is how an operator concluded the feature opened nothing at all: the window
+    // was there, folded into their own terminal. `new` is a reserved value rather than a window
+    // name, so two concurrent delegations still get two windows instead of sharing one named window.
     return {
       file: input.terminalExecutable,
-      argv: ["new-tab", "--title", title, "cmd", "/d", "/c", command],
+      argv: ["-w", "new", "new-tab", "--title", title, "cmd", "/d", "/c", command],
     };
   }
   // `start` takes the first quoted token as a title, so pass one explicitly and never let a

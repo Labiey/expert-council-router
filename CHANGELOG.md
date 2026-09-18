@@ -41,9 +41,26 @@ All notable changes to Expert Council are documented here. Versions follow seman
   and the same set of `EXPERT_COUNCIL_*` variable names, which immediately caught that its
   environment list had fallen five variables behind.
 - `.gitattributes` pins the tracked generated artifacts (the Codex plugin bundle, both skill trees,
-  lockfiles and package manifests) to LF. Only those paths: a repository-wide renormalise would have
-  buried this release in thousands of line-ending changes, and the artifact gate already had to learn
-  to ignore CR drift, which is a symptom worth removing at the source.
+  lockfiles and package manifests) to LF. Only those paths at first: a repository-wide renormalise
+  looked like it would bury the release in line-ending churn, so the narrow rule went in, and the
+  churn never materialised - the index already held LF for every tracked file, so the rule was then
+  widened to `* text=auto eol=lf` with a measured zero renormalisation and 22 fewer git warnings per
+  `npm run validate`. Binary types are excluded explicitly, because a global `text` rule that
+  silently rewrites a shipped image is worse than the warning it removes.
+
+### Changed
+
+- The observer window now asks Windows Terminal for a new window explicitly (`wt -w new new-tab …`)
+  rather than relying on `wt new-tab` plus the terminal's own windowing behaviour. `new` is a
+  reserved window id, not a name, so concurrent delegations each still get their own window.
+  Stated plainly, because the reason this was first written down was wrong: it had been listed as a
+  known user-visible defect - "the window folds into a tab in the agent's own terminal" - and an A/B
+  run on this machine disproved it. Folding requires the launching process to sit inside a Windows
+  Terminal session; this Pi process does not (no `WT_SESSION`), so the old and the new command line
+  both opened a separate top-level window here, and the operator who had just exercised the whole
+  package end to end reported never seeing the problem either. The change is kept because it makes
+  the behaviour independent of wherever the host happens to run - a public package will meet agents
+  that do live inside Windows Terminal - not because anything was broken here.
 
 ## 0.8.6 - 2026-09-16
 

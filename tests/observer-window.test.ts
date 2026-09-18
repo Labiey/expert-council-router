@@ -133,7 +133,7 @@ describe("observer window command line", () => {
     expect(inner.split(" ")[0]).toBe("node");
   });
 
-  it("uses a new tab under Windows Terminal and start otherwise, with a sanitized title", () => {
+  it("forces a new window under Windows Terminal and start otherwise, with a sanitized title", () => {
     const wt = buildWindowPlan({
       host: "windows-terminal",
       terminalExecutable: "C:\\wt.exe",
@@ -143,10 +143,13 @@ describe("observer window command line", () => {
       windowTimeoutMs: 900_000,
     });
     expect(wt.file).toBe("C:\\wt.exe");
-    expect(wt.argv.slice(0, 2)).toEqual(["new-tab", "--title"]);
-    expect(wt.argv[2]).toBe("EXPERT implementation-worker exec_abc_1");
-    expect(wt.argv.slice(3, 6)).toEqual(["cmd", "/d", "/c"]);
-    expect(typeof wt.argv[6]).toBe("string");
+    // The `-w new` prefix is the entire point of this test. It used to assert `["new-tab",
+    // "--title"]`, which pinned the defect itself: the observer opened as a tab inside the terminal
+    // the agent was running in, and every gate stayed green while operators saw no window at all.
+    expect(wt.argv.slice(0, 4)).toEqual(["-w", "new", "new-tab", "--title"]);
+    expect(wt.argv[4]).toBe("EXPERT implementation-worker exec_abc_1");
+    expect(wt.argv.slice(5, 8)).toEqual(["cmd", "/d", "/c"]);
+    expect(typeof wt.argv[8]).toBe("string");
 
     const legacy = buildWindowPlan({
       host: "console-host",

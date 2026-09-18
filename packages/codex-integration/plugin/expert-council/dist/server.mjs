@@ -319271,7 +319271,7 @@ function buildWindowPlan(input2) {
   if (input2.host === "windows-terminal") {
     return {
       file: input2.terminalExecutable,
-      argv: ["new-tab", "--title", title, "cmd", "/d", "/c", command]
+      argv: ["-w", "new", "new-tab", "--title", title, "cmd", "/d", "/c", command]
     };
   }
   return {
