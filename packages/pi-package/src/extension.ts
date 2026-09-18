@@ -1,5 +1,7 @@
 import {
   evaluateModelAssessment,
+  MAX_EXPERT_TIMEOUT_MS,
+  MIN_EXPERT_TIMEOUT_MS,
   MODEL_ASSESSMENT_JSON_SCHEMA,
   presentCouncilPlan,
   presentResourceInventory,
@@ -112,7 +114,7 @@ const DelegationAssignment = Type.Object({
     pattern: "^[^/]+/[^/]+$",
     description: "Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch.",
   })),
-  timeoutMs: Type.Integer({ minimum: 1000, maximum: 3600000 }),
+  timeoutMs: Type.Integer({ minimum: MIN_EXPERT_TIMEOUT_MS, maximum: MAX_EXPERT_TIMEOUT_MS }),
 });
 type DelegationAssignmentInput = Static<typeof DelegationAssignment>;
 
@@ -276,7 +278,7 @@ export default function expertCouncilExtension(
         pattern: "^[^/]+/[^/]+$",
         description: "Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch.",
       })),
-      timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000, description: "Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline." })),
+      timeoutMs: Type.Optional(Type.Integer({ minimum: MIN_EXPERT_TIMEOUT_MS, maximum: MAX_EXPERT_TIMEOUT_MS, description: "Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline." })),
       reasoningLevel: Type.Optional(Type.String({
         minLength: 1,
         maxLength: 40,

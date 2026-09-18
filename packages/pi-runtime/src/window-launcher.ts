@@ -1,3 +1,4 @@
+import { MAX_EXPERT_TIMEOUT_MS } from "@expert-council/core";
 import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,17 +28,28 @@ export type WatchInvocationTarget =
 /** Terminal hosts we know how to open, in preference order. */
 export type TerminalHost = "windows-terminal" | "console-host";
 
+/** The follower's own ceiling: six hours, matching the CLI's `--timeout-ms` maximum. */
+export const OBSERVER_WINDOW_MAX_MS = MAX_EXPERT_TIMEOUT_MS;
+
 /**
- * How long the follower may live on its own, derived from the expert's own budget so a
- * window can never expire before the work it is watching (the operator asked for exactly
- * this rule). Bounded below so a tiny budget still shows a whole delegation, and above by
- * the CLI's own ceiling.
+ * How long the follower may live on its own. It must cover the whole delegation, not one attempt:
+ * a delegation that retries or escalates runs up to `retry.maxAttempts` sessions, each with its own
+ * `timeoutMs`, so scaling a single attempt's budget leaves the window dead while the expert is
+ * still working - which is exactly what happened to a 25-minute implementation-worker delegation
+ * allowed three attempts: the window expired at 37.5 minutes with the third attempt still streaming.
+ * The 1.25 factor covers the work between attempts (routing, provisioning, escalation decisions),
+ * and the floor keeps a tiny budget watchable for a whole delegation.
  */
-export function observerWindowTimeoutMs(expertTimeoutMs: number | undefined): number {
+
+export function observerWindowTimeoutMs(expertTimeoutMs: number | undefined, maxAttempts = 1): number {
   // A missing deadline is not an expert budget to scale: it gets the floor outright, or the
-  // default would silently become 1.5x the floor.
+  // default would silently become 1.25x the attempts a delegation may never use.
   if (typeof expertTimeoutMs !== "number" || !Number.isFinite(expertTimeoutMs)) return 900_000;
-  return Math.min(3_600_000, Math.max(900_000, Math.round(expertTimeoutMs * 1.5)));
+  const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.trunc(maxAttempts)) : 1;
+  return Math.min(
+    OBSERVER_WINDOW_MAX_MS,
+    Math.max(900_000, Math.round(expertTimeoutMs * attempts * 1.25)),
+  );
 }
 
 /** Quote one token only when the inner cmd parser would otherwise split it. */
@@ -200,6 +212,8 @@ export interface ObserverWindowInput {
   executionId: string;
   role: string;
   timeoutMs?: number;
+  /** Attempts the delegation may still spend; sizes the window against the whole delegation. */
+  maxAttempts?: number;
   /** Display caps from configuration, forwarded to the follower. */
   windowLines?: number;
   windowChars?: number;
@@ -269,7 +283,7 @@ export class ObserverWindowLauncher {
       cli,
       executionId: input.executionId,
       role: input.role,
-      windowTimeoutMs: observerWindowTimeoutMs(input.timeoutMs),
+      windowTimeoutMs: observerWindowTimeoutMs(input.timeoutMs, input.maxAttempts),
       ...(typeof input.windowLines === "number" && typeof input.windowChars === "number"
         ? { limits: { maxLines: input.windowLines, maxChars: input.windowChars } }
         : {}),

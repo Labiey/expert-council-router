@@ -1,3 +1,4 @@
+import { MAX_EXPERT_TIMEOUT_MS, MIN_EXPERT_TIMEOUT_MS } from "./limits.js";
 import { z } from "zod";
 import { expertRoleSchema, modelAssessmentSnapshotSchema } from "./config.js";
 import type { CouncilStateSnapshot } from "./types.js";
@@ -93,7 +94,7 @@ const execution = z.object({
   taskCategory: taskClass.optional(),
   startedAt: timestamp,
   finishedAt: timestamp.optional(),
-  timeoutMs: z.number().int().min(1_000).max(3_600_000).optional(),
+  timeoutMs: z.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS).optional(),
 })
   // Forward compatibility (same lesson as executionMetadata and the 0.7.9
   // timeoutMs regression): the execution snapshot is an extension surface, so a

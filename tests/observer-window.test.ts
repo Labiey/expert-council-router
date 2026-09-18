@@ -45,14 +45,26 @@ function harness(options: {
 }
 
 describe("observer window budget", () => {
-  it("follows the expert's own deadline and can never expire before it", () => {
-    // The operator's rule: window lifetime derives from the expert budget, never shorter.
-    expect(observerWindowTimeoutMs(60_000)).toBe(900_000);            // floored, not tiny
-    expect(observerWindowTimeoutMs(700_000)).toBe(1_050_000);         // 1.5x, above the floor
-    expect(observerWindowTimeoutMs(1_800_000)).toBe(2_700_000);       // 1.5x
-    expect(observerWindowTimeoutMs(5_000_000)).toBe(3_600_000);       // capped by the CLI ceiling
+  it("covers the whole delegation, not one attempt", () => {
+    // The operator's rule: the window is derived from the expert's budget and never shorter than
+    // the work. But the work is the delegation, and a delegation may spend retry.maxAttempts
+    // sessions each with its own timeoutMs. A 25-minute attempt budget with three attempts allowed
+    // can legitimately run 75 minutes, and the old 1.5x-of-one-attempt rule killed the window at
+    // 37.5 minutes while the third attempt was still streaming 1.6 MB of events.
+    expect(observerWindowTimeoutMs(60_000, 3)).toBe(900_000);          // floored, not tiny
+    expect(observerWindowTimeoutMs(700_000, 1)).toBe(900_000);          // 1.25x still under the floor
+    expect(observerWindowTimeoutMs(1_800_000, 1)).toBe(2_250_000);      // 30 min -> 37.5 min
+    expect(observerWindowTimeoutMs(1_500_000, 3)).toBe(5_625_000);      // the real case: 25 min x 3 + margin
+    expect(observerWindowTimeoutMs(5_000_000, 3)).toBe(18_750_000);     // three long attempts
+    expect(observerWindowTimeoutMs(21_600_000, 3)).toBe(21_600_000);    // capped by the follower ceiling
     expect(observerWindowTimeoutMs(undefined)).toBe(900_000);
     expect(observerWindowTimeoutMs(Number.NaN)).toBe(900_000);
+    // A nonsense attempt count may shrink the window to one attempt's worth, never below it.
+    expect(observerWindowTimeoutMs(1_800_000, 0)).toBe(2_250_000);
+    expect(observerWindowTimeoutMs(1_800_000, -4)).toBe(2_250_000);
+    expect(observerWindowTimeoutMs(1_800_000, Number.NaN)).toBe(2_250_000);
+    // Omitting it entirely must not fall back to the old 1.5x, or every existing caller keeps the bug.
+    expect(observerWindowTimeoutMs(1_500_000)).toBe(1_875_000);
   });
 });
 

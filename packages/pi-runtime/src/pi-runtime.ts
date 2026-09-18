@@ -89,6 +89,8 @@ class ExecutionTimeoutError extends Error {}
 const OBSERVABILITY_MAX_EVENTS = 2_000;
 const OBSERVABILITY_MAX_BYTES = 256 * 1024;
 const OBSERVABILITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
+/** Share of an attempt's budget after which "not one tool call yet" is worth telling the host. */
+const TOOL_SILENCE_BUDGET_FRACTION = 0.4;
 
 interface ObservabilityStreamState {
   file: string;
@@ -782,6 +784,10 @@ export class PiExpertRuntime implements ExpertRuntime {
       role: request.role,
       ...(request.model ? { model: request.model } : {}),
       ...(request.attempt === undefined ? {} : { attempt: request.attempt }),
+      // Without this the stream cannot say how hard the model was asked to think, and an operator
+      // watching a long silent window has to guess whether the effort level is the reason. First
+      // noticed while reading a live 25-minute delegation that produced no tool calls at all.
+      ...(request.reasoningLevel ? { reasoningLevel: request.reasoningLevel } : {}),
       kind: "started",
     });
     // The delegation-level identity is what matters here: retries and escalations reuse this
@@ -791,6 +797,9 @@ export class PiExpertRuntime implements ExpertRuntime {
       executionId: request.executionId,
       role: String(request.role),
       ...(typeof request.timeoutMs === "number" ? { timeoutMs: request.timeoutMs } : {}),
+      // The window has to outlive the whole delegation, so it needs to know how many attempts the
+      // council is still allowed to spend, not just how long one attempt may take.
+      maxAttempts: this.options.config.retry.maxAttempts,
       // The window shows what the operator configured, not the follower's own defaults.
       windowLines: this.options.config.security.observability.contentWindowLines,
       windowChars: this.options.config.security.observability.contentWindowChars,
@@ -939,6 +948,10 @@ export class PiExpertRuntime implements ExpertRuntime {
     };
     entry.attention = [...entry.attention.slice(-7), attention];
     this.emitObservability(request.executionId, request.role, request.model, "attention", {
+      // The code is the machine-readable identity of the warning. Without it a budget warning, a
+      // tool-failure warning and a tool-silence warning are indistinguishable in the stream, and a
+      // host cannot act on one and ignore another; the detail text alone reads the same to a script.
+      code: attention.code,
       text: attention.detail,
       ...(attention.toolCalls === undefined ? {} : { toolCalls: attention.toolCalls }),
       ...(attention.toolErrors === undefined ? {} : { toolErrors: attention.toolErrors }),
@@ -990,6 +1003,35 @@ export class PiExpertRuntime implements ExpertRuntime {
         { nudge: true },
       );
     }
+  }
+
+  /**
+   * Surface "this attempt has spent a large share of its budget without executing a single tool
+   * call" while that is still true. The failure counters cannot see it - an expert that is thinking
+   * makes no tool errors - and `budget_fraction` only reports elapsed time, which does not
+   * distinguish deep reasoning from a hang. Written after a real delegation produced 212 KB of
+   * reasoning with no tool call for minutes, and the operator's question was exactly that.
+   */
+  private armToolSilenceWarning(entry: ActiveExpertSession, request: ExpertExecutionRequest): void {
+    const guardrails = this.options.config.security.guardrails;
+    const budget = request.timeoutMs;
+    if (!guardrails.warnHost || typeof budget !== "number" || budget <= 0) return;
+    const at = Math.round(budget * TOOL_SILENCE_BUDGET_FRACTION);
+    const delay = Math.max(0, at - (Date.now() - entry.startedAt));
+    entry.budgetTimers.push(
+      setTimeout(() => {
+        // Once it has acted, silence is no longer the story and this message would be wrong.
+        if (entry.toolCalls > 0) return;
+        this.raiseAttention(
+          entry,
+          request,
+          "tool_silence",
+          `${Math.max(1, Math.round(at / 60_000))} minutes of this attempt elapsed with no tool call yet - it is reasoning or writing text only.`,
+          {},
+          { nudge: false },
+        );
+      }, delay),
+    );
   }
 
   /** Arm one timer per configured budget fraction; every timer is cleared on teardown. */
@@ -1587,6 +1629,7 @@ export class PiExpertRuntime implements ExpertRuntime {
       // Budget warnings are armed against the deadline the Main Agent chose, so a
       // long quiet run is visible before it expires instead of only after.
       this.armBudgetWarnings(entry, request);
+      this.armToolSilenceWarning(entry, request);
       // After a forced abort settle the prompt promise may never resolve;
       // its rejection must not surface as an unhandled rejection.
       void execution.catch(() => undefined);

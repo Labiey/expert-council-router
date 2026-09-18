@@ -2,6 +2,7 @@ import { open, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { CostPolicy, ExpertCouncil, ExpertRole } from "@expert-council/core";
+import { MAX_EXPERT_TIMEOUT_MS, MIN_EXPERT_TIMEOUT_MS } from "@expert-council/core";
 import { createExpertCouncil, defaultCouncilDataRoot } from "@expert-council/pi-runtime";
 
 export interface CliIo {
@@ -55,6 +56,12 @@ export interface ExpertEventFrame {
   argsText?: string;
   /** Marks a reasoning record; dropped here it would make reasoning indistinguishable from speech. */
   reasoning?: boolean;
+  /** Which guardrail fired. Without it a budget warning, a tool-failure warning and a tool-silence
+   * warning all read as the same sentence, and the operator cannot tell which one to act on. */
+  code?: string;
+  /** How hard the model was asked to think - the first thing an operator wants to know when a long
+   * silent attempt makes them suspect a hang, and previously inferable only from the model name. */
+  reasoningLevel?: string;
   streaming?: boolean;
   omittedBytes?: number;
   line?: number;
@@ -150,7 +157,7 @@ security.observability.expertWindow is "interactive":
   --follow          keep tailing; exits at a terminal event (completed, failed, stopped,
                     stream_truncated), at --timeout-ms, or if the stream file disappears
   --interval-ms N   poll interval, 50-60000 (default 1000)
-  --timeout-ms N    maximum total follow time, 1000-3600000 (default 300000)
+  --timeout-ms N    maximum total follow time, ${MIN_EXPERT_TIMEOUT_MS}-${MAX_EXPERT_TIMEOUT_MS} (default 300000)
   --quiet-ms N      fallback exit after this much stream silence, 250-600000 (default 15000).
                     Applies only once a terminal event has been seen and the final marker is
                     missing or still being flushed; a stream that never reached a terminal
@@ -388,6 +395,8 @@ function parseExpertEvent(line: string): ExpertEventFrame | undefined {
     ...(text("tool") !== undefined ? { tool: text("tool") } : {}),
     ...(typeof frame.ok === "boolean" ? { ok: frame.ok } : {}),
     ...(text("text") !== undefined ? { text: text("text") } : {}),
+    ...(text("code") !== undefined ? { code: text("code") } : {}),
+    ...(text("reasoningLevel") !== undefined ? { reasoningLevel: text("reasoningLevel") } : {}),
     ...(text("argsSummary") !== undefined ? { argsSummary: text("argsSummary") } : {}),
     ...(text("argsText") !== undefined ? { argsText: text("argsText") } : {}),
     ...(typeof frame.streaming === "boolean" ? { streaming: frame.streaming } : {}),
@@ -417,7 +426,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   const follow = args.includes("--follow");
   const json = args.includes("--json");
   const intervalMs = integerOption(args, "--interval-ms", 50, 60_000) ?? 1_000;
-  const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000) ?? 300_000;
+  const timeoutMs = integerOption(args, "--timeout-ms", MIN_EXPERT_TIMEOUT_MS, MAX_EXPERT_TIMEOUT_MS) ?? 300_000;
   const quietMs = integerOption(args, "--quiet-ms", 250, 600_000) ?? WATCH_QUIET_DEFAULT_MS;
   // How much of a recorded content block a window shows. The stream holds the whole
   // payload within its own caps; these bound only the display, and the header names the
@@ -465,6 +474,10 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   let finalSeen = false;
   let lastGrowthAt = Date.now();
   let legacyClose = false;
+  // Whether the follow window ran out, as distinct from the stream reaching an end. Without it, a
+  // timeout exit reported the last attempt-level terminal as the reason for closing, so a delegation
+  // still running on its third attempt printed "stream closed (failed)" to an operator.
+  let timedOut = false;
   let vanished = false;
   let malformed = 0;
   let printed = 0;
@@ -574,6 +587,7 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
       break;
     }
     if (Date.now() >= deadline) {
+      timedOut = true;
       io.stderr.write(`[watch] ${executionId}: stopped after --timeout-ms ${timeoutMs} (${printed} event line(s) shown)\n`);
       break;
     }
@@ -585,11 +599,15 @@ async function runWatch(args: string[], io: CliIo, injectedFormat?: (event: Expe
   }
   const closeReason = finalSeen
     ? "delegation finished"
-    : terminal !== undefined
-      ? legacyClose
-        ? `${terminal}, no final marker and no growth for ${quietMs}ms`
-        : terminal
-      : undefined;
+    : timedOut
+      ? terminal === undefined
+        ? undefined
+        : `follow window expired while the delegation was still open - last attempt-level event was "${terminal}", no ${WATCH_FINAL_KIND} marker seen`
+      : terminal !== undefined
+        ? legacyClose
+          ? `${terminal}, no final marker and no growth for ${quietMs}ms`
+          : terminal
+        : undefined;
   if (closeReason !== undefined) {
     io.stderr.write(`[watch] ${executionId}: stream closed (${closeReason})
 `);
@@ -675,9 +693,9 @@ export async function runCli(
         const role = values[0] as ExpertRole | undefined;
         if (!role || !ROLES.has(role)) throw new Error(`delegate requires a valid semantic role: ${[...ROLES].join(", ")}`);
         const task = bounded(values.slice(1).join(" ").trim(), "delegate task", 100_000);
-        const timeoutMs = integerOption(args, "--timeout-ms", 1_000, 3_600_000);
+        const timeoutMs = integerOption(args, "--timeout-ms", MIN_EXPERT_TIMEOUT_MS, MAX_EXPERT_TIMEOUT_MS);
         if (timeoutMs === undefined) {
-          throw new Error("delegate requires --timeout-ms <ms> (1000–3600000): set an explicit budget from task difficulty");
+          throw new Error("delegate requires --timeout-ms <ms> (${MIN_EXPERT_TIMEOUT_MS}-${MAX_EXPERT_TIMEOUT_MS}): set an explicit budget from task difficulty");
         }
         // The flag is required by design - the council must not guess an effort a model may
         // not honour - but presence has to be checked before `bounded`, or an operator who

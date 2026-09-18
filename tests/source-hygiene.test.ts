@@ -28,6 +28,48 @@ describe("source hygiene", () => {
     expect(scripts.validate).toContain("artifacts:check");
   });
 
+  it("states the execution-time bounds in exactly one place", () => {
+    // The same ceiling lived in nine files: the delegation contract, the persisted-state schema, the
+    // three MCP tool schemas a Codex host reads, the Pi extension's parameter schema, the CLI's
+    // argument parser, the retry-budget growth cap and the observer window's own ceiling. Raising one
+    // of them alone was cosmetic - with the MCP schema still capped at an hour, no host could ask for
+    // the 75-minute delegation that the wider observer window was meant to cover. They import
+    // `limits.ts` now, so a re-divergence is this failure rather than an operator's mystery.
+    const bound = /\b(?:3_600_000|3600000|21_600_000|21600000)\b/g;
+    const packagesDir = fileURLToPath(new URL("../packages", import.meta.url));
+    const offenders: string[] = [];
+    for (const file of sources(packagesDir)) {
+      const normalized = file.replace(/\\/g, "/");
+      if (!normalized.includes("/src/") || !normalized.endsWith(".ts")) continue;
+      if (normalized.endsWith("core/src/limits.ts")) continue;
+      const text = readFileSync(file, "utf8");
+      for (const match of text.matchAll(bound)) {
+        const start = Math.max(0, (match.index ?? 0) - 70);
+        const context = text.slice(start, (match.index ?? 0) + match[0].length + 70);
+        // An unrelated duration that happens to be an hour (marker labels) is not a bound.
+        if (/timeout/i.test(context)) {
+          offenders.push(`${normalized.replace(packagesDir.replace(/\\/g, "/") + "/", "")}: ${context.replace(/\s+/g, " ").trim()}`);
+        }
+      }
+    }
+    // Documentation carries the same numbers, and a stale range in the README is a lie a host reads
+    // before it reads any code. Two root READMEs and one shared Skill are the sources; the twelve
+    // mirrored copies are built, and the artifact gate already keeps them honest.
+    const staleRange = /\b1[_]?000\s*[\u2013\u2014-]\s*3[_]?600[_]?000\b/;
+    const rootDir = fileURLToPath(new URL("..", import.meta.url));
+    const staleDocs: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist" || entry.name === "TMP") continue;
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(full);
+        else if (entry.name.endsWith(".md") && staleRange.test(readFileSync(full, "utf8"))) staleDocs.push(full);
+      }
+    };
+    walk(rootDir);
+    expect(staleDocs).toEqual([]);
+  });
+
   it("leaves no documentation block orphaned above another block", () => {
     // Shape: a `*/` with nothing between it and the next `/**`. That means an earlier doc
     // comment no longer documents anything, because a new declaration was inserted between

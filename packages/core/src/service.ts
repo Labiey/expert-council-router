@@ -1,3 +1,4 @@
+import { MAX_EXPERT_TIMEOUT_MS, MIN_EXPERT_TIMEOUT_MS } from "./limits.js";
 import { buildCouncilPlan, classifyTask, modelInventoryFingerprint } from "./council.js";
 import {
   type CouncilConfig,
@@ -450,8 +451,8 @@ export class ExpertCouncilService implements ExpertCouncil {
     // The execution budget is a required part of the delegation contract: a
     // missing or out-of-range value must fail loudly instead of silently
     // falling back to a default or an immediate timeout.
-    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1_000 || request.timeoutMs > 3_600_000) {
-      throw new Error("Delegation requires an explicit timeoutMs between 1000 and 3600000: set a budget from task difficulty.");
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < MIN_EXPERT_TIMEOUT_MS || request.timeoutMs > MAX_EXPERT_TIMEOUT_MS) {
+      throw new Error(`Delegation requires an explicit timeoutMs between ${MIN_EXPERT_TIMEOUT_MS} and ${MAX_EXPERT_TIMEOUT_MS}: set a budget from task difficulty.`);
     }
     const id = executionId();
     const state: ExecutionState = {
@@ -869,7 +870,7 @@ export class ExpertCouncilService implements ExpertCouncil {
       if (failure === "timeout") {
         // An explicitly timed-out attempt proves the budget was too small:
         // scale the next attempt's budget (bounded) instead of repeating it.
-        currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), 3_600_000);
+        currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), MAX_EXPERT_TIMEOUT_MS);
       }
       // Report prose, not a provider message: only text that reads as a failure may mark anything
       // away, or a debugger quoting "connection error" would pause its own model (#34).
@@ -1457,8 +1458,8 @@ export class ExpertCouncilService implements ExpertCouncil {
     if (executionIds.length < 1 || executionIds.length > 8) {
       throw new Error("expert_wait requires between one and eight unique execution IDs.");
     }
-    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1_000 || request.timeoutMs > 3_600_000) {
-      throw new Error("expert_wait timeoutMs must be an integer between 1000 and 3600000.");
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < MIN_EXPERT_TIMEOUT_MS || request.timeoutMs > MAX_EXPERT_TIMEOUT_MS) {
+      throw new Error(`expert_wait timeoutMs must be an integer between ${MIN_EXPERT_TIMEOUT_MS} and ${MAX_EXPERT_TIMEOUT_MS}.`);
     }
 
     const snapshot = (): ExpertWaitResult => {

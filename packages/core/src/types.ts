@@ -179,6 +179,9 @@ export interface ExpertObservabilityEvent {
   /** Which attempt of this delegation produced the event (1-based; absent on delegation-level events). */
   attempt?: number;
   kind: ExpertEventKind;
+  /** Which guardrail raised an `attention` event. The text describes it; this lets a host act on one
+   * kind and ignore another, and it is the only machine-readable identity the event has. */
+  code?: AttentionCode;
   tool?: string;
   ok?: boolean;
   /** Bounded expert-authored text, or an interaction/terminal detail. */
@@ -247,7 +250,7 @@ export interface ExpertExecutionRequest {
   reasoningLevel?: string;
   readOnly: boolean;
   workspace?: string;
-  /** Explicit expert execution deadline in milliseconds (1_000–3_600_000). */
+  /** Explicit expert execution deadline in milliseconds; bounded by `MIN_EXPERT_TIMEOUT_MS` and `MAX_EXPERT_TIMEOUT_MS` in `limits.ts`. */
   timeoutMs: number;
   attempt: number;
   priorFailure?: { type: FailureType; summary: string };
@@ -377,7 +380,11 @@ export interface RuntimeBillingDiscovery {
 export type AttentionCode =
   | "consecutive_tool_failures"
   | "failure_ratio_high"
-  | "budget_fraction";
+  | "budget_fraction"
+  /** An attempt spent a large share of its budget without a single tool call. Distinct from
+   * `budget_fraction`, which only speaks about elapsed time: this one answers the question an
+   * operator watching a silent window is actually asking. */
+  | "tool_silence";
 
 /**
  * A non-blocking warning about one running execution. Attention is deliberately not
@@ -726,7 +733,7 @@ export interface DelegationRequest {
   role: ExpertRole;
   councilId?: string;
   workspace?: string;
-  /** Explicit expert execution deadline in milliseconds (1_000–3_600_000). */
+  /** Explicit expert execution deadline in milliseconds; bounded by `MIN_EXPERT_TIMEOUT_MS` and `MAX_EXPERT_TIMEOUT_MS` in `limits.ts`. */
   timeoutMs: number;
   constraints?: RoutingConstraints;
   /**
@@ -1111,7 +1118,7 @@ export interface ExecutionStateSnapshot {
   status: "running" | "success" | "partial" | "failed" | "aborted";
   model?: string;
   attempts: number;
-  /** Per-attempt execution budget in effect for the latest attempt (1_000–3_600_000). */
+  /** Per-attempt execution budget in effect for the latest attempt; bounded by the constants in `limits.ts`. */
   timeoutMs?: number;
   /** Set when the Main Agent requested an abort; the delegation loop skips the next attempt. */
   abortRequested?: boolean;

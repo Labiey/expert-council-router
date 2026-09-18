@@ -614,6 +614,90 @@ describe("Pi runtime adapter", () => {
     expect((await runtime.inspectExecution(executionId))?.pendingInteraction).toBeUndefined();
   });
 
+  it("records the reasoning effort, and reports an attempt that never touched a tool", async () => {
+    // Two gaps found on a live delegation. The stream could not say how hard the model had been
+    // asked to think, so an operator watching minutes of silence had to infer it from the model
+    // name; and an expert that thinks for a long stretch looked exactly like one that had hung,
+    // because the failure counters only see tool errors. A short budget makes the 40% silence
+    // timer fire inside the test without fake timers, which would only prove the fake works.
+    const root = await mkdtemp(path.join(tmpdir(), "ec-silence-"));
+    const streamDir = path.join(root, "observability");
+    const run = async (executionId: string, toolFirst: boolean): Promise<Record<string, unknown>[]> => {
+      const nativeModel = { provider: "p", id: "m" };
+      const modelRuntime = {
+        getAvailable: async () => [{ provider: "p", id: "m", name: "Mock", reasoning: true, contextWindow: 100_000, maxTokens: 4_000, input: ["text"], cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 } }],
+        getModel: () => nativeModel,
+      };
+      const state: { messages: Array<Record<string, unknown>> } = { messages: [] };
+      let emit: ((event: Record<string, unknown>) => void) | undefined;
+      const sdk: PiSdkLike = {
+        ...safeResourceApis,
+        ModelRuntime: { create: async () => modelRuntime },
+        SessionManager: { inMemory: () => ({}) },
+        createAgentSession: async () => ({
+          session: {
+            subscribe: (listener: (event: Record<string, unknown>) => void) => {
+              emit = listener;
+              return () => { emit = undefined; };
+            },
+            prompt: async () => {
+              if (toolFirst) {
+                emit!({ type: "tool_execution_start", toolCallId: "c1", toolName: "read", args: { path: "README.md" } });
+                emit!({ type: "tool_execution_end", toolCallId: "c1", toolName: "read", result: {}, isError: false });
+              }
+              // Past the 40% mark of the 1s budget below, so the silence timer has already fired.
+              await new Promise((resolve) => setTimeout(resolve, 700));
+              state.messages = [{ role: "assistant", content: [{ type: "text", text: JSON.stringify({ status: "success", summary: "thought for a while" }) }] }];
+            },
+            waitForIdle: async () => {},
+            dispose: () => {},
+            state,
+          },
+        }),
+      };
+      const runtime = await PiExpertRuntime.create({
+        cwd: gitSource,
+        config: parseCouncilConfig({ security: { observability: { expertWindow: "interactive" } } }),
+        sdk,
+        modelRuntime,
+        roleDirectory,
+        observabilityDir: streamDir,
+      });
+      await runtime.executeExpert({
+        executionId,
+        role: "scout",
+        task: "Think before answering",
+        model: "p/m",
+        tools: ["read"],
+        skills: [],
+        reasoningLevel: "xhigh",
+        readOnly: true,
+        workspace: gitSource,
+        timeoutMs: 1_000,
+        attempt: 1,
+      });
+      return (await readFile(path.join(streamDir, `${executionId}.jsonl`), "utf8"))
+        .trim().split("\n").map((value) => JSON.parse(value) as Record<string, unknown>);
+    };
+
+    try {
+      const silent = await run("exec_silent", false);
+      expect(silent[0]).toMatchObject({ kind: "started", role: "scout", reasoningLevel: "xhigh" });
+      const silence = silent.find((event) => event.code === "tool_silence");
+      expect(silence).toBeDefined();
+      expect(silence).toMatchObject({ kind: "attention", toolCalls: 0 });
+      expect(String(silence!.text)).toContain("no tool call yet");
+
+      // Once the expert has acted, the same timer must stay quiet: "silent" would be false, and a
+      // wrong reassurance is worse than none.
+      const active = await run("exec_active", true);
+      expect(active.some((event) => event.code === "tool_silence")).toBe(false);
+      expect(active.some((event) => event.kind === "tool_started")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it("writes an interactive event stream another terminal can follow, redacted by default", async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ec-observability-"));
     const streamDir = path.join(root, "observability");

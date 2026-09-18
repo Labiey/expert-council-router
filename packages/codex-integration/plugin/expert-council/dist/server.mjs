@@ -310301,7 +310301,7 @@ var councilConfigSchema = external_exports.object({
        * unlimited, which is the historical behaviour: a per-attempt timeout multiplied by
        * `retry.maxAttempts` let one mechanical delegation cost ~59 minutes unnoticed.
        */
-      maxTotalWallMs: external_exports.number().int().min(1e3).max(6 * 36e5).optional()
+      maxTotalWallMs: external_exports.number().int().min(1e3).max(6 * 60 * 60 * 1e3).optional()
     }).default({
       warnHost: true,
       nudgeExpert: true,
@@ -310452,6 +310452,10 @@ function getModelProfile(config2, provider, id) {
 function getRoleWeightOverrides(config2, role2) {
   return config2.routing.roleWeights[role2] ?? {};
 }
+
+// packages/core/dist/limits.js
+var MIN_EXPERT_TIMEOUT_MS = 1e3;
+var MAX_EXPERT_TIMEOUT_MS = 216e5;
 
 // packages/core/dist/compositions.js
 var COMPOSITION_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -312251,8 +312255,8 @@ var ExpertCouncilService = class {
     return plan;
   }
   startDelegation(request) {
-    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1e3 || request.timeoutMs > 36e5) {
-      throw new Error("Delegation requires an explicit timeoutMs between 1000 and 3600000: set a budget from task difficulty.");
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < MIN_EXPERT_TIMEOUT_MS || request.timeoutMs > MAX_EXPERT_TIMEOUT_MS) {
+      throw new Error(`Delegation requires an explicit timeoutMs between ${MIN_EXPERT_TIMEOUT_MS} and ${MAX_EXPERT_TIMEOUT_MS}: set a budget from task difficulty.`);
     }
     const id = executionId();
     const state2 = {
@@ -312575,7 +312579,7 @@ var ExpertCouncilService = class {
         break;
       failures.push({ model: current.model, type: failure, summary: lastResult.summary });
       if (failure === "timeout") {
-        currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), 36e5);
+        currentTimeoutMs = Math.min(Math.round(currentTimeoutMs * 1.5), MAX_EXPERT_TIMEOUT_MS);
       }
       const reportedEvidence = classifyReportedAvailabilityEvidence(lastResult.summary);
       if (failure === "provider_error" && reportedEvidence && !unavailableMarked.includes(current.model)) {
@@ -313084,8 +313088,8 @@ var ExpertCouncilService = class {
     if (executionIds.length < 1 || executionIds.length > 8) {
       throw new Error("expert_wait requires between one and eight unique execution IDs.");
     }
-    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < 1e3 || request.timeoutMs > 36e5) {
-      throw new Error("expert_wait timeoutMs must be an integer between 1000 and 3600000.");
+    if (!Number.isInteger(request.timeoutMs) || request.timeoutMs < MIN_EXPERT_TIMEOUT_MS || request.timeoutMs > MAX_EXPERT_TIMEOUT_MS) {
+      throw new Error(`expert_wait timeoutMs must be an integer between ${MIN_EXPERT_TIMEOUT_MS} and ${MAX_EXPERT_TIMEOUT_MS}.`);
     }
     const snapshot = () => {
       const completed = executionIds.filter((id) => this.results.has(id));
@@ -313378,7 +313382,7 @@ var execution = external_exports.object({
   taskCategory: taskClass.optional(),
   startedAt: timestamp,
   finishedAt: timestamp.optional(),
-  timeoutMs: external_exports.number().int().min(1e3).max(36e5).optional()
+  timeoutMs: external_exports.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS).optional()
 }).passthrough();
 var testResult = external_exports.object({
   command: boundedText(1e3).optional(),
@@ -319223,10 +319227,12 @@ import { existsSync as existsSync27 } from "node:fs";
 import path26 from "node:path";
 import { fileURLToPath as fileURLToPath6 } from "node:url";
 import { spawn as nodeSpawn2 } from "node:child_process";
-function observerWindowTimeoutMs(expertTimeoutMs) {
+var OBSERVER_WINDOW_MAX_MS = MAX_EXPERT_TIMEOUT_MS;
+function observerWindowTimeoutMs(expertTimeoutMs, maxAttempts = 1) {
   if (typeof expertTimeoutMs !== "number" || !Number.isFinite(expertTimeoutMs))
     return 9e5;
-  return Math.min(36e5, Math.max(9e5, Math.round(expertTimeoutMs * 1.5)));
+  const attempts = Number.isFinite(maxAttempts) ? Math.max(1, Math.trunc(maxAttempts)) : 1;
+  return Math.min(OBSERVER_WINDOW_MAX_MS, Math.max(9e5, Math.round(expertTimeoutMs * attempts * 1.25)));
 }
 function quoteCmdToken(value3) {
   return /[\s"]/.test(value3) ? `"${value3.replace(/"/g, "")}"` : value3;
@@ -319380,7 +319386,7 @@ var ObserverWindowLauncher = class {
       cli,
       executionId: input2.executionId,
       role: input2.role,
-      windowTimeoutMs: observerWindowTimeoutMs(input2.timeoutMs),
+      windowTimeoutMs: observerWindowTimeoutMs(input2.timeoutMs, input2.maxAttempts),
       ...typeof input2.windowLines === "number" && typeof input2.windowChars === "number" ? { limits: { maxLines: input2.windowLines, maxChars: input2.windowChars } } : {}
     });
     try {
@@ -319721,6 +319727,7 @@ var ExecutionTimeoutError = class extends Error {
 var OBSERVABILITY_MAX_EVENTS = 2e3;
 var OBSERVABILITY_MAX_BYTES = 256 * 1024;
 var OBSERVABILITY_RETENTION_MS = 7 * 24 * 60 * 60 * 1e3;
+var TOOL_SILENCE_BUDGET_FRACTION = 0.4;
 function boundedText2(value3, max = 400) {
   const oneLine = value3.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
   return oneLine.length > max ? `${oneLine.slice(0, max - 1)}\u2026` : oneLine;
@@ -320230,12 +320237,19 @@ var PiExpertRuntime = class _PiExpertRuntime {
       role: request.role,
       ...request.model ? { model: request.model } : {},
       ...request.attempt === void 0 ? {} : { attempt: request.attempt },
+      // Without this the stream cannot say how hard the model was asked to think, and an operator
+      // watching a long silent window has to guess whether the effort level is the reason. First
+      // noticed while reading a live 25-minute delegation that produced no tool calls at all.
+      ...request.reasoningLevel ? { reasoningLevel: request.reasoningLevel } : {},
       kind: "started"
     });
     this.observerWindows?.ensureOpen({
       executionId: request.executionId,
       role: String(request.role),
       ...typeof request.timeoutMs === "number" ? { timeoutMs: request.timeoutMs } : {},
+      // The window has to outlive the whole delegation, so it needs to know how many attempts the
+      // council is still allowed to spend, not just how long one attempt may take.
+      maxAttempts: this.options.config.retry.maxAttempts,
       // The window shows what the operator configured, not the follower's own defaults.
       windowLines: this.options.config.security.observability.contentWindowLines,
       windowChars: this.options.config.security.observability.contentWindowChars
@@ -320359,6 +320373,10 @@ var PiExpertRuntime = class _PiExpertRuntime {
     };
     entry.attention = [...entry.attention.slice(-7), attention];
     this.emitObservability(request.executionId, request.role, request.model, "attention", {
+      // The code is the machine-readable identity of the warning. Without it a budget warning, a
+      // tool-failure warning and a tool-silence warning are indistinguishable in the stream, and a
+      // host cannot act on one and ignore another; the detail text alone reads the same to a script.
+      code: attention.code,
       text: attention.detail,
       ...attention.toolCalls === void 0 ? {} : { toolCalls: attention.toolCalls },
       ...attention.toolErrors === void 0 ? {} : { toolErrors: attention.toolErrors },
@@ -320392,6 +320410,26 @@ var PiExpertRuntime = class _PiExpertRuntime {
       const ratio = Math.round(entry.toolErrors / entry.toolCalls * 100);
       this.raiseAttention(entry, request, "failure_ratio_high", `${entry.toolErrors} of ${entry.toolCalls} observed tool calls failed (${ratio}%).`, {}, { nudge: true });
     }
+  }
+  /**
+   * Surface "this attempt has spent a large share of its budget without executing a single tool
+   * call" while that is still true. The failure counters cannot see it - an expert that is thinking
+   * makes no tool errors - and `budget_fraction` only reports elapsed time, which does not
+   * distinguish deep reasoning from a hang. Written after a real delegation produced 212 KB of
+   * reasoning with no tool call for minutes, and the operator's question was exactly that.
+   */
+  armToolSilenceWarning(entry, request) {
+    const guardrails = this.options.config.security.guardrails;
+    const budget = request.timeoutMs;
+    if (!guardrails.warnHost || typeof budget !== "number" || budget <= 0)
+      return;
+    const at = Math.round(budget * TOOL_SILENCE_BUDGET_FRACTION);
+    const delay = Math.max(0, at - (Date.now() - entry.startedAt));
+    entry.budgetTimers.push(setTimeout(() => {
+      if (entry.toolCalls > 0)
+        return;
+      this.raiseAttention(entry, request, "tool_silence", `${Math.max(1, Math.round(at / 6e4))} minutes of this attempt elapsed with no tool call yet - it is reasoning or writing text only.`, {}, { nudge: false });
+    }, delay));
   }
   /** Arm one timer per configured budget fraction; every timer is cleared on teardown. */
   armBudgetWarnings(entry, request) {
@@ -320842,6 +320880,7 @@ Apply this decision and continue the assigned task now. If the decision changed 
         await session.waitForIdle?.();
       })();
       this.armBudgetWarnings(entry, request);
+      this.armToolSilenceWarning(entry, request);
       void execution2.catch(() => void 0);
       let forceSettle;
       const abortSettled = new Promise((resolve17) => {
@@ -321455,7 +321494,7 @@ var delegationAssignment = external_exports.object({
   councilId: executionIdentifier.optional(),
   workspace: workspacePath.optional(),
   model: modelKey.optional().describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
-  timeoutMs: external_exports.number().int().min(1e3).max(36e5).describe("Explicit expert execution deadline chosen for this assignment's difficulty")
+  timeoutMs: external_exports.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS).describe("Explicit expert execution deadline chosen for this assignment's difficulty")
 });
 var MCP_INPUT_SCHEMAS = {
   expert_inspect: {
@@ -321479,14 +321518,14 @@ var MCP_INPUT_SCHEMAS = {
     councilId: executionIdentifier.optional(),
     workspace: workspacePath.optional(),
     model: modelKey.optional().describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
-    timeoutMs: external_exports.number().int().min(1e3).max(36e5).optional().describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline"),
+    timeoutMs: external_exports.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS).optional().describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline"),
     reasoningLevel: external_exports.string().min(1).max(40).optional().describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own level. A composition entry that pins a level for the selected model overrides this"),
     assignments: external_exports.array(delegationAssignment).min(1).max(8).optional().describe("Use for two or more independent assignments so all are dispatched before the host turn ends")
   },
   expert_wait: {
     executionIds: external_exports.array(executionIdentifier).min(1).max(8).refine((ids) => new Set(ids).size === ids.length, { message: "executionIds must be unique" }).describe("Execution IDs returned by expert_delegate"),
     mode: external_exports.enum(["any", "all"]).optional().describe("Wait for any execution or all executions; defaults to all"),
-    timeoutMs: external_exports.number().int().min(1e3).max(36e5).describe("Bounded wait selected from expected remaining task difficulty; this does not extend expert execution deadlines")
+    timeoutMs: external_exports.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS).describe("Bounded wait selected from expected remaining task difficulty; this does not extend expert execution deadlines")
   },
   expert_result: {
     executionId: executionIdentifier,

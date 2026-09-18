@@ -170,7 +170,7 @@ describe("CLI JSON integration", () => {
     expect(JSON.parse(stderr).error).toContain(`${name} must be an integer`);
   });
 
-  it.each(["abc", "1000ms", "999", "3600001"])("rejects invalid --timeout-ms=%s", async (value) => {
+  it.each(["abc", "1000ms", "999", "21600001"])("rejects invalid --timeout-ms=%s", async (value) => {
     let stderr = "";
     const code = await runCli(["delegate", "scout", "review", "--timeout-ms", value, "--json"], {
       stdout: { write: () => {} },
@@ -178,6 +178,9 @@ describe("CLI JSON integration", () => {
     }, mockCouncil());
     expect(code).toBe(1);
     expect(JSON.parse(stderr).error).toContain("--timeout-ms must be an integer");
+    // The bound itself, stated by the code rather than by this test's memory of it: a delegation
+    // whose window is sized for three long attempts is unusable if a host cannot ask for one.
+    expect(JSON.parse(stderr).error).toContain("21600000");
   });
 
   it("requires an explicit --timeout-ms for delegate", async () => {
@@ -324,6 +327,39 @@ describe("CLI expert-window watch", () => {
       expect(code).toBe(0);
       expect(out.join("")).toBe("started\n");
       expect(err.join("")).toContain("held back");
+    });
+  });
+
+  it("says the delegation is still open when its own follow window expires", async () => {
+    // An attempt-level `failed` is not the end of the story: the council escalates to another model
+    // and keeps appending to the same stream. When the follower's own budget runs out first it must
+    // not report that stale attempt outcome as the reason for closing. It did, over a delegation that
+    // was still streaming on its third attempt, and the operator reasonably read it as a failure.
+    await withStream(`${line("started")}\n${line("failed", { status: "failed", failureType: "provider_error" })}\n`, async (dir) => {
+      const { io, err } = capture();
+      const code = await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--follow", "--interval-ms", "50",
+         "--timeout-ms", "1000", "--quiet-ms", "600000"],
+        io,
+        undefined,
+        { formatEvent: (frame) => frame.kind },
+      );
+      expect(code).toBe(0);
+      const message = err.join("");
+      expect(message).toContain("stopped after --timeout-ms 1000");
+      expect(message).toContain("still open");
+      expect(message).toContain('last attempt-level event was "failed"');
+      // The bare form is the lie this replaces.
+      expect(message).not.toContain("stream closed (failed)");
+
+      // The raised ceiling must actually be the ceiling, or a delegation whose window is sized for
+      // three long attempts cannot be followed at all.
+      const tooLong = capture();
+      expect(await runCli(
+        ["watch", "--exec", "exec_watch", "--dir", dir, "--timeout-ms", "30000000"],
+        tooLong.io,
+      )).toBe(1);
+      expect(tooLong.err.join("")).toContain("21600000");
     });
   });
 
@@ -691,6 +727,35 @@ ${line("failed", { status: "failed", failureType: "timeout" })}
       expect(panel.out.join("")).toContain("thinks \u2502 The caller holds no lock here.");
       expect(panel.out.join("")).toContain("I will read the caller now.");
       expect(panel.out.join("")).not.toContain("thinks \u2502 I will read");
+    });
+  });
+
+  it("carries the guardrail code and the reasoning effort through the frame whitelist", async () => {
+    // Two fields the follower used to drop, both of which an operator needs: `code` says which
+    // guardrail fired - a budget warning, a tool-failure warning and a tool-silence warning must not
+    // read as one sentence - and `reasoningLevel` answers "was this model simply thinking?" without
+    // inferring it from the model name. They were in the file and in no layout.
+    const stream = [
+      line("started", { attempt: 1, reasoningLevel: "xhigh" }),
+      line("attention", {
+        attempt: 1,
+        code: "tool_silence",
+        toolCalls: 0,
+        text: "1 minutes of this attempt elapsed with no tool call yet - it is reasoning or writing text only.",
+      }),
+      line("delegation_final"),
+    ].join("\n") + "\n";
+    await withStream(stream, async (dir) => {
+      const json = capture();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--json"], json.io)).toBe(0);
+      const frames = json.out.join("").trim().split("\n")
+        .map((value) => JSON.parse(value) as Record<string, unknown>);
+      expect(frames[0]).toMatchObject({ kind: "started", reasoningLevel: "xhigh" });
+      expect(frames[1]).toMatchObject({ kind: "attention", code: "tool_silence", toolCalls: 0 });
+
+      const plain = capture();
+      expect(await runCli(["watch", "--exec", "exec_watch", "--dir", dir, "--style", "plain"], plain.io)).toBe(0);
+      expect(plain.out.join("")).toContain("no tool call yet");
     });
   });
 

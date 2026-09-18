@@ -355,7 +355,7 @@ export const councilConfigSchema = z.object({
            * unlimited, which is the historical behaviour: a per-attempt timeout multiplied by
            * `retry.maxAttempts` let one mechanical delegation cost ~59 minutes unnoticed.
            */
-          maxTotalWallMs: z.number().int().min(1_000).max(6 * 3_600_000).optional(),
+          maxTotalWallMs: z.number().int().min(1_000).max(6 * 60 * 60 * 1000).optional(),
         })
         .default({
           warnHost: true,

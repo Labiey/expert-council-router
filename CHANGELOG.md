@@ -2,6 +2,34 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## Unreleased
+
+Landed on `main` only; not published. Found by reading real state during live delegations.
+
+### Fixed
+
+- An observer window no longer expires while the delegation it watches is still running. Its lifetime
+  scaled a single attempt's `timeoutMs`, but a delegation may spend `retry.maxAttempts` attempts, so a
+  25-minute worker allowed three of them outlived its 37.5-minute window. The window now covers the
+  whole delegation plus 1.25x for the work between attempts, and `watch --timeout-ms` accepts up to six
+  hours so the correct budget is actually expressible.
+- `watch` no longer reports a stale per-attempt outcome as the reason it stopped following. Given a
+  `failed` attempt on disk and no final marker, a follow timeout printed `stream closed (failed)` over
+  a delegation still streaming on its third attempt. It now says the follow window expired and names
+  that event as attempt-level.
+- `attention` events carry the code of the guardrail that fired. They previously carried prose and
+  counters only, so a budget warning and a tool-failure warning were indistinguishable to anything
+  reading the stream - and the follower's frame whitelist dropped the field a second time.
+- The `started` event records `reasoningLevel`, so a long quiet attempt can be read as high reasoning
+  effort rather than assumed to be a stall.
+
+### Added
+
+- A `tool_silence` guardrail warning. When an attempt passes 40% of its `timeoutMs` without a single
+  tool call, the host is told. An expert that is thinking makes no tool errors, so every existing
+  counter stayed quiet and "reasoning deeply" was indistinguishable from "hung". It warns only: no
+  nudge, no abort, and it stands down as soon as the expert touches a tool.
+
 ## 0.8.7 - 2026-09-18
 
 ### Fixed

@@ -13,6 +13,8 @@ import {
   type ExpertCouncil,
   type ExpertRole,
   type FailureType,
+  MAX_EXPERT_TIMEOUT_MS,
+  MIN_EXPERT_TIMEOUT_MS,
 } from "@expert-council/core";
 import { createExpertCouncil, type CreateCouncilOptions } from "@expert-council/pi-runtime";
 import { z } from "zod";
@@ -74,7 +76,7 @@ const delegationAssignment = z.object({
   workspace: workspacePath.optional(),
   model: modelKey.optional()
     .describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
-  timeoutMs: z.number().int().min(1_000).max(3_600_000)
+  timeoutMs: z.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS)
     .describe("Explicit expert execution deadline chosen for this assignment's difficulty"),
 });
 
@@ -102,7 +104,7 @@ export const MCP_INPUT_SCHEMAS = {
     workspace: workspacePath.optional(),
     model: modelKey.optional()
       .describe("Optional model pin: one provider/id key from the role's composition pool for single or concurrent dispatch"),
-    timeoutMs: z.number().int().min(1_000).max(3_600_000).optional()
+    timeoutMs: z.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS).optional()
       .describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own deadline"),
     reasoningLevel: z.string().min(1).max(40).optional()
       .describe("Required for a single assignment; omit when assignments is provided, because every entry carries its own level. A composition entry that pins a level for the selected model overrides this"),
@@ -114,7 +116,7 @@ export const MCP_INPUT_SCHEMAS = {
       .refine((ids) => new Set(ids).size === ids.length, { message: "executionIds must be unique" })
       .describe("Execution IDs returned by expert_delegate"),
     mode: z.enum(["any", "all"]).optional().describe("Wait for any execution or all executions; defaults to all"),
-    timeoutMs: z.number().int().min(1_000).max(3_600_000)
+    timeoutMs: z.number().int().min(MIN_EXPERT_TIMEOUT_MS).max(MAX_EXPERT_TIMEOUT_MS)
       .describe("Bounded wait selected from expected remaining task difficulty; this does not extend expert execution deadlines"),
   },
   expert_result: {

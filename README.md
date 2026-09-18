@@ -481,8 +481,11 @@ start by hand, so the Main Agent still spends no context on it:
   operator's business, not the council's.
 - **The expert finishing does not close the window.** The follower stops at `delegation_final` and
   then waits for a keypress, so you can scroll back over the whole session and dismiss it yourself.
-- **The window's own deadline follows the expert's budget** (1.5x, floored at 15 minutes, capped at
-  the CLI's 60-minute ceiling), so the observer can never expire before the work it is watching.
+- **The window's own deadline follows the delegation, not one attempt** (`retry.maxAttempts x the
+  attempt's `timeoutMs`, plus a 1.25 factor for the work between attempts, floored at 15 minutes and
+  capped at the follower's six-hour ceiling), so the observer cannot expire while the work it watches
+  is still running. It used to scale a single attempt by 1.5x, which killed the window at 37.5 minutes
+  over a delegation that was legitimately still streaming on its third attempt.
 - **The window is view-only.** Decision prompts and tool approvals still surface in the host, so
   there is exactly one place that can answer an expert.
 - **Only this configuration key opens a window.** No tool argument, expert output, or task text can
@@ -623,6 +626,7 @@ an auto-abort destroys good work.
 | `minCallsForRatio` / `failureRatio` | `8` / `0.5` | After at least 8 observed calls, a failure fraction at or above 50% raises `failure_ratio_high`. |
 | `budgetFractions` | `[0.6, 0.85]` | `budget_fraction` warnings at those fractions of the current attempt's `timeoutMs`; only the highest one also nudges. |
 | `maxTotalWallMs` | unset | Aggregate ceiling across **all attempts of one delegation**. Unset keeps the historical behaviour; when set, the retry loop stops early with an explanatory risk instead of silently spending `retry.maxAttempts x timeoutMs`. |
+| `tool_silence` (not configurable) | - | When an attempt passes 40% of its `timeoutMs` with **not one tool call yet**, an `attention` event says so. The failure counters cannot see this case - an expert that is thinking makes no tool errors - and elapsed time alone does not distinguish deep reasoning from a hang. It warns only: no nudge, no abort. |
 
 Every warning is also written to the observability stream as an `attention` event, so
 `expert-council watch` shows it in the operator's terminal.
@@ -957,7 +961,7 @@ Model allow/deny lists live in `route-policy.json` next to `model-assessment.jso
 
 ### Delegating several experts at once
 
-`expert_delegate` starts background work and immediately returns execution IDs; the original single-assignment parameters remain compatible. `timeoutMs` is required for every assignment (1000–3600000 ms) — omitting it is an error; set it from expected task difficulty. A timed-out attempt scales the retry budget by 1.5× automatically, and experts stop early with a structured `missing_context`/`permission_error` result when a task is impossible with their assigned tools. When two or more independent tasks exist, dispatch the entire batch before continuing other Main Agent work:
+`expert_delegate` starts background work and immediately returns execution IDs; the original single-assignment parameters remain compatible. `timeoutMs` is required for every assignment (1000–21600000 ms) — omitting it is an error; set it from expected task difficulty. A timed-out attempt scales the retry budget by 1.5× automatically, and experts stop early with a structured `missing_context`/`permission_error` result when a task is impossible with their assigned tools. When two or more independent tasks exist, dispatch the entire batch before continuing other Main Agent work:
 
 ```json
 {
