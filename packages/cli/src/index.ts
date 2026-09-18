@@ -1,5 +1,6 @@
-import { open, readdir } from "node:fs/promises";
+import { open, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CostPolicy, ExpertCouncil, ExpertRole } from "@expert-council/core";
 import { createExpertCouncil, defaultCouncilDataRoot } from "@expert-council/pi-runtime";
 
@@ -99,7 +100,7 @@ function integerOption(args: string[], name: string, minimum: number, maximum: n
   return parsed;
 }
 
-const BOOLEAN_FLAGS = ["--json", "--help", "--follow", "--color", "--no-color"];
+const BOOLEAN_FLAGS = ["--json", "--help", "--version", "--follow", "--color", "--no-color"];
 
 function positional(args: string[]): string[] {
   const result: string[] = [];
@@ -113,9 +114,30 @@ function positional(args: string[]): string[] {
   return result;
 }
 
+let cachedVersion: string | undefined;
+
+/**
+ * Report the version that actually shipped by reading this package's own manifest. A hard-coded
+ * string would drift the moment someone bumped for release, and an operator asking "what do I
+ * have installed" is exactly the question that has to be answered truthfully.
+ */
+async function cliVersion(): Promise<string> {
+  if (cachedVersion) return cachedVersion;
+  try {
+    const manifest = JSON.parse(
+      await readFile(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"), "utf8"),
+    ) as { version?: unknown };
+    cachedVersion = typeof manifest.version === "string" && manifest.version ? manifest.version : "unknown";
+  } catch {
+    // A package that was copied around without its manifest should still answer, not crash.
+    return "unknown";
+  }
+  return cachedVersion;
+}
+
 function help(): string {
   return `Expert Council CLI\n\nUsage:\n  expert-council models [--json]\n  expert-council inspect [--json]\n  expert-council compositions [--session-key KEY] [--json]\n  expert-council build <task> [--max-experts N] [--cost-policy POLICY] [--composition NAME] [--json]\n  expert-council delegate <role> <task> [--workspace PATH] [--timeout-ms N] [--reasoning-level LEVEL] [--model PROVIDER/ID] [--json]\n  expert-council feedback <execution-id> --verification passed|failed [--json]\n  expert-council cleanup <execution-id> [--json]
-  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]
+  expert-council abort <execution-id> [--reason TEXT] [--json]\n  expert-council status [--view full|summary|running] [--json]\n  expert-council reset <scope> [--json]        scope: '*', a provider, or provider/id\n  expert-council verify (--exec ID | --workspace PATH) --command JSON_ARRAY [--timeout-ms N] [--json]\n  expert-council respond <execution-id> --kind decision [--choice TEXT | --other TEXT] [--json]\n  expert-council respond <execution-id> --kind tool_approval --scope once|persistent|reject [--json]\n  expert-council --version [--json]
   expert-council watch --exec ID [--dir PATH] [--json] [--follow] [--interval-ms N] [--timeout-ms N] [--quiet-ms N] [--max-lines N] [--max-chars N] [--style panel|plain|auto] [--columns N] [--color|--no-color]
 
 watch (run it from a second terminal) tails the live expert event stream that the
@@ -590,6 +612,13 @@ export async function runCli(
   const command = args[0];
   if (!command || command === "help" || args.includes("--help")) {
     io.stdout.write(help());
+    return 0;
+  }
+  if (command === "version" || command === "--version" || args.includes("--version")) {
+    // Answered before any council, runtime, workspace or credential is touched: "what am I
+    // running" has to work on a machine where nothing is configured yet.
+    const version = await cliVersion();
+    io.stdout.write(args.includes("--json") ? `${JSON.stringify({ version })}\n` : `${version}\n`);
     return 0;
   }
   try {

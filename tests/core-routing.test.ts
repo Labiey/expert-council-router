@@ -55,6 +55,22 @@ describe("availability evidence classification", () => {
     expect(inferFailureType('429: Allocated quota exceeded #token-limit')).toBe("provider_error");
   });
 
+  it("labels a marker with the kind it actually is, so a throttle is never reported as an outage", async () => {
+    // The persisted marker was right all along; the sentence built from it was not. A rate limit
+    // and a dead model have to read differently, because they expire 12x apart.
+    const { availabilityFailureLabel } = await import("../packages/core/src/index.js");
+    expect(availabilityFailureLabel("rate-limited")).toContain("rate limited");
+    expect(availabilityFailureLabel("rate-limited")).toContain("2 minutes");
+    expect(availabilityFailureLabel("rate-limited")).not.toContain("unavailable");
+    expect(availabilityFailureLabel("quota-exhausted")).toContain("quota window");
+    expect(availabilityFailureLabel("quota-exhausted")).toContain("6 hours");
+    expect(availabilityFailureLabel("transport-unstable")).toContain("transport");
+    expect(availabilityFailureLabel("transport-unstable")).toContain("5 minutes");
+    expect(availabilityFailureLabel("unavailable")).toContain("unavailable after a runtime failure");
+    expect(availabilityFailureLabel("unavailable")).toContain("24 hours");
+    expect(availabilityFailureLabel(undefined)).toContain("24 hours");
+  });
+
   it("expires quota markers on a shorter lifetime than dead-model markers", async () => {
     const { activeModelAvailability, MODEL_QUOTA_MARKER_TTL_MS } = await import("../packages/core/src/model-assessment.js");
     const now = new Date("2026-09-05T12:00:00.000Z");

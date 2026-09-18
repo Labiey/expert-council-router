@@ -1,0 +1,22 @@
+# Line endings, once for the whole repository. The index already holds LF everywhere, so this
+# normalises nothing and costs no diff; it stops git promising to rewrite working files as CRLF on
+# the next touch, and keeps byte-comparison gates honest on Windows checkouts.
+* text=auto eol=lf
+
+# Real binaries must never be line-ending converted.
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.gz binary
+
+# Generated artifacts are compared byte-for-byte by scripts/check-tracked-artifacts.mjs, so a
+# checkout that silently rewrites line endings looks exactly like a stale build. Pin the shipped
+# outputs to LF instead of teaching the gate to ignore real drift.
+packages/codex-integration/plugin/expert-council/dist/** text eol=lf
+packages/codex-integration/plugin/expert-council/skills/** text eol=lf
+packages/pi-package/skills/** text eol=lf
+
+# Lockfiles and manifests are consumed by tooling on every platform.
+package-lock.json text eol=lf
+packages/*/package.json text eol=lf

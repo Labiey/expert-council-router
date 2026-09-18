@@ -47,6 +47,7 @@ describe("workspace isolation", () => {
     const isolated: string[] = [];
     try {
       await execFileAsync("git", ["init", repo]);
+      await execFileAsync("git", ["-C", repo, "config", "core.autocrlf", "false"]);  // line endings in fixtures must not depend on the operator's global git config
       await execFileAsync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
       await execFileAsync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
       await writeFile(path.join(repo, "file.txt"), "before\n", "utf8");
@@ -88,6 +89,7 @@ describe("workspace isolation", () => {
     let created: string | undefined;
     try {
       await execFileAsync("git", ["init", repo]);
+      await execFileAsync("git", ["-C", repo, "config", "core.autocrlf", "false"]);
       await execFileAsync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
       await execFileAsync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
       await writeFile(path.join(repo, "file.txt"), "before\n", "utf8");
@@ -159,6 +161,7 @@ describe("workspace isolation", () => {
     const repo = await mkdtemp(path.join(tmpdir(), "expert-council-dirty-repo-"));
     try {
       await execFileAsync("git", ["init", repo]);
+      await execFileAsync("git", ["-C", repo, "config", "core.autocrlf", "false"]);
       await execFileAsync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
       await execFileAsync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
       await writeFile(path.join(repo, "file.txt"), "committed\n", "utf8");

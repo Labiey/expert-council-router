@@ -380,6 +380,7 @@ describe("Pi runtime adapter", () => {
   it("never attributes the host's uncommitted changes to a read-only expert", async () => {
     const repo = await mkdtemp(path.join(tmpdir(), "expert-council-dirty-repo-"));
     execFileSync("git", ["init", repo]);
+    execFileSync("git", ["-C", repo, "config", "core.autocrlf", "false"]);  // line endings in fixtures must not depend on the operator's global git config
     execFileSync("git", ["-C", repo, "config", "user.email", "tests@example.invalid"]);
     execFileSync("git", ["-C", repo, "config", "user.name", "Expert Council Tests"]);
     await writeFile(path.join(repo, "file.txt"), "committed\n", "utf8");

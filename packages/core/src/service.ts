@@ -21,6 +21,7 @@ import {
 } from "./compositions.js";
 import {
   activeModelAvailability,
+  availabilityFailureLabel,
   evaluateModelAssessment,
   modelAvailabilityWarnings,
   preserveModelAvailability,
@@ -640,6 +641,9 @@ export class ExpertCouncilService implements ExpertCouncil {
 
     const failures: EscalationRequest["previousFailures"] = [];
     const unavailableMarked: string[] = [];
+    // The marker's kind is what an operator needs to hear: a rate limit and an outage are not the
+    // same sentence, and collapsing them into one word has already caused a false alarm.
+    const unavailableKinds = new Map<string, AvailabilityMarkerKind>();
     // Marker writes that failed. Best-effort must not mean invisible - see #26.
     const persistenceErrors: Array<{ model: string; detail: string }> = [];
     const capBreaches: string[] = [];
@@ -878,6 +882,7 @@ export class ExpertCouncilService implements ExpertCouncil {
             .map((model) => `${model.provider}/${model.id}`);
           const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings, { kind: reportedEvidence });
           unavailableMarked.push(...marked.markedKeys.filter((key) => !unavailableMarked.includes(key)));
+          for (const key of marked.markedKeys) unavailableKinds.set(key, marked.kind);
           if (marked.kind === "quota-exhausted") {
             // The whole provider's plan or balance is out: stop considering its
             // remaining candidates in this delegation immediately.
@@ -945,7 +950,7 @@ export class ExpertCouncilService implements ExpertCouncil {
     if (unavailableMarked.length) {
       result.executionMetadata = { ...result.executionMetadata, unavailableModels: [...unavailableMarked] };
       const notes = unavailableMarked.map((model) =>
-        `Model ${model} failed as unavailable and was marked in the persisted model assessment; routing avoids it while the marker is active.`,
+        `Model ${model} ${availabilityFailureLabel(unavailableKinds.get(model))} and was marked in the persisted model assessment; routing avoids it while the marker is active.`,
       );
       result.risks = [...notes, ...(result.risks ?? [])].slice(0, 20);
     }

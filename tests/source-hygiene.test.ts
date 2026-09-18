@@ -81,4 +81,50 @@ describe("source hygiene", () => {
     }
     expect(offenders).toEqual([]);
   });
+
+  it("keeps the README's configuration examples true to the shipped schemas", async () => {
+    // These blocks are the documented standard form, so nothing but a test stops them from
+    // describing a schema that has since changed. Parse them with the real validators, and compare
+    // the "every key at its default" block against what the code actually defaults to: a key added
+    // later, a value that moves, or a key dropped from the example all fail here rather than in a
+    // user's terminal.
+    const readme = readFileSync(fileURLToPath(new URL("../README.md", import.meta.url)), "utf8");
+    const zhReadme = readFileSync(fileURLToPath(new URL("../README.zh-CN.md", import.meta.url)), "utf8");
+    const example = (marker: string): string => {
+      const start = readme.indexOf(marker);
+      if (start < 0) throw new Error(`README is missing the "${marker}" marker`);
+      const open = readme.indexOf("```json", start);
+      const body = readme.indexOf("\n", open) + 1;
+      const close = readme.indexOf("\n```", body);
+      if (open < 0 || close < 0) throw new Error(`README has no json fence after "${marker}"`);
+      return readme.slice(body, close);
+    };
+    const { parseCouncilConfig } = await import("../packages/core/src/config.js");
+    const { routePolicyDocumentSchema } = await import("../packages/core/src/route-policy.js");
+
+    const complete = JSON.parse(example("<!-- council-config:complete -->"));
+    expect(complete).toEqual(parseCouncilConfig({}));
+    // The variant is a worked example, so it only has to be accepted, and must not accidentally
+    // restate defaults as if they were recommendations.
+    expect(() => parseCouncilConfig(JSON.parse(example("<!-- council-config:variant -->")))).not.toThrow();
+    expect(routePolicyDocumentSchema.safeParse(JSON.parse(example("<!-- route-policy:complete -->"))).success).toBe(true);
+    // The Chinese reference must carry the same executable documents, not a translation that has
+    // quietly fallen behind - it is where most drift ends up.
+    const fenceAt = (text: string, marker: string): string => {
+      const start = text.indexOf(marker);
+      if (start < 0) throw new Error(`a README is missing the "${marker}" marker`);
+      const open = text.indexOf("```json", start);
+      const close = text.indexOf("\n```", open);
+      if (open < 0 || close < 0) throw new Error(`no json fence after "${marker}"`);
+      return text.slice(open, close);
+    };
+    for (const marker of ["<!-- council-config:complete -->", "<!-- council-config:variant -->", "<!-- route-policy:complete -->"]) {
+      // Both sides are sliced from their own document: feeding one file's index into the other's
+      // indexOf compares the reference against an unrelated block, which is exactly what the first
+      // version of this loop did.
+      expect(fenceAt(zhReadme, marker)).toBe(fenceAt(readme, marker));
+    }
+    const names = (text: string) => new Set(text.match(/EXPERT_COUNCIL_[A-Z_]+/g) ?? []);
+    expect([...names(zhReadme)].sort()).toEqual([...names(readme)].sort());
+  });
 });

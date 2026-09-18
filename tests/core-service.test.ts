@@ -725,6 +725,13 @@ describe("runtime availability marking", () => {
     expect(marked).toMatchObject({ callable: false, kind: "rate-limited", source: "runtime-failure" });
     expect(stored.modelAvailability?.["p/alive"]).toMatchObject({ callable: false, kind: "rate-limited" });
     expect(stored.modelStatus?.["p/dead"]).toMatchObject({ state: "rate-limited" });
+    // The wording a host or operator reads has to match the marker kind. It used to say
+    // "failed as unavailable" for every kind, which made a two-minute throttle read like a
+    // day-long quarantine - and once sent a reviewer filing a defect against correct behaviour.
+    const risks = (result.risks ?? []).join(" ");
+    expect(risks).toContain("rate limited");
+    expect(risks).toContain("about 2 minutes");
+    expect(risks).not.toContain("unavailable after a runtime failure");
     // The distinction that matters: the marker expires on the throttling window, well
     // before the default blackout lifetime, so routing gets the model back.
     const observedAt = Date.parse(marked.observedAt);

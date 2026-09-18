@@ -311415,6 +311415,27 @@ function availabilityWarning(key, marker) {
   }
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
+function availabilityFailureLabel(kind) {
+  const span = (ms) => {
+    if (ms >= 36e5) {
+      const hours = Math.round(ms / 36e5);
+      return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+    }
+    if (ms >= 6e4)
+      return `${Math.round(ms / 6e4)} minutes`;
+    return `${Math.round(ms / 1e3)} seconds`;
+  };
+  switch (kind) {
+    case "rate-limited":
+      return `rate limited by its provider (transient, avoided for about ${span(MODEL_RATE_LIMIT_MARKER_TTL_MS)})`;
+    case "quota-exhausted":
+      return `out of provider quota or balance (avoided for the quota window, about ${span(MODEL_QUOTA_MARKER_TTL_MS)})`;
+    case "transport-unstable":
+      return `unreachable through its provider transport (transient, avoided for about ${span(MODEL_TRANSPORT_MARKER_TTL_MS)})`;
+    default:
+      return `unavailable after a runtime failure (avoided for about ${span(MODEL_AVAILABILITY_MARKER_TTL_MS)})`;
+  }
+}
 function modelAvailabilityWarnings(assessment, models, now = /* @__PURE__ */ new Date()) {
   const inventory = new Set(models.map((model) => `${model.provider}/${model.id}`));
   return Object.entries(activeModelAvailability(assessment, now)).filter(([key]) => inventory.has(key)).map(([key, marker]) => availabilityWarning(key, marker));
@@ -312389,6 +312410,7 @@ var ExpertCouncilService = class {
     }
     const failures = [];
     const unavailableMarked = [];
+    const unavailableKinds = /* @__PURE__ */ new Map();
     const persistenceErrors = [];
     const capBreaches = [];
     let current = ranked.candidates[0];
@@ -312562,6 +312584,8 @@ var ExpertCouncilService = class {
           const siblings = models.filter((model) => model.provider === provider && `${model.provider}/${model.id}` !== current.model).map((model) => `${model.provider}/${model.id}`);
           const marked = await this.markModelAvailability(current.model, lastResult.summary, siblings, { kind: reportedEvidence });
           unavailableMarked.push(...marked.markedKeys.filter((key) => !unavailableMarked.includes(key)));
+          for (const key of marked.markedKeys)
+            unavailableKinds.set(key, marked.kind);
           if (marked.kind === "quota-exhausted") {
             ranked.candidates = ranked.candidates.filter((candidate2) => parseModelKey(candidate2.model).provider !== provider);
           }
@@ -312610,7 +312634,7 @@ var ExpertCouncilService = class {
       result.risks = [...planWarnings, ...result.risks ?? []].slice(0, 20);
     if (unavailableMarked.length) {
       result.executionMetadata = { ...result.executionMetadata, unavailableModels: [...unavailableMarked] };
-      const notes = unavailableMarked.map((model) => `Model ${model} failed as unavailable and was marked in the persisted model assessment; routing avoids it while the marker is active.`);
+      const notes = unavailableMarked.map((model) => `Model ${model} ${availabilityFailureLabel(unavailableKinds.get(model))} and was marked in the persisted model assessment; routing avoids it while the marker is active.`);
       result.risks = [...notes, ...result.risks ?? []].slice(0, 20);
     }
     if (capBreaches.length) {

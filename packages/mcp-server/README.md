@@ -247,24 +247,135 @@ The legacy `usagePreference` field is ignored and dropped; it no longer affects 
 
 The file accepts the full operator schema: `security`, `billing`, `profiles`, and `routing`. Typical example:
 
+The complete standard form, with every key at its built-in default. **Every key is optional** - a
+file may contain one line, and anything absent falls back to the value below:
+
+<!-- council-config:complete -->
 ```json
 {
+  "billing": {
+    "providers": {}
+  },
+  "profiles": {
+    "models": {}
+  },
+  "routing": {
+    "maxExperts": 4,
+    "minimumWorkerToolReliability": 4,
+    "localLearningMaxAdjustment": 1,
+    "apiPriceWeight": 0.35,
+    "roleWeights": {},
+    "diversity": {
+      "repeatedModelPenalty": 0.35,
+      "reviewerSameProviderPenalty": 0.25,
+      "reviewerSameFamilyPenalty": 0.5
+    },
+    "taskClassification": {
+      "tinyMaxWords": 8,
+      "tinyMaxCjkChars": 18,
+      "complexMinWords": 35,
+      "complexMinCjkChars": 60,
+      "complexSignalThreshold": 2
+    }
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "maxEscalations": 2,
+    "correctedRetriesPerModel": 1
+  },
   "security": {
+    "workspaceStrategy": "auto",
+    "allowInPlaceMutations": false,
+    "allowedWorkspaceRoots": [],
+    "trustedSkills": [],
+    "worktreeRetentionMs": 86400000,
+    "toolGrants": {},
+    "expertLifetime": "host-bound",
+    "observability": {
+      "expertWindow": "off",
+      "streamToHost": true,
+      "redactToolArgs": true,
+      "autoOpenWindow": false,
+      "recordReasoning": false,
+      "contentStream": "none",
+      "contentByRole": {},
+      "contentWindowLines": 10,
+      "contentWindowChars": 120,
+      "contentEventBytes": 65536,
+      "contentFileBytes": 10485760,
+      "contentTotalBytes": 209715200
+    },
+    "guardrails": {
+      "warnHost": true,
+      "nudgeExpert": true,
+      "consecutiveToolFailures": 3,
+      "minCallsForRatio": 8,
+      "failureRatio": 0.5,
+      "budgetFractions": [0.6, 0.85]
+    },
     "workspaceProvisioning": {
-      "mode": "auto",
+      "mode": "none",
+      "strategy": "auto",
+      "runtimeEnv": "isolated",
       "timeoutMs": 600000,
       "maxConcurrent": 1,
       "scrubEnv": true,
-      "removalTimeoutMs": 300000,
-      "verifyCommand": ["npm", "run", "typecheck"]
-    },
-    "worktreeRetentionMs": 86400000
-  },
-  "routing": {
-    "maxExperts": 4
+      "removalTimeoutMs": 300000
+    }
   }
 }
 ```
+
+Provider and model keys are `"provider"` and `"provider/id"` exactly as `expert_inspect` reports
+them. A filled-in variant of the two records that most people actually edit:
+
+<!-- council-config:variant -->
+```json
+{
+  "billing": {
+    "providers": {
+      "acme-plan": { "billingType": "subscription", "costMultiplier": 0.1 },
+      "acme-metered": { "billingType": "metered", "costMultiplier": 1 },
+      "acme-host": { "billingType": "quota", "costMultiplier": 5, "disabled": false }
+    }
+  },
+  "profiles": {
+    "models": {
+      "acme-plan/acme-flash": {
+        "reasoning": 7,
+        "planning": 7,
+        "architecture": 6.5,
+        "coding": 7,
+        "debugging": 7,
+        "review": 6.5,
+        "longContext": 7.5,
+        "toolReliability": 7,
+        "bashReliability": 7,
+        "autonomousExecution": 7,
+        "speed": 8.5,
+        "preferredReasoningByRole": { "scout": "low", "architecture-oracle": "high" },
+        "incompatibleRoles": [],
+        "billingProfile": "acme-plan",
+        "disabled": false
+      },
+      "acme-metered/acme-pro": {
+        "coding": 9,
+        "debugging": 9,
+        "toolReliability": 9,
+        "bashReliability": 9,
+        "autonomousExecution": 9
+      }
+    }
+  }
+}
+```
+
+Capability scores are 0-10 and every dimension is optional (omit what you do not want to assert);
+`null` means "no opinion, use the conservative default". The ten billing types are
+`subscription`, `metered`, `quota`, `free`, `unknown`; `costMultiplier` is a relative token-weight,
+not a currency amount. `incompatibleRoles` is a hard veto, and
+`overrideUnavailableMarker` lets an operator overrule a marker the runtime learned from a failure.
+
 
 Field notes:
 
@@ -723,6 +834,7 @@ expert-council verify (--exec <id> | --workspace <path>) --command JSON_ARRAY
 expert-council respond <execution-id> --kind decision|tool_approval
 expert-council cleanup <execution-id>
 expert-council watch --exec <execution-id> [--follow]
+expert-council --version
 ```
 
 Common flags:
@@ -788,15 +900,55 @@ Saved council rosters live in `council-compositions.json` next to `route-policy.
 
 Model allow/deny lists live in `route-policy.json` next to `model-assessment.json` in the shared state directory — no dedicated tool. The file holds a `system` entry that every session obeys and per-session entries under `sessions` keyed by the host conversation (Pi session IDs survive resume; MCP stdio conversations use a stable `"default"` key). Sessions may only narrow the system policy: deny lists union, allow lists intersect, and deny always wins. Entries are `provider/id` or a bare `provider` for a whole provider. `expert_inspect` returns this conversation's `sessionKey`, the `effective` policy, and the file's `sourcePath` so the host (or you) can edit it directly; changes apply on the next expert call, stale session entries are pruned after 30 days, and a corrupt file is ignored with a warning.
 
+<!-- route-policy:complete -->
 ```json
 {
   "version": 1,
-  "system": { "deny": ["bailian"] },
+  "system": {
+    "allow": [],
+    "deny": ["acme-host", "acme-metered/acme-pro"],
+    "updatedAt": "2026-09-18T12:00:00+08:00",
+    "note": "free text, never sent to an expert"
+  },
   "sessions": {
-    "4f0c…": { "allow": ["qwen-token-plan-cn/qwen3.8-max"], "updatedAt": "2026-09-07T02:00:00+08:00" }
+    "4f0c…": {
+      "allow": ["acme-plan/acme-flash"],
+      "deny": ["acme-plan/acme-heavy"],
+      "updatedAt": "2026-09-18T12:00:00+08:00",
+      "note": "narrows the system policy for this conversation only"
+    },
+    "default": { "deny": ["acme-metered"] }
+  },
+  "providers": {
+    "acme-plan": { "maxConcurrency": 1, "dailyTokenCap": 12000000, "weeklyTokenCap": 60000000 },
+    "acme-metered": { "maxConcurrency": 2 }
   }
 }
 ```
+
+- `version` must be the literal `1`; anything else rejects the document.
+- `system` applies to every session. `sessions` is keyed by host conversation id - Pi session ids
+  survive a resume, and MCP stdio conversations share the stable `"default"` key.
+- A session may only **narrow** the system policy: deny lists are unioned, allow lists are
+  intersected, and deny always wins. An `allow` list is exclusive - naming models there hides every
+  model not listed.
+- Entries are `provider/id` or a bare `provider` to cover a whole provider. At most 32 entries per
+  list, 200 characters each; control characters are stripped and anything that is not
+  `provider` or `provider/id` is dropped rather than trusted.
+- `providers` holds spending and concurrency limits, **not** allow/deny: `maxConcurrency` (0-8 per
+  provider, `0` parks it), `dailyTokenCap` and `weeklyTokenCap`, all positive integers. Caps are
+  enforced against the usage ledger, and a provider that hits its cap is skipped for the window
+  rather than failing the delegation.
+- `note`, `updatedAt` and `workspace` are recorded metadata. `workspace` in particular is stored and
+  round-tripped but no routing code consults it yet - do not rely on it to scope a policy.
+- Deleting the file is not neutral: with no deny list, every previously excluded provider becomes
+  routable again, which can silently move work from a subscription plan onto metered APIs.
+- `expert_inspect` reports this conversation's `sessionKey`, the `effective` policy and the file's
+  `sourcePath`, so the host (or you) can edit it directly; changes apply on the next call, stale
+  session entries are pruned after 30 days, and a corrupt file is ignored with a warning.
+
+
+### Delegating several experts at once
 
 `expert_delegate` starts background work and immediately returns execution IDs; the original single-assignment parameters remain compatible. `timeoutMs` is required for every assignment (1000–3600000 ms) — omitting it is an error; set it from expected task difficulty. A timed-out attempt scales the retry budget by 1.5× automatically, and experts stop early with a structured `missing_context`/`permission_error` result when a task is impossible with their assigned tools. When two or more independent tasks exist, dispatch the entire batch before continuing other Main Agent work:
 
@@ -813,6 +965,8 @@ Model allow/deny lists live in `route-policy.json` next to `model-assessment.jso
 
 The optional `taskDescription` is a short host-facing label for identifying the task; it is not part of the expert's actual task content. After dispatching, the Main Agent should continue all independently completable work; when nothing useful remains, call `expert_wait` once with up to eight execution IDs, usually `mode: "all"` (use `"any"` when any early result unblocks progress), and a `timeoutMs` sized to the estimated remaining difficulty. Waiting is driven by execution-promise completion events rather than polling; blocking the current MCP call is expected behavior, and no main-model tokens are consumed while waiting.
 
+### Waiting for background work
+
 ```json
 {
   "executionIds": ["exec_a", "exec_b"],
@@ -823,11 +977,15 @@ The optional `taskDescription` is a short host-facing label for identifying the 
 
 `expert_wait` returns only completion state and task IDs; fetch the formal feedback with `expert_result` and call `expert_feedback` after the Main Agent's acceptance. `expert_wait.timeoutMs` bounds only that wait and never extends each expert's own execution deadline. Every potentially blocking Expert Council, Bash, PowerShell, or other MCP call must still carry an explicit finite timeout sized to the operation; remaining synchronous Expert Council operations are protected by an independent 30-second in-server cap, with one deliberate exception: `expert_verify` is bounded by the larger of that cap and 60 seconds, because turning an expert claim into an observed exit code usually means running a build or a test suite. `expert_status` returns a bounded per-attempt history. The native Pi Package uses proactive completion notifications and therefore does not expose `expert_wait`.
 
+### Running the stdio server directly
+
 Start the stdio server directly:
 
 ```bash
 node packages/mcp-server/dist/bin.js
 ```
+
+### Environment variables
 
 Supported environment variables:
 

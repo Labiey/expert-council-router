@@ -2,6 +2,49 @@
 
 All notable changes to Expert Council are documented here. Versions follow semantic versioning: major releases contain breaking changes, minor releases add backward-compatible functionality, and patch releases contain backward-compatible fixes.
 
+## 0.8.7 - 2026-09-18
+
+### Fixed
+
+- **An availability marker is now described by the kind it actually is.** A delegation that hit a
+  provider `429` reported `Model x failed as unavailable and was marked in the persisted model
+  assessment`, which reads like a day-long quarantine of twenty models. It was not: the persisted
+  snapshot showed all twenty markers carrying `kind: "rate-limited"`, which expires on the
+  two-minute throttling window, and the next attempt succeeded on a sibling model of the same
+  provider while the markers were still live. The routing behaviour was correct and already tested
+  against this exact provider message; the sentence built from the marker was not, because
+  `markModelAvailability` returns its kind and the caller threw it away to keep a `string[]`. The
+  per-run risk note now derives its wording from the kind and the TTL constant through one shared
+  helper, so a throttle, a quota window, a transport failure and a dead model can no longer collapse
+  into the same claim - or drift apart again. Recorded because the false alarm was raised by this
+  project's own author after a day of measuring things: the lesson is to read the persisted state
+  before filing the defect.
+
+### Added
+
+- `expert-council --version` (and the `version` command, plus `--json`), answering from the shipped
+  package manifest rather than a constant, and served before any council, runtime, workspace or
+  credential is touched - so it works on a machine with nothing configured, which is precisely when
+  an operator asks. A test compares the output against `packages/cli/package.json` instead of a
+  literal, so a release bump cannot pass while the flag lies.
+- **The complete standard form of both operator files is now in the README**, in English and
+  Chinese: every key of `council-config.json` at its built-in default (billing, profiles, routing
+  including `roleWeights`/`diversity`/`taskClassification`, retry, and all of `security` - workspace
+  strategy, `toolGrants`, `expertLifetime`, the eleven observability switches, guardrails and
+  worktree provisioning), a worked `billing`/`profiles` variant using clearly fictional `acme-*`
+  providers, and a full `route-policy.json` documenting `system`/`sessions`/`providers`, what each
+  field does, and which ones are stored but never consulted.
+- Those examples are executed, not remembered. A test parses each fenced block with the shipped
+  validators and asserts the "all defaults" document is `toEqual(parseCouncilConfig({}))` - so a key
+  added later, a value that moves, or a switch dropped from the reference fails the suite rather than
+  misleading the next reader. The same test requires the Chinese README to carry byte-identical JSON
+  and the same set of `EXPERT_COUNCIL_*` variable names, which immediately caught that its
+  environment list had fallen five variables behind.
+- `.gitattributes` pins the tracked generated artifacts (the Codex plugin bundle, both skill trees,
+  lockfiles and package manifests) to LF. Only those paths: a repository-wide renormalise would have
+  buried this release in thousands of line-ending changes, and the artifact gate already had to learn
+  to ignore CR drift, which is a symptom worth removing at the source.
+
 ## 0.8.6 - 2026-09-16
 
 ### Fixed

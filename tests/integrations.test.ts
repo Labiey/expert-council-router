@@ -118,6 +118,27 @@ describe("CLI JSON integration", () => {
     expect(stderr).toBe("");
   });
 
+  it("answers --version from its own manifest, with no council, runtime or config present", async () => {
+    // Deliberately passes no council: an operator on a fresh machine with nothing configured
+    // still needs to ask what is installed, and a literal version string here would pass tests
+    // while lying about a release. Read the shipped manifest instead.
+    const manifest = JSON.parse(
+      readFileSync(new URL("../packages/cli/package.json", import.meta.url), "utf8"),
+    ) as { version: string };
+    let stdout = "";
+    const io = { stdout: { write: (value: string) => { stdout += value; } }, stderr: { write: () => {} } };
+    expect(await runCli(["--version"], io)).toBe(0);
+    expect(stdout.trim()).toBe(manifest.version);
+    stdout = ""; // the fake io accumulates; the JSON case has to be read on its own
+    expect(await runCli(["version", "--json"], io)).toBe(0);
+    expect(JSON.parse(stdout)).toEqual({ version: manifest.version });
+    expect(manifest.version).toMatch(/^\d+\.\d+\.\d+/);
+    // And it must be listed, or the next person rediscover it by trial and error.
+    let help = "";
+    await runCli(["help"], { stdout: { write: (value: string) => { help += value; } }, stderr: { write: () => {} } });
+    expect(help).toContain("--version");
+  });
+
   it("records verification feedback through the shared council service", async () => {
     let stdout = "";
     const code = await runCli(["feedback", "exec_mock", "--verification", "passed", "--json"], {

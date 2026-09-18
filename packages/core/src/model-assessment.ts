@@ -92,6 +92,34 @@ function availabilityWarning(key: string, marker: ModelAvailabilityObservation):
   return `Model ${key} was marked unavailable by a runtime failure at ${marker.observedAt}: ${marker.reason}. Routing avoids it while the marker is active.`;
 }
 
+/**
+ * One vocabulary for what a runtime marker kind actually means, including how long it lasts. The
+ * per-delegation risk note used to hard-code "failed as unavailable" for every kind, which made a
+ * two-minute rate limit read like a day-long quarantine - it misled a reader into filing a defect
+ * against correct behaviour. Deriving the sentence from the kind and the TTL constant means the two
+ * cannot drift apart again.
+ */
+export function availabilityFailureLabel(kind: AvailabilityMarkerKind | undefined): string {
+  const span = (ms: number) => {
+    if (ms >= 3_600_000) {
+      const hours = Math.round(ms / 3_600_000);
+      return `${hours} ${hours === 1 ? "hour" : "hours"}`;
+    }
+    if (ms >= 60_000) return `${Math.round(ms / 60_000)} minutes`;
+    return `${Math.round(ms / 1000)} seconds`;
+  };
+  switch (kind) {
+    case "rate-limited":
+      return `rate limited by its provider (transient, avoided for about ${span(MODEL_RATE_LIMIT_MARKER_TTL_MS)})`;
+    case "quota-exhausted":
+      return `out of provider quota or balance (avoided for the quota window, about ${span(MODEL_QUOTA_MARKER_TTL_MS)})`;
+    case "transport-unstable":
+      return `unreachable through its provider transport (transient, avoided for about ${span(MODEL_TRANSPORT_MARKER_TTL_MS)})`;
+    default:
+      return `unavailable after a runtime failure (avoided for about ${span(MODEL_AVAILABILITY_MARKER_TTL_MS)})`;
+  }
+}
+
 export function modelAvailabilityWarnings(
   assessment: ModelAssessmentSnapshot | undefined,
   models: AvailableModel[],

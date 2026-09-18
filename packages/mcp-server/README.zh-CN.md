@@ -278,21 +278,123 @@ subscription  metered  quota  free  unknown
 
 文件接受完整的运营者 schema：`security`、`billing`、`profiles`、`routing`。典型示例：
 
+完整的标准写法如下，每个键都停在它的内置默认值上。**所有键都可以省略**——文件里可以只写一行，没写的部分就按下面的值兜底：
+
+<!-- council-config:complete -->
 ```json
 {
+  "billing": {
+    "providers": {}
+  },
+  "profiles": {
+    "models": {}
+  },
+  "routing": {
+    "maxExperts": 4,
+    "minimumWorkerToolReliability": 4,
+    "localLearningMaxAdjustment": 1,
+    "apiPriceWeight": 0.35,
+    "roleWeights": {},
+    "diversity": {
+      "repeatedModelPenalty": 0.35,
+      "reviewerSameProviderPenalty": 0.25,
+      "reviewerSameFamilyPenalty": 0.5
+    },
+    "taskClassification": {
+      "tinyMaxWords": 8,
+      "tinyMaxCjkChars": 18,
+      "complexMinWords": 35,
+      "complexMinCjkChars": 60,
+      "complexSignalThreshold": 2
+    }
+  },
+  "retry": {
+    "maxAttempts": 3,
+    "maxEscalations": 2,
+    "correctedRetriesPerModel": 1
+  },
   "security": {
+    "workspaceStrategy": "auto",
+    "allowInPlaceMutations": false,
+    "allowedWorkspaceRoots": [],
+    "trustedSkills": [],
+    "worktreeRetentionMs": 86400000,
+    "toolGrants": {},
+    "expertLifetime": "host-bound",
+    "observability": {
+      "expertWindow": "off",
+      "streamToHost": true,
+      "redactToolArgs": true,
+      "autoOpenWindow": false,
+      "recordReasoning": false,
+      "contentStream": "none",
+      "contentByRole": {},
+      "contentWindowLines": 10,
+      "contentWindowChars": 120,
+      "contentEventBytes": 65536,
+      "contentFileBytes": 10485760,
+      "contentTotalBytes": 209715200
+    },
+    "guardrails": {
+      "warnHost": true,
+      "nudgeExpert": true,
+      "consecutiveToolFailures": 3,
+      "minCallsForRatio": 8,
+      "failureRatio": 0.5,
+      "budgetFractions": [0.6, 0.85]
+    },
     "workspaceProvisioning": {
-      "mode": "auto",
+      "mode": "none",
+      "strategy": "auto",
+      "runtimeEnv": "isolated",
       "timeoutMs": 600000,
       "maxConcurrent": 1,
       "scrubEnv": true,
-      "removalTimeoutMs": 300000,
-      "verifyCommand": ["npm", "run", "typecheck"]
-    },
-    "worktreeRetentionMs": 86400000
+      "removalTimeoutMs": 300000
+    }
+  }
+}
+```
+
+provider 与 model 的键名必须和 `expert_inspect` 报告的完全一致，即 `"provider"` 与 `"provider/id"`。下面是大多数人真正会改的两段记录（`acme-*` 只是虚构示例，不是推荐值）：
+
+<!-- council-config:variant -->
+```json
+{
+  "billing": {
+    "providers": {
+      "acme-plan": { "billingType": "subscription", "costMultiplier": 0.1 },
+      "acme-metered": { "billingType": "metered", "costMultiplier": 1 },
+      "acme-host": { "billingType": "quota", "costMultiplier": 5, "disabled": false }
+    }
   },
-  "routing": {
-    "maxExperts": 4
+  "profiles": {
+    "models": {
+      "acme-plan/acme-flash": {
+        "reasoning": 7,
+        "planning": 7,
+        "architecture": 6.5,
+        "coding": 7,
+        "debugging": 7,
+        "review": 6.5,
+        "longContext": 7.5,
+        "toolReliability": 7,
+        "bashReliability": 7,
+        "autonomousExecution": 7,
+        "speed": 8.5,
+        "preferredReasoningByRole": { "scout": "low", "architecture-oracle": "high" },
+        "incompatibleRoles": [],
+        "billingProfile": "acme-plan",
+        "disabled": false
+      },
+      "acme-metered/acme-pro": {
+        "coding": 9,
+        "debugging": 9,
+        "toolReliability": 9,
+        "bashReliability": 9,
+        "autonomousExecution": 9
+      }
+    }
   }
 }
 ```
@@ -673,6 +775,7 @@ expert-council verify (--exec <id> | --workspace <path>) --command JSON_ARRAY
 expert-council respond <execution-id> --kind decision|tool_approval
 expert-council cleanup <execution-id>
 expert-council watch --exec <execution-id> [--follow]
+expert-council --version
 ```
 
 常用参数：
@@ -738,15 +841,42 @@ MCP 表面刻意保持为 13 个语义工具：
 
 模型黑白名单保存在共享状态目录中与 `model-assessment.json` 同级的 `route-policy.json`——不新增任何工具。文件包含所有会话共同遵守的 `system` 条目，以及按宿主会话键组织的 `sessions` 条目（Pi 会话 ID 在 resume 后保持不变；MCP stdio 会话使用稳定的 `"default"` 键）。会话只能收紧系统策略：deny 取并集、allow 取交集、deny 恒胜。条目为 `provider/id` 或裸 `provider`（整个供应商）。`expert_inspect` 会返回本会话的 `sessionKey`、当前 `effective` 策略与文件 `sourcePath`，宿主（或你）可以直接编辑该文件；改动在下次专家调用即生效，超过 30 天的会话条目自动清理，损坏文件会带警告忽略。
 
+<!-- route-policy:complete -->
 ```json
 {
   "version": 1,
-  "system": { "deny": ["bailian"] },
+  "system": {
+    "allow": [],
+    "deny": ["acme-host", "acme-metered/acme-pro"],
+    "updatedAt": "2026-09-18T12:00:00+08:00",
+    "note": "free text, never sent to an expert"
+  },
   "sessions": {
-    "4f0c…": { "allow": ["qwen-token-plan-cn/qwen3.8-max"], "updatedAt": "2026-09-07T02:00:00+08:00" }
+    "4f0c…": {
+      "allow": ["acme-plan/acme-flash"],
+      "deny": ["acme-plan/acme-heavy"],
+      "updatedAt": "2026-09-18T12:00:00+08:00",
+      "note": "narrows the system policy for this conversation only"
+    },
+    "default": { "deny": ["acme-metered"] }
+  },
+  "providers": {
+    "acme-plan": { "maxConcurrency": 1, "dailyTokenCap": 12000000, "weeklyTokenCap": 60000000 },
+    "acme-metered": { "maxConcurrency": 2 }
   }
 }
 ```
+
+- `version` 必须是字面量 `1`；其他值会让整份文档被拒绝。
+- `system` 对所有会话生效。`sessions` 以宿主会话 id 为键——Pi 的 session id 在 resume 后仍然有效，MCP stdio 会话共用稳定的 `"default"` 键。
+- 会话只能**收窄**系统策略：deny 取并集，allow 取交集，deny 永远优先。`allow` 是排他清单——只要写了它，未列出的模型就不可路由。
+- 条目形如 `provider/id`，或只写 `provider` 表示整个 provider。每个清单最多 32 条、每条最多 200 字符；控制字符会被剥掉，不符合该形状的内容会被丢弃而不是被信任。
+- `providers` 放的是花费与并发上限，**不是**黑白名单：`maxConcurrency`（每个 provider 0-8，`0` 表示停放）、`dailyTokenCap`、`weeklyTokenCap`，都是正整数。上限依据用量账本执行；撞顶的 provider 在本窗口内被跳过，而不是让整次委派失败。
+- `note`、`updatedAt`、`workspace` 只是留存的元数据。特别是 `workspace`：它会被保存并原样往返，但目前没有任何路由代码读它——不要依赖它来限定策略范围。
+- 删除这个文件不是无害操作：没有 deny 清单后，此前被排除的 provider 会重新可路由，这可能把工作从包月计划悄悄挪到按量计费的 API 上。
+- `expert_inspect` 会报告本会话的 `sessionKey`、生效后的 `effective` 策略以及文件的 `sourcePath`，所以宿主（或你）可以直接编辑它；改动在下一次调用生效，过期的会话条目 30 天后清理，文件损坏时会被忽略并给出警告。
+
+### 一次委派多个专家
 
 `expert_delegate` 会启动后台任务并立即返回 execution ID，原有单任务参数保持兼容。`timeoutMs` 是每项任务的必填参数（1000–3600000 ms）——缺省即报错；请按任务难度设置。超时的尝试会自动把重试预算放大 1.5×，且当专家发现以现有工具无法完成任务时会以结构化 `missing_context`/`permission_error` 提前终止。存在两个以上相互独立的任务时，应在继续其他主代理工作前一次发配整个批次：
 
@@ -763,6 +893,8 @@ MCP 表面刻意保持为 13 个语义工具：
 
 可选的 `taskDescription` 是供宿主识别任务的简短标签，不属于专家实际任务内容。派发后主代理应继续所有可独立完成的工作；无其他有用工作时，调用一次 `expert_wait`，传入最多 8 个 execution ID、通常使用 `mode: "all"`（任一早期结果即可推进时使用 `"any"`），并按预计剩余难度设置 `timeoutMs`。等待由执行 Promise 的完成事件驱动而不是轮询；阻断当前 MCP 调用属于预期行为，等待期间不会继续消耗主模型 Token。
 
+### 等待后台任务
+
 ```json
 {
   "executionIds": ["exec_a", "exec_b"],
@@ -773,11 +905,15 @@ MCP 表面刻意保持为 13 个语义工具：
 
 `expert_wait` 只返回完成状态和任务 ID，随后使用 `expert_result` 获取正式反馈，并在主代理验收后调用 `expert_feedback`。`expert_wait.timeoutMs` 只限制本次等待，不会延长各专家自己的执行期限。所有可能阻断的 Expert Council、Bash、PowerShell 或其他 MCP 调用仍必须按操作难度附带显式的有限超时；其余同步 Expert Council 操作受独立的 30 秒 Server 内部上限保护，只有一处刻意的例外：`expert_verify` 的上限取该默认值与 60 秒中的较大者，因为把专家的声称变成观察到的退出码，通常意味着要跑一次构建或测试。`expert_status` 会返回有界的逐次尝试历史。原生 Pi Package 使用主动完成通知，因此不暴露 `expert_wait`。
 
+### 直接运行 stdio 服务
+
 直接启动 stdio Server：
 
 ```bash
 node packages/mcp-server/dist/bin.js
 ```
+
+### 环境变量
 
 支持以下环境变量：
 
@@ -787,6 +923,11 @@ node packages/mcp-server/dist/bin.js
 - `EXPERT_COUNCIL_STATE`：持久化计划、执行和结果状态路径。
 - `EXPERT_COUNCIL_WORKTREES`：专家变更 worktree 的父目录（仍保留按用户隔离的私有子目录）；适用于短路径盘或更快的磁盘。
 - `EXPERT_COUNCIL_COMPOSITIONS`：已保存委员会编成的路径。
+- `EXPERT_COUNCIL_DATA_DIR`：全部每用户数据的根目录——评估、路由策略、账本、遥测、观察流。
+- `EXPERT_COUNCIL_CONTENT`：仅对本进程生效的内容挡位，覆盖 `contentStream` 与 `contentByRole`。
+- `EXPERT_COUNCIL_MODEL_ASSESSMENT`：持久化共享模型评估的路径。
+- `EXPERT_COUNCIL_ROUTE_POLICY`：持久化每会话黑白名单策略的路径。
+- `EXPERT_COUNCIL_USAGE_LEDGER`：provider 上限背后持久化的用量账本。
 - `EXPERT_COUNCIL_MCP_TIMEOUT_MS`：同步 MCP 操作的有限超时，默认 30000 毫秒。
 - `PI_CODING_AGENT_MODULE`：自动解析失败时显式指定 Pi 包目录。
 
